@@ -65,6 +65,34 @@ function ModuleIcon({ moduleId, active }) {
           <path d="M20 18.2c0-2.3-1.3-3.9-3.4-4.7" />
         </svg>
       );
+    case "employment-lifecycle":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <path d="M4.5 6.2h15" />
+          <path d="M4.5 12h15" />
+          <path d="M4.5 17.8h15" />
+          <circle cx="7.2" cy="6.2" r="1.2" />
+          <circle cx="12" cy="12" r="1.2" />
+          <circle cx="16.8" cy="17.8" r="1.2" />
+        </svg>
+      );
+    case "attendance":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <rect x="4" y="5.2" width="16" height="14.2" rx="2" />
+          <path d="M8 3.8v2.4M16 3.8v2.4M4 9.2h16" />
+          <path d="m9.1 14 1.9 1.9 4-4" />
+        </svg>
+      );
+    case "performance":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <path d="M4.2 18.5h15.6" />
+          <rect x="6.2" y="11.5" width="2.8" height="7" rx="0.8" />
+          <rect x="10.6" y="8.5" width="2.8" height="10" rx="0.8" />
+          <rect x="15" y="5.5" width="2.8" height="13" rx="0.8" />
+        </svg>
+      );
     case "activity-log":
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
@@ -161,22 +189,6 @@ export default function HrisShell({ children, session }) {
   useEffect(() => {
     window.localStorage.setItem("clio_sidebar_collapsed", String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
-
-  useEffect(() => {
-    if (!pathname) {
-      return;
-    }
-
-    fetch("/api/audit/page-view", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ pathname }),
-    }).catch(() => {
-      // Silent failure: UI flow should not block if audit endpoint is unavailable.
-    });
-  }, [pathname]);
 
   const modules = getModulesForRole(role);
   const currentDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date());

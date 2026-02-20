@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { authorizeApiRequest } from "@/lib/api-authorization";
-import { recordAuditEvent } from "@/lib/audit-log";
 
 export async function GET(request) {
   const requestedEmail = request.nextUrl.searchParams.get("email")?.trim().toLowerCase() || "";
@@ -17,18 +16,6 @@ export async function GET(request) {
   }
 
   const { session } = auth;
-
-  await recordAuditEvent({
-    activityName: "Session profile viewed",
-    status: "Completed",
-    module: "Authentication",
-    performedBy: session.email,
-    sensitivity: "Non-sensitive",
-    metadata: {
-      targetEmail: requestedEmail || session.email,
-    },
-    request,
-  });
 
   return NextResponse.json({
     email: requestedEmail || session.email,

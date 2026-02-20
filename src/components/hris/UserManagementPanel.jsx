@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import { ROLES } from "@/features/hris/constants";
 
-const ROLE_OPTIONS = ["SUPER_ADMIN", "HR", "GRC", "EA"];
+const ROLE_OPTIONS = ROLES.map((role) => ({
+  id: role.id,
+  label: role.label,
+}));
 
 const initialInviteForm = {
   email: "",
@@ -114,7 +118,15 @@ export default function UserManagementPanel() {
       }
 
       const payload = await response.json();
-      setSuccessMessage(`Invitation created for ${payload.user.email}.`);
+      const deliveryStatus = typeof payload?.delivery?.status === "string" ? payload.delivery.status : "";
+      const warning = typeof payload?.warning === "string" ? payload.warning : "";
+      if (deliveryStatus === "failed") {
+        setSuccessMessage(
+          warning || `Invite created for ${payload.user.email}. Email delivery failed.`,
+        );
+      } else {
+        setSuccessMessage(`Invitation email with verification link sent to ${payload.user.email}.`);
+      }
       setInvitePreview(payload.invite || null);
       setInviteForm(initialInviteForm);
       await loadUsers();
@@ -170,7 +182,7 @@ export default function UserManagementPanel() {
     <div className="space-y-4">
       <SurfaceCard
         title="Invite User"
-        subtitle="No sign-up form. Accounts are created and opened through Super Admin invitations."
+        subtitle="No sign-up form. Invited users must verify email from the invite link before Google sign-in."
       >
         <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]" onSubmit={handleInviteSubmit}>
           <label className="space-y-1">
@@ -193,8 +205,8 @@ export default function UserManagementPanel() {
               className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
             >
               {ROLE_OPTIONS.map((role) => (
-                <option key={role} value={role}>
-                  {role}
+                <option key={role.id} value={role.id}>
+                  {role.label}
                 </option>
               ))}
             </select>
@@ -211,9 +223,8 @@ export default function UserManagementPanel() {
 
         {invitePreview ? (
           <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800">
-            <p className="font-semibold">Invitation Preview (temporary while email service is not configured)</p>
-            <p className="mt-1 break-all">Token: {invitePreview.invitationToken}</p>
-            <p className="mt-1 break-all">Link: {invitePreview.invitationUrl}</p>
+            <p className="font-semibold">Invite recorded</p>
+            <p className="mt-1">Invite ID: {invitePreview.id || "-"}</p>
             <p className="mt-1">Expires: {formatDate(invitePreview.expiresAt)}</p>
           </div>
         ) : null}
@@ -231,7 +242,10 @@ export default function UserManagementPanel() {
         ) : null}
       </SurfaceCard>
 
-      <SurfaceCard title="User Directory" subtitle="Open, disable, and review account access states.">
+      <SurfaceCard
+        title="User Directory"
+        subtitle="Review account states and manage access by role."
+      >
         {isLoading ? (
           <p className="text-sm text-slate-600">Loading user accounts...</p>
         ) : (

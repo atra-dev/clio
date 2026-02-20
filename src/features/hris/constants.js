@@ -19,6 +19,21 @@ export const ROLES = [
     label: "EA",
     description: "Executive assistance and department coordination",
   },
+  {
+    id: "EMPLOYEE_L1",
+    label: "Employee L1",
+    description: "Can access and update limited personal profile details",
+  },
+  {
+    id: "EMPLOYEE_L2",
+    label: "Employee L2",
+    description: "Can access and update limited personal profile details",
+  },
+  {
+    id: "EMPLOYEE_L3",
+    label: "Employee L3",
+    description: "Can access and update limited personal profile details",
+  },
 ];
 
 export const MODULES = [
@@ -35,6 +50,24 @@ export const MODULES = [
     description: "Centralized employee profiles and status",
   },
   {
+    id: "employment-lifecycle",
+    label: "Employment Lifecycle",
+    href: "/employment-lifecycle",
+    description: "Onboarding, role changes, disciplinary records, and offboarding",
+  },
+  {
+    id: "attendance",
+    label: "Attendance",
+    href: "/attendance",
+    description: "Time logs, leave requests, approvals, and traceable updates",
+  },
+  {
+    id: "performance",
+    label: "Performance",
+    href: "/performance",
+    description: "KPI documentation, evaluations, and promotion justification",
+  },
+  {
     id: "activity-log",
     label: "Activity Log",
     href: "/activity-log",
@@ -48,9 +81,9 @@ export const MODULES = [
   },
   {
     id: "documents",
-    label: "Sheets and PDF",
+    label: "Template Repository",
     href: "/documents",
-    description: "Generate sheets and PDF files with branding",
+    description: "Version-controlled contracts, NDAs, and HR acknowledgments",
   },
   {
     id: "settings",
@@ -68,14 +101,46 @@ export const MODULES = [
 
 export const MODULE_ACCESS = {
   SUPER_ADMIN: MODULES.map((module) => module.id),
-  HR: ["dashboard", "employees", "documents"],
-  GRC: ["dashboard", "activity-log", "exports"],
-  EA: ["dashboard", "documents"],
+  GRC: [
+    "dashboard",
+    "employees",
+    "employment-lifecycle",
+    "attendance",
+    "performance",
+    "documents",
+    "exports",
+    "activity-log",
+    "settings",
+  ],
+  HR: [
+    "dashboard",
+    "employees",
+    "employment-lifecycle",
+    "attendance",
+    "performance",
+    "documents",
+    "exports",
+    "settings",
+  ],
+  EA: [
+    "dashboard",
+    "employees",
+    "employment-lifecycle",
+    "attendance",
+    "performance",
+    "documents",
+    "exports",
+    "settings",
+  ],
+  EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
+  EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
+  EMPLOYEE_L3: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
 };
 
 export const LOGIN_HIGHLIGHTS = [
-  "Attendance visibility in one dashboard",
-  "Fast access to employee records and history",
-  "Export control for operational reports",
-  "Sheets and PDF outputs with North Star branding",
+  "Invite-first access with required email verification",
+  "Employee Records with restricted PII controls",
+  "Employment Lifecycle and immediate offboarding revocation",
+  "Attendance and Performance workflows with traceability",
+  "Version-controlled template repository and monitored exports",
 ];

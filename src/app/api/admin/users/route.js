@@ -1,7 +1,38 @@
 import { NextResponse } from "next/server";
 import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
-import { inviteUserAccount, listUserAccounts } from "@/lib/user-accounts";
+import { deliverInviteEmail } from "@/lib/invite-delivery";
+import { inviteUserAccount, listUserAccounts, revokeInviteById } from "@/lib/user-accounts";
+
+function extractDeliveryErrorInfo(reason) {
+  const normalized = String(reason || "").trim();
+  if (normalized.startsWith("email_delivery_failed:")) {
+    return {
+      code: "email_delivery_failed",
+      providerMessage: normalized.slice("email_delivery_failed:".length).trim(),
+    };
+  }
+
+  return {
+    code: normalized || "email_delivery_failed",
+    providerMessage: "",
+  };
+}
+
+function parseBooleanEnv(name, fallbackValue = false) {
+  const raw = String(process.env[name] || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) {
+    return fallbackValue;
+  }
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+
+function isEmailDeliveryRequired() {
+  const defaultRequired = process.env.NODE_ENV === "production";
+  return parseBooleanEnv("CLIO_REQUIRE_EMAIL_DELIVERY", defaultRequired);
+}
 
 export async function GET(request) {
   const auth = await authorizeApiRequest(request, {
@@ -16,15 +47,6 @@ export async function GET(request) {
 
   const { session } = auth;
   const users = await listUserAccounts();
-
-  await recordAuditEvent({
-    activityName: "User directory viewed",
-    status: "Completed",
-    module: "User Management",
-    performedBy: session.email,
-    sensitivity: "Non-sensitive",
-    request,
-  });
 
   return NextResponse.json({ users });
 }
@@ -51,6 +73,91 @@ export async function POST(request) {
       role,
       invitedBy: session.email,
     });
+    const enforceDelivery = isEmailDeliveryRequired();
+    let delivery = null;
+    try {
+      delivery = await deliverInviteEmail({
+        toEmail: result.user.email,
+        role: result.user.role,
+        invitedBy: session.email,
+        expiresAt: result.invite.expiresAt,
+        inviteToken: result.invite.token,
+      });
+    } catch (deliveryError) {
+      const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";
+      const deliveryErrorInfo = extractDeliveryErrorInfo(rawReason);
+      const deliveryReason = deliveryErrorInfo.code;
+      const shouldRevokeInvite = enforceDelivery;
+      if (shouldRevokeInvite) {
+        await revokeInviteById(result.invite.id).catch(() => null);
+      }
+
+      await recordAuditEvent({
+        activityName: `Invite email delivery failed: ${result.user.email}`,
+        status: "Failed",
+        module: "User Management",
+        performedBy: session.email,
+        sensitivity: "Sensitive",
+        metadata: {
+          invitedEmail: result.user.email,
+          inviteId: result.invite.id,
+          reason: deliveryReason,
+          providerMessage: deliveryErrorInfo.providerMessage || null,
+          inviteAutoRevoked: shouldRevokeInvite,
+          deliveryRequired: enforceDelivery,
+        },
+        request,
+      });
+
+      const failureMessage =
+        deliveryReason === "email_provider_not_configured"
+          ? "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and NEXT_PUBLIC_FIREBASE_API_KEY."
+          : deliveryReason === "firebase_api_key_not_configured"
+            ? "Firebase API key is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY."
+            : deliveryReason === "firebase_email_provider_not_enabled"
+              ? "Firebase email-link provider is not enabled. Enable Email link (passwordless sign-in) in Firebase Authentication."
+              : deliveryReason === "firebase_continue_url_invalid"
+                ? "Firebase continue URL is invalid. Check CLIO_APP_BASE_URL / CLIO_INVITE_VERIFY_PATH and authorize the domain in Firebase Authentication."
+                : deliveryReason === "invalid_email"
+                  ? "Invalid invite email address."
+          : deliveryReason === "unsupported_email_provider"
+            ? "Unsupported email provider configuration."
+            : deliveryReason === "email_delivery_failed" && deliveryErrorInfo.providerMessage
+              ? `Email delivery failed: ${deliveryErrorInfo.providerMessage}`
+              : "Unable to deliver invite email.";
+
+      if (enforceDelivery) {
+        return NextResponse.json(
+          {
+            message: `${failureMessage} Invitation was revoked automatically.`,
+          },
+          { status: 502 },
+        );
+      }
+
+      delivery = {
+        provider: "unavailable",
+        status: "failed",
+        messageId: null,
+        reason: deliveryReason,
+        providerMessage: deliveryErrorInfo.providerMessage || null,
+      };
+
+      await recordAuditEvent({
+        activityName: `Invite delivery bypassed for test mode: ${result.user.email}`,
+        status: "Completed",
+        module: "User Management",
+        performedBy: session.email,
+        sensitivity: "Sensitive",
+        metadata: {
+          inviteId: result.invite.id,
+          deliveryReason,
+          providerMessage: deliveryErrorInfo.providerMessage || null,
+          deliveryRequired: false,
+        },
+        request,
+      });
+    }
 
     await recordAuditEvent({
       activityName: `User invited (${result.user.role}): ${result.user.email}`,
@@ -63,16 +170,33 @@ export async function POST(request) {
         invitedRole: result.user.role,
         inviteId: result.invite.id,
         invitationStatus: result.invite.status,
+        deliveryProvider: delivery?.provider || "unknown",
+        deliveryStatus: delivery?.status || "unknown",
       },
       request,
     });
+
+    const invitePayload = {
+      id: result.invite.id,
+      email: result.invite.email,
+      role: result.invite.role,
+      invitedBy: result.invite.invitedBy,
+      invitedAt: result.invite.invitedAt,
+      expiresAt: result.invite.expiresAt,
+      status: result.invite.status,
+    };
 
     return NextResponse.json(
       {
         ok: true,
         user: result.user,
-        invite: result.invite,
-        delivery: "Email provider not configured. Use invitation token/link preview for now.",
+        invite: invitePayload,
+        delivery,
+        ...(delivery?.status === "failed"
+          ? {
+              warning: "Invite email delivery failed in test mode.",
+            }
+          : {}),
       },
       { status: 201 },
     );
@@ -96,6 +220,10 @@ export async function POST(request) {
         ? "Invalid email address."
         : reason === "invalid_role"
           ? "Invalid role selected."
+          : reason === "email_provider_not_configured"
+            ? "Email provider is not configured."
+            : reason === "unsupported_email_provider"
+              ? "Unsupported email provider."
           : "Unable to create invitation.";
 
     return NextResponse.json({ message }, { status: 400 });

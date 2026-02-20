@@ -1,15 +1,23 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
-import { ROLE_DASHBOARD_CONTENT } from "@/features/hris/mock-data";
+import { ROLE_DASHBOARD_CONTENT, ROLE_PRIVILEGE_MATRIX } from "@/features/hris/mock-data";
 import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Dashboard | Clio HRIS",
 };
 
+function normalizeRoleForMatrix(role) {
+  if (String(role).startsWith("EMPLOYEE_")) {
+    return "EMPLOYEE L1/L2/L3";
+  }
+  return role;
+}
+
 export default async function DashboardPage() {
   const session = await requireModuleAccess("dashboard");
   const role = session.role;
   const dashboard = ROLE_DASHBOARD_CONTENT[role] ?? ROLE_DASHBOARD_CONTENT.HR;
+  const matrixRoleKey = normalizeRoleForMatrix(role);
 
   return (
     <div className="space-y-6">
@@ -36,6 +44,45 @@ export default async function DashboardPage() {
             </li>
           ))}
         </ul>
+      </SurfaceCard>
+
+      <SurfaceCard title="Role Privilege Matrix" subtitle="Least-privilege access model aligned to CLIO policy">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
+                <th className="px-2 py-3 font-medium">Role</th>
+                <th className="px-2 py-3 font-medium">Employee Records</th>
+                <th className="px-2 py-3 font-medium">Lifecycle</th>
+                <th className="px-2 py-3 font-medium">Attendance</th>
+                <th className="px-2 py-3 font-medium">Performance</th>
+                <th className="px-2 py-3 font-medium">Templates</th>
+                <th className="px-2 py-3 font-medium">Exports</th>
+                <th className="px-2 py-3 font-medium">Audit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ROLE_PRIVILEGE_MATRIX.map((row) => {
+                const isCurrentRole = row.role === matrixRoleKey;
+                return (
+                  <tr
+                    key={row.role}
+                    className={`border-b border-slate-100 text-slate-700 last:border-b-0 ${isCurrentRole ? "bg-sky-50/60" : ""}`}
+                  >
+                    <td className="px-2 py-3 font-semibold text-slate-900">{row.role}</td>
+                    <td className="px-2 py-3">{row.employeeRecords}</td>
+                    <td className="px-2 py-3">{row.lifecycle}</td>
+                    <td className="px-2 py-3">{row.attendance}</td>
+                    <td className="px-2 py-3">{row.performance}</td>
+                    <td className="px-2 py-3">{row.templates}</td>
+                    <td className="px-2 py-3">{row.exports}</td>
+                    <td className="px-2 py-3">{row.audit}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </SurfaceCard>
 
       <SurfaceCard

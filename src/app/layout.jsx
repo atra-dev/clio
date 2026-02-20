@@ -17,7 +17,7 @@ const plexMono = IBM_Plex_Mono({
 export const metadata = {
   title: "Clio HRIS",
   description:
-    "Clio HRIS portal for attendance, employee records, activity logs, and export management.",
+    "Clio HRIS portal for employee records, lifecycle, attendance, performance, templates, and governed exports.",
 };
 
 export const viewport = {
