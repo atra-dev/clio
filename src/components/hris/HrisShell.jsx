@@ -95,6 +95,15 @@ function ModuleIcon({ moduleId, active }) {
           <circle cx="12" cy="12" r="2.7" />
         </svg>
       );
+    case "user-management":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <circle cx="8.2" cy="8.4" r="2.6" />
+          <circle cx="16.1" cy="9.6" r="2.2" />
+          <path d="M3.9 18.7c0-2.9 2.1-4.8 4.8-4.8s4.8 1.9 4.8 4.8" />
+          <path d="M13.4 18.3c.3-2 1.7-3.4 3.9-3.4 2.1 0 3.4 1.1 3.8 2.9" />
+        </svg>
+      );
     default:
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className={iconClass} aria-hidden="true">

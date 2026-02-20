@@ -1,15 +1,14 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { ROLE_DASHBOARD_CONTENT } from "@/features/hris/mock-data";
-import { getServerSession } from "@/lib/auth-session";
-import { normalizeRole } from "@/lib/hris";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Dashboard | Clio HRIS",
 };
 
 export default async function DashboardPage() {
-  const session = await getServerSession();
-  const role = normalizeRole(session?.role);
+  const session = await requireModuleAccess("dashboard");
+  const role = session.role;
   const dashboard = ROLE_DASHBOARD_CONTENT[role] ?? ROLE_DASHBOARD_CONTENT.HR;
 
   return (

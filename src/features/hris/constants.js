@@ -1,5 +1,10 @@
 export const ROLES = [
   {
+    id: "SUPER_ADMIN",
+    label: "Super Admin",
+    description: "Full system access and administrative control",
+  },
+  {
     id: "GRC",
     label: "GRC",
     description: "Governance, Risk, and Compliance oversight",
@@ -53,14 +58,19 @@ export const MODULES = [
     href: "/settings",
     description: "Manage account security and access preferences",
   },
+  {
+    id: "user-management",
+    label: "User Management",
+    href: "/user-management",
+    description: "Invite users, assign roles, and control account status",
+  },
 ];
 
-const allModuleIds = MODULES.map((module) => module.id);
-
 export const MODULE_ACCESS = {
-  GRC: allModuleIds,
-  HR: allModuleIds,
-  EA: allModuleIds,
+  SUPER_ADMIN: MODULES.map((module) => module.id),
+  HR: ["dashboard", "employees", "documents"],
+  GRC: ["dashboard", "activity-log", "exports"],
+  EA: ["dashboard", "documents"],
 };
 
 export const LOGIN_HIGHLIGHTS = [

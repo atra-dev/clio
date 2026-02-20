@@ -1,11 +1,14 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { EXPORT_CONTROL_ROWS } from "@/features/hris/mock-data";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Export Control | Clio HRIS",
 };
 
-export default function ExportsPage() {
+export default async function ExportsPage() {
+  await requireModuleAccess("exports");
+
   return (
     <div className="space-y-6">
       <header>

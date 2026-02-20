@@ -3,13 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import BrandMark from "@/components/ui/BrandMark";
-import { LOGIN_HIGHLIGHTS, ROLES } from "@/features/hris/constants";
-import { normalizeRole } from "@/lib/hris";
+import { LOGIN_HIGHLIGHTS } from "@/features/hris/constants";
 
 const initialForm = {
   email: "",
   password: "",
-  role: "HR",
 };
 
 export default function LoginCard() {
@@ -39,7 +37,6 @@ export default function LoginCard() {
         body: JSON.stringify({
           email: form.email,
           password: form.password,
-          role: normalizeRole(form.role),
         }),
       });
 
@@ -126,24 +123,6 @@ export default function LoginCard() {
             />
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="role" className="text-sm font-medium text-slate-700">
-              Role
-            </label>
-            <select
-              id="role"
-              value={form.role}
-              onChange={handleField("role")}
-              className="h-11 w-full rounded-xl border border-[#c9d8ea] bg-white px-3 text-sm text-slate-900 focus:border-[#0f6bcf] focus:outline-none"
-            >
-              {ROLES.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <button
             type="submit"
             disabled={isSubmitting}
@@ -158,10 +137,6 @@ export default function LoginCard() {
             </p>
           ) : null}
         </form>
-
-        <p className="mt-4 text-xs text-slate-500">
-          Demo mode enabled: use any valid email and password to explore the front-end.
-        </p>
       </div>
     </section>
   );
