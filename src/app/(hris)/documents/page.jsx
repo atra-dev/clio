@@ -1,12 +1,15 @@
 import Image from "next/image";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { PDF_OUTPUTS, SHEET_LIBRARY } from "@/features/hris/mock-data";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Sheets and PDF | Clio HRIS",
 };
 
-export default function DocumentsPage() {
+export default async function DocumentsPage() {
+  await requireModuleAccess("documents");
+
   return (
     <div className="space-y-6">
       <header>

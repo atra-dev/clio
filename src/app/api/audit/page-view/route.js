@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth-session";
+import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
+import { canAccessModule, getModuleIdFromPathname } from "@/lib/rbac";
 
 const PAGE_LABELS = {
   "/dashboard": "Viewed Dashboard",
@@ -9,6 +10,7 @@ const PAGE_LABELS = {
   "/exports": "Viewed Export Control",
   "/documents": "Viewed Sheets and PDF",
   "/settings": "Viewed Settings",
+  "/user-management": "Viewed User Management",
 };
 
 function getPageLabel(pathname) {
@@ -19,16 +21,40 @@ function getPageLabel(pathname) {
 }
 
 export async function POST(request) {
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const session = verifySessionToken(token);
-
-  if (!session) {
-    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  const auth = await authorizeApiRequest(request, {
+    requiredPermissions: ["audit:write:nonsensitive"],
+    auditModule: "Navigation",
+    auditAction: "Page view log request",
+  });
+  if (auth.error) {
+    return auth.error;
   }
+
+  const { session } = auth;
 
   try {
     const body = await request.json();
     const pathname = typeof body?.pathname === "string" ? body.pathname : "/dashboard";
+    const moduleId = getModuleIdFromPathname(pathname);
+
+    if (moduleId && !canAccessModule(session.role, moduleId)) {
+      await recordAuditEvent({
+        activityName: `Page view blocked: ${pathname}`,
+        status: "Rejected",
+        module: "Authorization",
+        performedBy: session.email,
+        sensitivity: "Sensitive",
+        metadata: {
+          pathname,
+          role: session.role,
+          attemptedModule: moduleId,
+          reason: "module_permission_denied",
+        },
+        request,
+      });
+
+      return NextResponse.json({ message: "Forbidden." }, { status: 403 });
+    }
 
     await recordAuditEvent({
       activityName: getPageLabel(pathname),

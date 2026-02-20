@@ -3,30 +3,23 @@ import {
   createSession,
   getSessionCookieOptions,
   SESSION_COOKIE_NAME,
-  verifySessionToken,
 } from "@/lib/auth-session";
 import { normalizeRole } from "@/lib/hris";
+import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 
 export async function POST(request) {
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const session = verifySessionToken(token);
-
-  if (!session) {
-    await recordAuditEvent({
-      activityName: "Role change attempt without active session",
-      status: "Failed",
-      module: "Authentication",
-      performedBy: "anonymous@clio.local",
-      sensitivity: "Sensitive",
-      metadata: {
-        reason: "unauthorized",
-      },
-      request,
-    });
-
-    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  const auth = await authorizeApiRequest(request, {
+    allowedRoles: ["SUPER_ADMIN"],
+    requiredPermissions: ["role:manage"],
+    auditModule: "Authentication",
+    auditAction: "Role change request",
+  });
+  if (auth.error) {
+    return auth.error;
   }
+
+  const { session } = auth;
 
   try {
     const body = await request.json();

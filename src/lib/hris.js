@@ -14,7 +14,7 @@ export function normalizeRole(value) {
 
 export function getRoleDetails(role) {
   const normalized = normalizeRole(role);
-  return ROLES.find((item) => item.id === normalized) ?? ROLES[1];
+  return ROLES.find((item) => item.id === normalized) ?? ROLES.find((item) => item.id === DEFAULT_ROLE);
 }
 
 export function getModulesForRole(role) {

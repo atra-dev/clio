@@ -1,11 +1,14 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { EMPLOYEE_ROWS } from "@/features/hris/mock-data";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Employee Records | Clio HRIS",
 };
 
-export default function EmployeesPage() {
+export default async function EmployeesPage() {
+  await requireModuleAccess("employees");
+
   return (
     <div className="space-y-6">
       <header>

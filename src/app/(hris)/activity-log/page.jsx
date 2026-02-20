@@ -1,11 +1,13 @@
 import ActivityLogTable from "@/components/hris/ActivityLogTable";
 import { listAuditEvents } from "@/lib/audit-log";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Activity Log | Clio HRIS",
 };
 
 export default async function ActivityLogPage() {
+  await requireModuleAccess("activity-log");
   const rows = await listAuditEvents({ limit: 600 });
 
   return (

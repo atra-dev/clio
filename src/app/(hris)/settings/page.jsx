@@ -1,10 +1,13 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
   title: "Settings | Clio HRIS",
 };
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  await requireModuleAccess("settings");
+
   return (
     <div className="space-y-6">
       <header>

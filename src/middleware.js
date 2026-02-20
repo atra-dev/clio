@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 
 const SESSION_COOKIE_NAME = "clio_session";
-const PROTECTED_PATHS = ["/dashboard", "/employees", "/activity-log", "/exports", "/documents", "/settings"];
+const PROTECTED_PATHS = [
+  "/dashboard",
+  "/employees",
+  "/activity-log",
+  "/exports",
+  "/documents",
+  "/settings",
+  "/user-management",
+];
 
 function isProtectedPath(pathname) {
   return PROTECTED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -34,5 +42,6 @@ export const config = {
     "/exports/:path*",
     "/documents/:path*",
     "/settings/:path*",
+    "/user-management/:path*",
   ],
 };

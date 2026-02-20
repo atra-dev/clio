@@ -1,17 +1,25 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth-session";
+import { SESSION_COOKIE_NAME } from "@/lib/auth-session";
+import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 
 export async function POST(request) {
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const session = verifySessionToken(token);
-  const performedBy = session?.email || "anonymous@clio.local";
+  const auth = await authorizeApiRequest(request, {
+    requiredPermissions: ["auth:logout"],
+    auditModule: "Authentication",
+    auditAction: "Logout request",
+  });
+  if (auth.error) {
+    return auth.error;
+  }
+
+  const { session } = auth;
 
   await recordAuditEvent({
     activityName: "User logged out",
     status: "Completed",
     module: "Authentication",
-    performedBy,
+    performedBy: session.email,
     sensitivity: "Sensitive",
     request,
   });
