@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { formatNameFromEmail } from "@/lib/name-utils";
 import { cn } from "@/lib/utils";
 
 const statusClasses = {
@@ -20,33 +21,6 @@ const statusDotClasses = {
   Rejected: "bg-rose-500",
 };
 
-const performerProfiles = {
-  "hr.manager@clio.local": {
-    name: "HR Manager",
-    avatar: "/avatars/hr-manager.svg",
-  },
-  "ea.office@clio.local": {
-    name: "EA Office",
-    avatar: "/avatars/ea-office.svg",
-  },
-  "grc.analyst@clio.local": {
-    name: "GRC Analyst",
-    avatar: "/avatars/grc-analyst.svg",
-  },
-  "hr.assistant@clio.local": {
-    name: "HR Assistant",
-    avatar: "/avatars/hr-assistant.svg",
-  },
-  "hr.recruit@clio.local": {
-    name: "HR Recruit",
-    avatar: "/avatars/hr-recruit.svg",
-  },
-  "hr.admin@clio.local": {
-    name: "HR Admin",
-    avatar: "/avatars/hr-admin.svg",
-  },
-};
-
 function getRecordReference(activityName) {
   if (typeof activityName !== "string") {
     return "N/A";
@@ -62,33 +36,40 @@ function getRecordReference(activityName) {
 }
 
 function formatPerformerName(value) {
-  if (typeof value !== "string" || value.trim().length === 0) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
     return "Unknown User";
   }
 
-  const key = value.trim().toLowerCase();
-  if (performerProfiles[key]?.name) {
-    return performerProfiles[key].name;
+  if (!raw.includes("@")) {
+    return raw;
   }
 
-  const localPart = key.split("@")[0] || "";
-  const tokens = localPart
-    .replace(/[._-]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((token) => `${token.charAt(0).toUpperCase()}${token.slice(1)}`);
-
-  return tokens.join(" ") || "Unknown User";
+  return formatNameFromEmail(raw, { fallbackLabel: "Unknown User", maxTokens: 2 });
 }
 
-function getPerformerAvatar(value) {
-  if (typeof value !== "string") {
-    return "/avatars/default-user.svg";
+function getPerformerDisplayName(entry) {
+  const fromRecord = typeof entry?.performedByName === "string" ? entry.performedByName.trim() : "";
+  if (fromRecord) {
+    return fromRecord;
   }
+  return formatPerformerName(entry?.performedBy);
+}
 
-  const key = value.trim().toLowerCase();
-  return performerProfiles[key]?.avatar || "/avatars/default-user.svg";
+function getPerformerAvatar(entry) {
+  const fromRecord = typeof entry?.performedByAvatar === "string" ? entry.performedByAvatar.trim() : "";
+  return fromRecord || "/avatars/default-user.svg";
+}
+
+function getPerformerEmail(entry) {
+  const fromRecord = typeof entry?.performedByEmail === "string" ? entry.performedByEmail.trim() : "";
+  if (fromRecord) {
+    return fromRecord;
+  }
+  if (typeof entry?.performedBy === "string") {
+    return entry.performedBy;
+  }
+  return "-";
 }
 
 function ExpandIcon({ expanded }) {
@@ -293,17 +274,17 @@ export default function ActivityLogTable({ rows }) {
                         <div className="px-3 py-2.5">
                           <div className="flex items-center gap-2.5">
                             <Image
-                              src={getPerformerAvatar(entry.performedBy)}
-                              alt={`${formatPerformerName(entry.performedBy)} profile picture`}
+                              src={getPerformerAvatar(entry)}
+                              alt={`${getPerformerDisplayName(entry)} profile picture`}
                               width={32}
                               height={32}
                               className="h-8 w-8 rounded-full border border-slate-300 bg-white"
                             />
                             <div className="min-w-0">
                               <p className="truncate text-xs font-semibold text-slate-800">
-                                {formatPerformerName(entry.performedBy)}
+                                {getPerformerDisplayName(entry)}
                               </p>
-                              <p className="truncate text-xs text-slate-500">{entry.performedBy}</p>
+                              <p className="truncate text-xs text-slate-500">{getPerformerEmail(entry)}</p>
                             </div>
                           </div>
                         </div>
@@ -378,3 +359,4 @@ export default function ActivityLogTable({ rows }) {
     </section>
   );
 }
+

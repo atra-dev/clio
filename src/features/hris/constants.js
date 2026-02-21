@@ -51,19 +51,19 @@ export const MODULES = [
   },
   {
     id: "employment-lifecycle",
-    label: "Employment Lifecycle",
+    label: "Employment Lifecycle Management",
     href: "/employment-lifecycle",
     description: "Onboarding, role changes, disciplinary records, and offboarding",
   },
   {
     id: "attendance",
-    label: "Attendance",
+    label: "Attendance Management",
     href: "/attendance",
     description: "Time logs, leave requests, approvals, and traceable updates",
   },
   {
     id: "performance",
-    label: "Performance",
+    label: "Performance Management",
     href: "/performance",
     description: "KPI documentation, evaluations, and promotion justification",
   },
@@ -81,15 +81,15 @@ export const MODULES = [
   },
   {
     id: "documents",
-    label: "Template Repository",
+    label: "Document Template Repository",
     href: "/documents",
     description: "Version-controlled contracts, NDAs, and HR acknowledgments",
   },
   {
-    id: "settings",
-    label: "Settings",
-    href: "/settings",
-    description: "Manage account security and access preferences",
+    id: "requests",
+    label: "Requests",
+    href: "/requests",
+    description: "Self-service requests with workflow tracking",
   },
   {
     id: "user-management",
@@ -97,10 +97,16 @@ export const MODULES = [
     href: "/user-management",
     description: "Invite users, assign roles, and control account status",
   },
+  {
+    id: "settings",
+    label: "Settings",
+    href: "/settings",
+    description: "Manage account security and access preferences",
+  },
 ];
 
 export const MODULE_ACCESS = {
-  SUPER_ADMIN: MODULES.map((module) => module.id),
+  SUPER_ADMIN: ["dashboard", "activity-log", "user-management", "settings"],
   GRC: [
     "dashboard",
     "employees",
@@ -132,9 +138,9 @@ export const MODULE_ACCESS = {
     "exports",
     "settings",
   ],
-  EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
-  EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
-  EMPLOYEE_L3: ["dashboard", "employees", "attendance", "performance", "documents", "exports"],
+  EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
+  EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
+  EMPLOYEE_L3: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
 };
 
 export const LOGIN_HIGHLIGHTS = [

@@ -1,5 +1,6 @@
 import { IBM_Plex_Mono, Manrope } from "next/font/google";
 import "./globals.css";
+import ToastProvider from "@/components/ui/ToastProvider";
 
 const manrope = Manrope({
   variable: "--font-manrope",
@@ -29,7 +30,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className={`${manrope.variable} ${plexMono.variable} antialiased`}>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );

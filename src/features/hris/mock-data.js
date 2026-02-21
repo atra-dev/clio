@@ -1,17 +1,17 @@
 function createEmployeeDashboardContent(tierLabel) {
   return {
-    title: `${tierLabel} Dashboard`,
-    subtitle: "Personal employment view with restricted self-service access.",
+    title: "Employee Self-Service Dashboard",
+    subtitle: `${tierLabel} workspace with least-privilege access controls.`,
     metrics: [
       { id: "my-attendance", label: "My Attendance", value: "96.4%", trend: "+1.0% this month" },
-      { id: "leave-balance", label: "Leave Balance", value: "8 days", trend: "2 requests pending" },
+      { id: "work-hours", label: "Work Hours", value: "160h", trend: "Month-to-date" },
       { id: "kpi-progress", label: "KPI Progress", value: "87%", trend: "Q1 in progress" },
-      { id: "documents-ready", label: "Template Docs", value: "5", trend: "2 recently updated" },
+      { id: "requests-open", label: "Open Requests", value: "2", trend: "1 pending approval" },
     ],
     priorities: [
       "Keep personal profile fields updated for emergency communications.",
-      "Submit leave requests with complete justification and attachments.",
-      "Review KPI goals and upload supporting performance evidence.",
+      "Keep clock in and clock out entries accurate each workday.",
+      "Submit leave and document requests from the Requests module.",
     ],
     table: {
       title: "My Current Work Items",
@@ -21,7 +21,7 @@ function createEmployeeDashboardContent(tierLabel) {
       rows: [
         ["Emergency Contact Update", "Personal Info", "Today", "Pending"],
         ["Q1 KPI Evidence Upload", "Performance", "Feb 28", "In Progress"],
-        ["Leave Request #LV-219", "Attendance", "Feb 22", "Under Review"],
+        ["Clock-In Adjustment Review", "Attendance", "Feb 22", "Under Review"],
       ],
     },
   };
@@ -32,6 +32,75 @@ export const DASHBOARD_METRICS = [
   { id: "on-time", label: "On-time Attendance", value: "94.7%", trend: "+1.3%" },
   { id: "pending-lifecycle", label: "Lifecycle Actions", value: "19", trend: "3 urgent" },
   { id: "template-version", label: "Template Versions", value: "42", trend: "+5 updates" },
+];
+
+export const CORE_FUNCTIONAL_FEATURES = [
+  {
+    id: "employee-records",
+    mainTab: "Employee Records",
+    summary: "Employee profile center",
+    subTabs: [
+      "Employee Master Data",
+      "Employment Status",
+      "Government IDs (Restricted PII)",
+      "Contact Information",
+      "Payroll Information",
+      "Documents Attached to Employee",
+      "Activity History (who edited)",
+    ],
+  },
+  {
+    id: "employment-lifecycle",
+    mainTab: "Employment Lifecycle Management",
+    summary: "Employee journey timeline from hire to exit",
+    subTabs: [
+      "Onboarding",
+      "Role Changes / Promotions",
+      "Disciplinary Records",
+      "Transfers / Position Updates",
+      "Offboarding",
+      "Access Revocation Tracking",
+    ],
+  },
+  {
+    id: "attendance-management",
+    mainTab: "Attendance Management",
+    summary: "Time and leave system",
+    subTabs: [
+      "Time Logs",
+      "Leave Requests",
+      "Leave Approvals",
+      "Attendance Reports",
+      "Attendance Adjustments",
+      "Modification Logs (audit trail)",
+    ],
+  },
+  {
+    id: "performance-management",
+    mainTab: "Performance Management",
+    summary: "Evaluation and appraisal system",
+    subTabs: [
+      "KPI Records",
+      "Evaluation Forms",
+      "Performance Reviews History",
+      "Promotion Justification",
+      "Performance Reports",
+    ],
+  },
+  {
+    id: "document-templates",
+    mainTab: "Document Template Repository",
+    summary: "Document management system for HR",
+    subTabs: [
+      "HR Templates",
+      "Contracts",
+      "NDAs",
+      "Acknowledgment Forms",
+      "Version History",
+      "Upload / Manage Templates",
+      "Usage Logs",
+    ],
+  },
 ];
 
 export const ROLE_DASHBOARD_CONTENT = {
@@ -94,12 +163,12 @@ export const ROLE_DASHBOARD_CONTENT = {
     metrics: [
       { id: "active-headcount", label: "Active Headcount", value: "248", trend: "+6%" },
       { id: "onboarding", label: "Onboarding Cases", value: "7", trend: "3 in final step" },
-      { id: "leave-pending", label: "Leave Pending", value: "14", trend: "-2" },
+      { id: "attendance-pending", label: "Attendance Pending", value: "14", trend: "-2" },
       { id: "review-cycle", label: "Performance Reviews", value: "61%", trend: "Cycle open" },
     ],
     priorities: [
       "Finalize onboarding tasks and role assignment approvals.",
-      "Resolve pending leave approvals before payroll lock.",
+      "Resolve pending attendance corrections before payroll lock.",
       "Document promotion justifications for review committee.",
     ],
     table: {
@@ -177,14 +246,93 @@ export const ROLE_PRIVILEGE_MATRIX = [
     audit: "Operational logs generated for all actions",
   },
   {
-    role: "EMPLOYEE L1/L2/L3",
-    employeeRecords: "View own record only",
+    role: "EMPLOYEE (L1/L2/L3)",
+    employeeRecords: "View own record + edit personal info",
     lifecycle: "No access",
-    attendance: "View own records / limited self-service",
-    performance: "View own evaluations / upload evidence",
-    templates: "View templates assigned to employees",
-    exports: "Export own record only",
-    audit: "All actions logged",
+    attendance: "Own attendance logs only",
+    performance: "View own performance history",
+    templates: "Download own documents only",
+    exports: "No bulk export access",
+    audit: "System-generated logging only",
+  },
+];
+
+export const EMPLOYEE_PANEL_LINKS = [
+  {
+    id: "my-record",
+    title: "My Profile",
+    description: "View your record and update allowed personal details.",
+    href: "/employees",
+    label: "Self-Service",
+  },
+  {
+    id: "my-attendance",
+    title: "My Attendance",
+    description: "Review your clock in and clock out logs.",
+    href: "/attendance",
+    label: "Time Logs",
+  },
+  {
+    id: "my-performance",
+    title: "My Performance",
+    description: "Check KPI results and performance history.",
+    href: "/performance",
+    label: "KPI",
+  },
+  {
+    id: "my-documents",
+    title: "My Documents",
+    description: "Download personal HR documents and forms.",
+    href: "/documents",
+    label: "Documents",
+  },
+  {
+    id: "my-requests",
+    title: "Requests",
+    description: "Submit leave, attendance, and document requests.",
+    href: "/requests",
+    label: "Workflow",
+  },
+];
+
+export const EMPLOYEE_ACCESSIBLE_MODULES = [
+  "View Own Record",
+  "Edit Personal Info (contact, address)",
+  "Leave Requests",
+  "Attendance Logs",
+  "Performance History",
+  "Download Own Documents",
+];
+
+export const EMPLOYEE_RESTRICTED_MODULES = [
+  "Other employees",
+  "Audit logs",
+  "System reports",
+  "Lifecycle records of others",
+  "Export bulk data",
+];
+
+export const EMPLOYEE_REQUEST_ROWS = [
+  {
+    id: "REQ-4101",
+    type: "Leave Request",
+    submittedAt: "Feb 21, 2026 09:12 AM",
+    targetDate: "Feb 28, 2026",
+    status: "Pending",
+  },
+  {
+    id: "REQ-4094",
+    type: "Attendance Correction",
+    submittedAt: "Feb 19, 2026 04:40 PM",
+    targetDate: "Feb 19, 2026",
+    status: "Approved",
+  },
+  {
+    id: "REQ-4088",
+    type: "Document Request",
+    submittedAt: "Feb 18, 2026 10:03 AM",
+    targetDate: "Feb 20, 2026",
+    status: "Completed",
   },
 ];
 
@@ -192,7 +340,7 @@ export const EMPLOYEE_ROWS = [
   {
     employeeId: "CL-1001",
     name: "Samira Reyes",
-    email: "samira.reyes@clio.local",
+    email: "samira.reyes@gmail.com",
     role: "Operations Lead",
     type: "Regular",
     status: "Active",
@@ -204,7 +352,7 @@ export const EMPLOYEE_ROWS = [
   {
     employeeId: "CL-1038",
     name: "Jordan Green",
-    email: "jordan.green@clio.local",
+    email: "jordan.green@gmail.com",
     role: "HR Specialist",
     type: "Regular",
     status: "Active",
@@ -216,7 +364,7 @@ export const EMPLOYEE_ROWS = [
   {
     employeeId: "CL-1106",
     name: "Elias Morgan",
-    email: "elias.morgan@clio.local",
+    email: "elias.morgan@gmail.com",
     role: "Finance Analyst",
     type: "Regular",
     status: "Active",
@@ -228,7 +376,7 @@ export const EMPLOYEE_ROWS = [
   {
     employeeId: "CL-1204",
     name: "Dana Cruz",
-    email: "dana.cruz@clio.local",
+    email: "dana.cruz@gmail.com",
     role: "Executive Assistant",
     type: "Contract",
     status: "Probation",
@@ -240,7 +388,7 @@ export const EMPLOYEE_ROWS = [
   {
     employeeId: "CL-1289",
     name: "Kim Andrade",
-    email: "kim.andrade@clio.local",
+    email: "kim.andrade@gmail.com",
     role: "Account Executive",
     type: "Regular",
     status: "Active",
@@ -299,36 +447,32 @@ export const ATTENDANCE_ROWS = [
     date: "Feb 20, 2026",
     checkIn: "08:04",
     checkOut: "17:16",
-    leaveType: "-",
     status: "Present",
-    modifiedBy: "hr.manager@clio.local",
+    modifiedBy: "hr.manager@gmail.com",
   },
   {
     employee: "Elias Morgan",
     date: "Feb 20, 2026",
     checkIn: "08:19",
     checkOut: "17:09",
-    leaveType: "-",
     status: "Present",
-    modifiedBy: "hr.manager@clio.local",
+    modifiedBy: "hr.manager@gmail.com",
   },
   {
     employee: "Kim Andrade",
     date: "Feb 20, 2026",
     checkIn: "08:37",
     checkOut: "-",
-    leaveType: "-",
     status: "Late",
-    modifiedBy: "ea.office@clio.local",
+    modifiedBy: "ea.office@gmail.com",
   },
   {
     employee: "Dana Cruz",
     date: "Feb 20, 2026",
     checkIn: "-",
     checkOut: "-",
-    leaveType: "Sick Leave",
-    status: "On Leave",
-    modifiedBy: "hr.assistant@clio.local",
+    status: "Absent",
+    modifiedBy: "hr.assistant@gmail.com",
   },
 ];
 
@@ -369,7 +513,7 @@ export const TEMPLATE_REPOSITORY_ROWS = [
     version: "v4.3",
     classification: "Restricted PII",
     updatedAt: "Feb 18, 2026",
-    modifiedBy: "hr.admin@clio.local",
+    modifiedBy: "hr.admin@gmail.com",
   },
   {
     template: "NDA Agreement",
@@ -377,7 +521,7 @@ export const TEMPLATE_REPOSITORY_ROWS = [
     version: "v2.7",
     classification: "Restricted PII",
     updatedAt: "Feb 16, 2026",
-    modifiedBy: "grc.analyst@clio.local",
+    modifiedBy: "grc.analyst@gmail.com",
   },
   {
     template: "Policy Acknowledgment",
@@ -385,7 +529,7 @@ export const TEMPLATE_REPOSITORY_ROWS = [
     version: "v3.1",
     classification: "Restricted PII",
     updatedAt: "Feb 14, 2026",
-    modifiedBy: "ea.office@clio.local",
+    modifiedBy: "ea.office@gmail.com",
   },
 ];
 
@@ -397,16 +541,16 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "2 min ago",
     loggedAt: "Feb 18, 2026 08:41 AM",
     module: "Employee Records",
-    performedBy: "hr.manager@clio.local",
+    performedBy: "hr.manager@gmail.com",
   },
   {
     id: "ACT-6123",
-    activityName: "Approved Leave Request (CL-1289)",
+    activityName: "Approved Attendance Correction (CL-1289)",
     status: "Approved",
     relativeTime: "4 min ago",
     loggedAt: "Feb 18, 2026 08:39 AM",
     module: "Attendance",
-    performedBy: "hr.manager@clio.local",
+    performedBy: "hr.manager@gmail.com",
   },
   {
     id: "ACT-6121",
@@ -415,7 +559,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "6 min ago",
     loggedAt: "Feb 18, 2026 08:37 AM",
     module: "Template Repository",
-    performedBy: "ea.office@clio.local",
+    performedBy: "ea.office@gmail.com",
   },
   {
     id: "ACT-6118",
@@ -424,7 +568,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "8 min ago",
     loggedAt: "Feb 18, 2026 08:35 AM",
     module: "Export Control",
-    performedBy: "grc.analyst@clio.local",
+    performedBy: "grc.analyst@gmail.com",
   },
   {
     id: "ACT-6117",
@@ -433,7 +577,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "12 min ago",
     loggedAt: "Feb 18, 2026 08:31 AM",
     module: "Attendance",
-    performedBy: "hr.assistant@clio.local",
+    performedBy: "hr.assistant@gmail.com",
   },
   {
     id: "ACT-6116",
@@ -442,7 +586,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "15 min ago",
     loggedAt: "Feb 18, 2026 08:28 AM",
     module: "Employee Records",
-    performedBy: "hr.recruit@clio.local",
+    performedBy: "hr.recruit@gmail.com",
   },
   {
     id: "ACT-6115",
@@ -451,7 +595,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "17 min ago",
     loggedAt: "Feb 18, 2026 08:26 AM",
     module: "Attendance",
-    performedBy: "ea.office@clio.local",
+    performedBy: "ea.office@gmail.com",
   },
   {
     id: "ACT-6114",
@@ -460,7 +604,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "21 min ago",
     loggedAt: "Feb 18, 2026 08:22 AM",
     module: "Export Control",
-    performedBy: "hr.manager@clio.local",
+    performedBy: "hr.manager@gmail.com",
   },
   {
     id: "ACT-6113",
@@ -469,7 +613,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "26 min ago",
     loggedAt: "Feb 18, 2026 08:17 AM",
     module: "Attendance",
-    performedBy: "grc.analyst@clio.local",
+    performedBy: "grc.analyst@gmail.com",
   },
   {
     id: "ACT-6112",
@@ -478,7 +622,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "31 min ago",
     loggedAt: "Feb 18, 2026 08:12 AM",
     module: "Employee Records",
-    performedBy: "hr.admin@clio.local",
+    performedBy: "hr.admin@gmail.com",
   },
   {
     id: "ACT-6111",
@@ -487,7 +631,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "36 min ago",
     loggedAt: "Feb 18, 2026 08:07 AM",
     module: "Template Repository",
-    performedBy: "ea.office@clio.local",
+    performedBy: "ea.office@gmail.com",
   },
   {
     id: "ACT-6110",
@@ -496,7 +640,7 @@ export const ACTIVITY_LOG_ROWS = [
     relativeTime: "40 min ago",
     loggedAt: "Feb 18, 2026 08:03 AM",
     module: "Export Control",
-    performedBy: "grc.analyst@clio.local",
+    performedBy: "grc.analyst@gmail.com",
   },
 ];
 
@@ -563,3 +707,4 @@ export const PDF_OUTPUTS = [
     stamp: "North Star logo on footer",
   },
 ];
+

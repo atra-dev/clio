@@ -10,6 +10,7 @@ const PROTECTED_PATHS = [
   "/activity-log",
   "/exports",
   "/documents",
+  "/requests",
   "/settings",
   "/user-management",
 ];
@@ -47,6 +48,7 @@ export const config = {
     "/activity-log/:path*",
     "/exports/:path*",
     "/documents/:path*",
+    "/requests/:path*",
     "/settings/:path*",
     "/user-management/:path*",
   ],

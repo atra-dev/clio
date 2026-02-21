@@ -144,7 +144,9 @@ export async function POST(request) {
       );
     }
 
-    const { token, expiresAt } = createSession(normalizedEmail, account.role);
+    const { token, expiresAt } = createSession(normalizedEmail, account.role, {
+      sessionVersion: account.sessionVersion,
+    });
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt));
     await markUserLogin(normalizedEmail);
@@ -158,6 +160,7 @@ export async function POST(request) {
       metadata: {
         assignedRole: account.role,
         accountStatus: account.status,
+        sessionVersion: account.sessionVersion,
         authProvider: "google",
         firebaseUid: firebaseIdentity.uid,
       },
@@ -172,7 +175,7 @@ export async function POST(request) {
       activityName: "Login request failed",
       status: "Failed",
       module: "Authentication",
-      performedBy: "anonymous@clio.local",
+      performedBy: "anonymous@gmail.com",
       sensitivity: "Sensitive",
       metadata: {
         reason,
@@ -200,3 +203,4 @@ export async function POST(request) {
     return NextResponse.json({ message }, { status: 400 });
   }
 }
+

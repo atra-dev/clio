@@ -1,0 +1,26 @@
+rules_version = "2";
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Profile photos: users can only write inside their own UID folder.
+    match /clio/profiles/{uid}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Employee documents: authenticated users only.
+    // For strict RBAC, add custom claims (role) and restrict to privileged roles.
+    match /clio/employee-documents/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

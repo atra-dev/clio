@@ -4,10 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { ROLES } from "@/features/hris/constants";
 
-const ROLE_OPTIONS = ROLES.map((role) => ({
+const BASE_INVITE_ROLE_IDS = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
+const ROLE_LABEL_BY_ID = new Map(ROLES.map((role) => [role.id, role.label]));
+const CHANGE_ROLE_OPTIONS = ROLES.map((role) => ({
   id: role.id,
   label: role.label,
 }));
+
+const ROLE_OPTIONS = [
+  ...ROLES.filter((role) => BASE_INVITE_ROLE_IDS.has(role.id)).map((role) => ({
+    id: role.id,
+    label: role.label,
+  })),
+  {
+    id: "EMPLOYEE_L1",
+    label: "Employee",
+  },
+];
 
 const initialInviteForm = {
   email: "",
@@ -57,11 +70,21 @@ function getNextStatus(status) {
   return "active";
 }
 
+function formatRoleLabel(roleId) {
+  const normalized = String(roleId || "").trim().toUpperCase();
+  if (normalized.startsWith("EMPLOYEE_")) {
+    return "Employee";
+  }
+  return ROLE_LABEL_BY_ID.get(normalized) || roleId;
+}
+
 export default function UserManagementPanel() {
   const [users, setUsers] = useState([]);
+  const [roleDraftByUserId, setRoleDraftByUserId] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdatingId, setIsUpdatingId] = useState("");
+  const [isUpdatingRoleId, setIsUpdatingRoleId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [invitePreview, setInvitePreview] = useState(null);
@@ -77,7 +100,14 @@ export default function UserManagementPanel() {
       }
 
       const payload = await response.json();
-      setUsers(Array.isArray(payload.users) ? payload.users : []);
+      const nextUsers = Array.isArray(payload.users) ? payload.users : [];
+      setUsers(nextUsers);
+      setRoleDraftByUserId(
+        nextUsers.reduce((accumulator, user) => {
+          accumulator[user.id] = user.role;
+          return accumulator;
+        }, {}),
+      );
     } catch (error) {
       setErrorMessage(error.message || "Unable to load user directory.");
     } finally {
@@ -143,7 +173,7 @@ export default function UserManagementPanel() {
     setSuccessMessage("");
 
     try {
-      const response = await fetch(`/api/admin/users/${user.id}/status`, {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -170,6 +200,56 @@ export default function UserManagementPanel() {
     }
   };
 
+  const handleRoleDraftChange = (userId) => (event) => {
+    const nextRole = String(event.target.value || "").trim().toUpperCase();
+    setRoleDraftByUserId((current) => ({
+      ...current,
+      [userId]: nextRole,
+    }));
+  };
+
+  const handleRoleChange = async (user) => {
+    const requestedRole = String(roleDraftByUserId[user.id] || user.role).trim().toUpperCase();
+    if (!requestedRole || requestedRole === user.role) {
+      return;
+    }
+
+    setIsUpdatingRoleId(user.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/role`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role: requestedRole,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || "Unable to update user role.");
+      }
+
+      const payload = await response.json();
+      setUsers((current) =>
+        current.map((item) => (item.id === payload.user.id ? payload.user : item)),
+      );
+      setRoleDraftByUserId((current) => ({
+        ...current,
+        [payload.user.id]: payload.user.role,
+      }));
+      setSuccessMessage(`Role updated: ${payload.user.email} is now ${formatRoleLabel(payload.user.role)}.`);
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to update user role.");
+    } finally {
+      setIsUpdatingRoleId("");
+    }
+  };
+
   const orderedUsers = useMemo(
     () =>
       [...users].sort(
@@ -192,7 +272,7 @@ export default function UserManagementPanel() {
               required
               value={inviteForm.email}
               onChange={handleInviteField("email")}
-              placeholder="employee@clio.local"
+              placeholder="employee@gmail.com"
               className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
             />
           </label>
@@ -258,6 +338,7 @@ export default function UserManagementPanel() {
                   <th className="px-2 py-3 font-medium">Status</th>
                   <th className="px-2 py-3 font-medium">Invited</th>
                   <th className="px-2 py-3 font-medium">Last Login</th>
+                  <th className="px-2 py-3 font-medium">Change Role</th>
                   <th className="px-2 py-3 font-medium text-right">Action</th>
                 </tr>
               </thead>
@@ -268,7 +349,7 @@ export default function UserManagementPanel() {
                       <p className="font-medium text-slate-900">{user.email}</p>
                       <p className="text-xs text-slate-500">By: {user.invitedBy}</p>
                     </td>
-                    <td className="px-2 py-3">{user.role}</td>
+                    <td className="px-2 py-3">{formatRoleLabel(user.role)}</td>
                     <td className="px-2 py-3">
                       <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusBadgeClass(user.status)}`}>
                         {user.status}
@@ -276,11 +357,39 @@ export default function UserManagementPanel() {
                     </td>
                     <td className="px-2 py-3 text-xs text-slate-600">{formatDate(user.invitedAt)}</td>
                     <td className="px-2 py-3 text-xs text-slate-600">{formatDate(user.lastLoginAt)}</td>
+                    <td className="px-2 py-3">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={roleDraftByUserId[user.id] || user.role}
+                          onChange={handleRoleDraftChange(user.id)}
+                          disabled={isUpdatingRoleId === user.id}
+                          className="h-8 min-w-[132px] rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:opacity-70"
+                        >
+                          {CHANGE_ROLE_OPTIONS.map((role) => (
+                            <option key={role.id} value={role.id}>
+                              {role.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => handleRoleChange(user)}
+                          disabled={
+                            isUpdatingRoleId === user.id ||
+                            !roleDraftByUserId[user.id] ||
+                            roleDraftByUserId[user.id] === user.role
+                          }
+                          className="rounded-lg border border-sky-300 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isUpdatingRoleId === user.id ? "Saving..." : "Change Role"}
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-2 py-3 text-right">
                       <button
                         type="button"
                         onClick={() => handleStatusToggle(user)}
-                        disabled={isUpdatingId === user.id}
+                        disabled={isUpdatingId === user.id || isUpdatingRoleId === user.id}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {isUpdatingId === user.id ? "Updating..." : getRowActionLabel(user.status)}
@@ -296,3 +405,4 @@ export default function UserManagementPanel() {
     </div>
   );
 }
+

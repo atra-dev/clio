@@ -5,12 +5,23 @@ function envValue(name) {
   return String(process.env[name] || "").trim();
 }
 
+function resolveStorageBucketForConfig() {
+  const storageBucketUrl = envValue("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET_URL");
+  if (storageBucketUrl) {
+    return storageBucketUrl
+      .replace(/^gs:\/\//, "")
+      .replace(/^\/+|\/+$/g, "");
+  }
+
+  return envValue("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET");
+}
+
 function getFirebaseConfig() {
   return {
     apiKey: envValue("NEXT_PUBLIC_FIREBASE_API_KEY"),
     authDomain: envValue("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
     projectId: envValue("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-    storageBucket: envValue("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"),
+    storageBucket: resolveStorageBucketForConfig(),
     messagingSenderId: envValue("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
     appId: envValue("NEXT_PUBLIC_FIREBASE_APP_ID"),
     measurementId: envValue("NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID"),

@@ -24,7 +24,9 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const nextRole = normalizeRole(body?.role);
-    const { token: nextToken, expiresAt } = createSession(session.email, nextRole);
+    const { token: nextToken, expiresAt } = createSession(session.email, nextRole, {
+      sessionVersion: session.sessionVersion,
+    });
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE_NAME, nextToken, getSessionCookieOptions(expiresAt));
 

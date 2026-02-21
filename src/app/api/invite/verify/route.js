@@ -78,7 +78,7 @@ export async function GET(request) {
         activityName: "Invite verification lookup failed",
         status: "Rejected",
         module: "User Management",
-        performedBy: "anonymous@clio.local",
+        performedBy: "anonymous@gmail.com",
         sensitivity: "Sensitive",
         metadata: {
           reason: "invite_not_found",
@@ -117,7 +117,7 @@ export async function GET(request) {
       activityName: "Invite verification lookup failed",
       status: "Failed",
       module: "User Management",
-      performedBy: "anonymous@clio.local",
+      performedBy: "anonymous@gmail.com",
       sensitivity: "Sensitive",
       metadata: {
         reason,
@@ -189,7 +189,7 @@ export async function POST(request) {
       activityName: "Invite email verification failed",
       status: "Failed",
       module: "User Management",
-      performedBy: "anonymous@clio.local",
+      performedBy: "anonymous@gmail.com",
       sensitivity: "Sensitive",
       metadata: {
         reason,
@@ -204,3 +204,4 @@ export async function POST(request) {
     );
   }
 }
+

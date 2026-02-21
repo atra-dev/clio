@@ -28,7 +28,7 @@ function mapSeedRowsToEntries() {
     status: row.status || "Completed",
     occurredAt: toIsoDate(row.loggedAt),
     module: row.module || "System",
-    performedBy: row.performedBy || "system@clio.local",
+    performedBy: row.performedBy || "system@gmail.com",
     sensitivity: row.status === "Failed" || row.status === "Rejected" ? "Sensitive" : "Non-sensitive",
     metadata: {
       seeded: true,
@@ -142,7 +142,7 @@ function toUiEntry(entry) {
     relativeTime: formatRelativeTime(entry.occurredAt),
     loggedAt: formatLoggedAt(entry.occurredAt),
     module: entry.module || "System",
-    performedBy: entry.performedBy || "system@clio.local",
+    performedBy: entry.performedBy || "system@gmail.com",
     sensitivity: normalizeSensitivity(entry.sensitivity),
     sourceIp: entry.metadata?.sourceIp || "unknown",
     requestPath: entry.metadata?.requestPath || "unknown",
@@ -237,7 +237,7 @@ export async function recordAuditEvent({
   activityName,
   status = "Completed",
   module = "System",
-  performedBy = "system@clio.local",
+  performedBy = "system@gmail.com",
   sensitivity = "Non-sensitive",
   metadata = {},
   occurredAt,
@@ -295,3 +295,4 @@ export async function listAuditEvents({ limit = 400 } = {}) {
 
   return sorted.map(toUiEntry);
 }
+

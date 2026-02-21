@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -23,14 +24,60 @@ const ALLOWED_STATUSES = new Set(["pending", "active", "disabled"]);
 const ALLOWED_INVITE_STATUSES = new Set(["sent", "otp_sent", "verified", "revoked", "expired"]);
 const ALLOWED_ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const DEFAULT_INVITE_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const DEFAULT_OTP_TTL_SECONDS = 300;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 const DEFAULT_OTP_RESEND_COOLDOWN_SECONDS = 60;
+const LEGACY_LOCAL_ACCOUNT_EMAILS = new Set([
+  "superadmin@clio.local",
+  "temp.admin@clio.local",
+  "hr@clio.local",
+  "grc@clio.local",
+  "ea@clio.local",
+]);
 
 let storeInitPromise;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function addYearsToIso(isoTimestamp, years) {
+  const base = new Date(isoTimestamp);
+  if (Number.isNaN(base.getTime())) {
+    const fallback = new Date();
+    fallback.setUTCFullYear(fallback.getUTCFullYear() + years);
+    return fallback.toISOString();
+  }
+  base.setUTCFullYear(base.getUTCFullYear() + years);
+  return base.toISOString();
+}
+
+function normalizeIsoTimestamp(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toISOString();
+}
+
+function getArchiveRetentionYears() {
+  const raw = Number.parseInt(String(process.env.CLIO_RETENTION_YEARS || "").trim(), 10);
+  if (!Number.isFinite(raw) || raw < 1) {
+    return DEFAULT_ARCHIVE_RETENTION_YEARS;
+  }
+  return Math.min(raw, 25);
+}
+
+function resolveRetentionDeleteAt({ archivedAt, retentionDeleteAt }) {
+  const normalizedRetention = normalizeIsoTimestamp(retentionDeleteAt);
+  if (normalizedRetention) {
+    return normalizedRetention;
+  }
+  return addYearsToIso(archivedAt, getArchiveRetentionYears());
 }
 
 function createId(prefix) {
@@ -45,8 +92,77 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeSessionVersion(value, fallback = 1) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function isLegacyLocalAccountEmail(value) {
+  return LEGACY_LOCAL_ACCOUNT_EMAILS.has(normalizeEmail(value));
+}
+
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
+}
+
+function normalizeNameField(value, { allowEmpty = true } = {}) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) {
+    return allowEmpty ? "" : null;
+  }
+  if (normalized.length > 80) {
+    throw new Error("invalid_name");
+  }
+  return normalized;
+}
+
+function normalizeProfilePhotoDataUrl(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const isDataImage = /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(normalized);
+  if (isDataImage) {
+    if (normalized.length > 1_500_000) {
+      throw new Error("invalid_profile_photo");
+    }
+    return normalized;
+  }
+
+  const isWebUrl = /^https?:\/\/[^\s]+$/i.test(normalized);
+  if (!isWebUrl || normalized.length > 2_048) {
+    throw new Error("invalid_profile_photo");
+  }
+
+  return normalized;
+}
+
+function normalizeStoragePath(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const normalized = String(value).trim().replace(/^\/+/, "");
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length > 512 || normalized.includes("..") || normalized.includes("\\")) {
+    throw new Error("invalid_storage_path");
+  }
+  if (!/^clio\/[a-z0-9/_\-.\s]+$/i.test(normalized)) {
+    throw new Error("invalid_storage_path");
+  }
+  return normalized;
 }
 
 function envInt(name, fallback, { min, max } = {}) {
@@ -223,19 +339,19 @@ function getBootstrapAccounts() {
   const groups = [
     {
       role: "SUPER_ADMIN",
-      emails: parseEmailList(process.env.SUPER_ADMIN_EMAILS, ["superadmin@clio.local"]),
+      emails: parseEmailList(process.env.SUPER_ADMIN_EMAILS, []),
     },
     {
       role: "HR",
-      emails: parseEmailList(process.env.HR_EMAILS, ["hr@clio.local"]),
+      emails: parseEmailList(process.env.HR_EMAILS, []),
     },
     {
       role: "GRC",
-      emails: parseEmailList(process.env.GRC_EMAILS, ["grc@clio.local"]),
+      emails: parseEmailList(process.env.GRC_EMAILS, []),
     },
     {
       role: "EA",
-      emails: parseEmailList(process.env.EA_EMAILS, ["ea@clio.local"]),
+      emails: parseEmailList(process.env.EA_EMAILS, []),
     },
     {
       role: "EMPLOYEE_L1",
@@ -269,13 +385,45 @@ function normalizeUserRecord(user) {
   const status = ALLOWED_STATUSES.has(user?.status) ? user.status : "pending";
   const invitedAt = typeof user?.invitedAt === "string" ? user.invitedAt : nowIso();
   const updatedAt = typeof user?.updatedAt === "string" ? user.updatedAt : invitedAt;
+  const archivedAt = normalizeIsoTimestamp(user?.archivedAt);
+  const retentionDeleteAt = resolveRetentionDeleteAt({
+    archivedAt: archivedAt || invitedAt,
+    retentionDeleteAt: user?.retentionDeleteAt,
+  });
+  const archivedBy = normalizeEmail(user?.archivedBy) || null;
+  const archiveReason = typeof user?.archiveReason === "string" ? user.archiveReason : null;
+  let firstName = "";
+  let middleName = "";
+  let lastName = "";
+  let profilePhotoDataUrl = null;
+  let profilePhotoStoragePath = null;
+  try {
+    firstName = normalizeNameField(user?.firstName);
+    middleName = normalizeNameField(user?.middleName);
+    lastName = normalizeNameField(user?.lastName);
+  } catch {
+    firstName = "";
+    middleName = "";
+    lastName = "";
+  }
+  try {
+    profilePhotoDataUrl = normalizeProfilePhotoDataUrl(user?.profilePhotoDataUrl);
+  } catch {
+    profilePhotoDataUrl = null;
+  }
+  try {
+    profilePhotoStoragePath = normalizeStoragePath(user?.profilePhotoStoragePath);
+  } catch {
+    profilePhotoStoragePath = null;
+  }
 
   return {
     id: typeof user?.id === "string" && user.id.trim().length > 0 ? user.id : email,
     email,
     role: ALLOWED_ROLE_IDS.has(role) ? role : "HR",
     status,
-    invitedBy: normalizeEmail(user?.invitedBy) || "system@clio.local",
+    sessionVersion: normalizeSessionVersion(user?.sessionVersion, 1),
+    invitedBy: normalizeEmail(user?.invitedBy) || "system.clio@gmail.com",
     invitedAt,
     activatedAt: typeof user?.activatedAt === "string" ? user.activatedAt : null,
     emailVerifiedAt: typeof user?.emailVerifiedAt === "string" ? user.emailVerifiedAt : null,
@@ -284,6 +432,17 @@ function normalizeUserRecord(user) {
     phoneLast4: typeof user?.phoneLast4 === "string" ? user.phoneLast4 : null,
     phoneHash: typeof user?.phoneHash === "string" ? user.phoneHash : null,
     verificationMethod: ["sms", "email"].includes(user?.verificationMethod) ? user.verificationMethod : null,
+    archivedAt: archivedAt || null,
+    archivedBy,
+    archiveReason,
+    isArchived: Boolean(user?.isArchived || archivedAt),
+    retentionDeleteAt: archivedAt ? retentionDeleteAt : normalizeIsoTimestamp(user?.retentionDeleteAt) || null,
+    firstName,
+    middleName,
+    lastName,
+    profilePhotoDataUrl,
+    profilePhotoStoragePath,
+    profileUpdatedAt: typeof user?.profileUpdatedAt === "string" ? user.profileUpdatedAt : null,
     updatedAt,
     source: user?.source === "bootstrap" ? "bootstrap" : "invite",
   };
@@ -329,7 +488,7 @@ function normalizeInviteRecord(invite) {
     id: typeof invite?.id === "string" && invite.id.trim().length > 0 ? invite.id : createId("INV"),
     email,
     role: ALLOWED_ROLE_IDS.has(role) ? role : "HR",
-    invitedBy: normalizeEmail(invite?.invitedBy) || "system@clio.local",
+    invitedBy: normalizeEmail(invite?.invitedBy) || "system.clio@gmail.com",
     invitedAt,
     expiresAt,
     token: typeof invite?.token === "string" && invite.token.trim().length > 0 ? invite.token : createInviteToken(),
@@ -391,7 +550,8 @@ function withBootstrapAccounts(store) {
       email: bootstrap.email,
       role: bootstrap.role,
       status: "active",
-      invitedBy: "system@clio.local",
+      sessionVersion: 1,
+      invitedBy: "system.clio@gmail.com",
       invitedAt: timestamp,
       activatedAt: timestamp,
       emailVerifiedAt: timestamp,
@@ -410,6 +570,20 @@ function withBootstrapAccounts(store) {
   return { store: nextStore, changed };
 }
 
+function pruneLegacyLocalAccountsFromStore(store) {
+  const nextUsers = store.users.filter((user) => !isLegacyLocalAccountEmail(user?.email));
+  const nextInvites = store.invites.filter((invite) => !isLegacyLocalAccountEmail(invite?.email));
+  const changed = nextUsers.length !== store.users.length || nextInvites.length !== store.invites.length;
+
+  return {
+    store: {
+      users: nextUsers,
+      invites: nextInvites,
+    },
+    changed,
+  };
+}
+
 function sortUsersByDate(users) {
   return [...users].sort((a, b) => {
     const left = new Date(a.updatedAt || a.invitedAt).getTime();
@@ -424,6 +598,7 @@ function toPublicUser(user) {
     email: user.email,
     role: user.role,
     status: user.status,
+    sessionVersion: normalizeSessionVersion(user?.sessionVersion, 1),
     invitedBy: user.invitedBy,
     invitedAt: user.invitedAt,
     activatedAt: user.activatedAt,
@@ -432,6 +607,17 @@ function toPublicUser(user) {
     phoneVerifiedAt: user.phoneVerifiedAt,
     phoneLast4: user.phoneLast4,
     verificationMethod: user.verificationMethod,
+    archivedAt: user.archivedAt || null,
+    archivedBy: user.archivedBy || null,
+    archiveReason: user.archiveReason || null,
+    isArchived: Boolean(user.isArchived || user.archivedAt),
+    retentionDeleteAt: user.retentionDeleteAt || null,
+    firstName: user.firstName || "",
+    middleName: user.middleName || "",
+    lastName: user.lastName || "",
+    profilePhotoDataUrl: user.profilePhotoDataUrl || null,
+    profilePhotoStoragePath: user.profilePhotoStoragePath || null,
+    profileUpdatedAt: user.profileUpdatedAt || null,
     updatedAt: user.updatedAt,
     source: user.source,
   };
@@ -481,7 +667,8 @@ async function ensureFirestoreBootstrapAccounts(db) {
       email: normalizedEmail,
       role: bootstrap.role,
       status: "active",
-      invitedBy: "system@clio.local",
+      sessionVersion: 1,
+      invitedBy: "system.clio@gmail.com",
       invitedAt: timestamp,
       activatedAt: timestamp,
       emailVerifiedAt: timestamp,
@@ -496,20 +683,67 @@ async function ensureFirestoreBootstrapAccounts(db) {
   }
 }
 
-async function listUserAccountsFromFirestore(db) {
+async function pruneLegacyLocalAccountsFromFirestore(db) {
+  const usersCollection = getUsersCollectionName();
+  const invitesCollection = getInvitesCollectionName();
+  const legacyEmails = Array.from(LEGACY_LOCAL_ACCOUNT_EMAILS);
+
+  for (const email of legacyEmails) {
+    try {
+      const userRef = doc(db, usersCollection, email);
+      const userSnapshot = await getDoc(userRef);
+      if (userSnapshot.exists()) {
+        await deleteDoc(userRef);
+      }
+    } catch {
+      // Ignore cleanup failures so user listing/login flow is never blocked.
+    }
+  }
+
+  try {
+    const inviteQuery = query(
+      collection(db, invitesCollection),
+      where("email", "in", legacyEmails),
+      queryLimit(20),
+    );
+    const inviteSnapshot = await getDocs(inviteQuery);
+    for (const inviteDoc of inviteSnapshot.docs) {
+      const payload = inviteDoc.data() || {};
+      const email = normalizeEmail(payload.email);
+      if (!LEGACY_LOCAL_ACCOUNT_EMAILS.has(email)) {
+        continue;
+      }
+      await deleteDoc(doc(db, invitesCollection, inviteDoc.id));
+    }
+  } catch {
+    // Ignore cleanup failures so user listing/login flow is never blocked.
+  }
+}
+
+async function ensureUserDirectoryPreparedInFirestore(db) {
+  await pruneLegacyLocalAccountsFromFirestore(db);
   await ensureFirestoreBootstrapAccounts(db);
+}
+
+async function listUserAccountsFromFirestore(db) {
+  await ensureUserDirectoryPreparedInFirestore(db);
 
   const snapshot = await getDocs(collection(db, getUsersCollectionName()));
   const users = snapshot.docs
     .map((item) => normalizeFirestoreUser(item.id, item.data()))
     .filter(Boolean)
+    .filter((user) => !isLegacyLocalAccountEmail(user.email))
     .map(toPublicUser);
 
   return sortUsersByDate(users);
 }
 
 async function getLoginAccountFromFirestore(db, email) {
-  await ensureFirestoreBootstrapAccounts(db);
+  if (isLegacyLocalAccountEmail(email)) {
+    return null;
+  }
+
+  await ensureUserDirectoryPreparedInFirestore(db);
 
   const userRef = doc(db, getUsersCollectionName(), email);
   const snapshot = await getDoc(userRef);
@@ -556,18 +790,22 @@ async function inviteUserAccountInFirestore(db, { email, role, invitedBy }) {
     throw new Error("invalid_role");
   }
 
-  const sender = normalizeEmail(invitedBy) || "superadmin@clio.local";
+  const sender = normalizeEmail(invitedBy) || "superadmin.clio@gmail.com";
   const timestamp = nowIso();
   const userRef = doc(db, getUsersCollectionName(), normalizedEmail);
   const existing = await getDoc(userRef);
 
   const basePayload = existing.exists() ? existing.data() : {};
+  const nextSessionVersion = existing.exists()
+    ? normalizeSessionVersion(basePayload?.sessionVersion, 1) + 1
+    : 1;
   const nextUser = normalizeUserRecord({
     ...basePayload,
     id: normalizedEmail,
     email: normalizedEmail,
     role: requestedRole,
     status: "pending",
+    sessionVersion: nextSessionVersion,
     invitedBy: sender,
     invitedAt: timestamp,
     emailVerifiedAt: null,
@@ -658,10 +896,13 @@ async function updateUserAccountStatusInFirestore(db, { userId, status }) {
   }
 
   const currentData = snapshot.data() || {};
+  const currentStatus = String(currentData?.status || "").trim().toLowerCase();
+  const currentSessionVersion = normalizeSessionVersion(currentData?.sessionVersion, 1);
 
   const timestamp = nowIso();
   const nextPayload = {
     status: normalizedStatus,
+    sessionVersion: normalizedStatus !== currentStatus ? currentSessionVersion + 1 : currentSessionVersion,
     updatedAt: timestamp,
   };
 
@@ -673,6 +914,129 @@ async function updateUserAccountStatusInFirestore(db, { userId, status }) {
 
   const updated = normalizeFirestoreUser(snapshot.id, {
     ...currentData,
+    ...nextPayload,
+  });
+
+  return updated ? toPublicUser(updated) : null;
+}
+
+async function updateUserAccountRoleInFirestore(db, { userId, role }) {
+  const normalizedRole = String(role || "")
+    .trim()
+    .toUpperCase();
+  if (!ALLOWED_ROLE_IDS.has(normalizedRole)) {
+    throw new Error("invalid_role");
+  }
+
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedUserId);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const currentData = snapshot.data() || {};
+  const currentRole = String(currentData?.role || "").trim().toUpperCase();
+  const currentSessionVersion = normalizeSessionVersion(currentData?.sessionVersion, 1);
+  const timestamp = nowIso();
+  const nextPayload = {
+    role: normalizedRole,
+    sessionVersion: normalizedRole !== currentRole ? currentSessionVersion + 1 : currentSessionVersion,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...currentData,
+    ...nextPayload,
+  });
+
+  return updated ? toPublicUser(updated) : null;
+}
+
+async function archiveUserAccountInFirestore(
+  db,
+  {
+    userId,
+    archivedBy,
+    reason,
+    retentionDeleteAt,
+  },
+) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedUserId);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const currentData = snapshot.data() || {};
+  const currentStatus = String(currentData?.status || "").trim().toLowerCase();
+  const currentSessionVersion = normalizeSessionVersion(currentData?.sessionVersion, 1);
+  const timestamp = nowIso();
+  const nextPayload = {
+    status: "disabled",
+    archivedAt: timestamp,
+    archivedBy: normalizeEmail(archivedBy) || "system.clio@gmail.com",
+    archiveReason: String(reason || "").trim() || "Resigned",
+    isArchived: true,
+    retentionDeleteAt: resolveRetentionDeleteAt({
+      archivedAt: timestamp,
+      retentionDeleteAt,
+    }),
+    sessionVersion: currentStatus !== "disabled" ? currentSessionVersion + 1 : currentSessionVersion,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...currentData,
+    ...nextPayload,
+  });
+
+  return updated ? toPublicUser(updated) : null;
+}
+
+async function updateUserAccountProfileInFirestore(
+  db,
+  { userId, firstName, middleName, lastName, profilePhotoDataUrl, profilePhotoStoragePath },
+) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedUserId);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const nextPayload = {
+    firstName: normalizeNameField(firstName),
+    middleName: normalizeNameField(middleName),
+    lastName: normalizeNameField(lastName),
+    profilePhotoDataUrl: normalizeProfilePhotoDataUrl(profilePhotoDataUrl),
+    profilePhotoStoragePath: normalizeStoragePath(profilePhotoStoragePath),
+    profileUpdatedAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...snapshot.data(),
     ...nextPayload,
   });
 
@@ -702,7 +1066,8 @@ async function ensureStore() {
       await fs.mkdir(DATA_DIR, { recursive: true });
       const raw = await readStoreFile();
       const normalized = normalizeStore(raw);
-      const { store } = withBootstrapAccounts(normalized);
+      const { store: prunedStore } = pruneLegacyLocalAccountsFromStore(normalized);
+      const { store } = withBootstrapAccounts(prunedStore);
       await writeStore(store);
     })();
   }
@@ -714,7 +1079,9 @@ async function loadStore() {
   await ensureStore();
   const raw = await readStoreFile();
   const normalized = normalizeStore(raw);
-  const { store, changed } = withBootstrapAccounts(normalized);
+  const { store: prunedStore, changed: pruneChanged } = pruneLegacyLocalAccountsFromStore(normalized);
+  const { store, changed: bootstrapChanged } = withBootstrapAccounts(prunedStore);
+  const changed = pruneChanged || bootstrapChanged;
 
   if (changed) {
     await writeStore(store);
@@ -725,12 +1092,17 @@ async function loadStore() {
 
 async function listUserAccountsFromFile() {
   const store = await loadStore();
-  return sortUsersByDate(store.users).map(toPublicUser);
+  return sortUsersByDate(store.users)
+    .filter((user) => !isLegacyLocalAccountEmail(user.email))
+    .map(toPublicUser);
 }
 
 async function getLoginAccountFromFile(email) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
+    return null;
+  }
+  if (isLegacyLocalAccountEmail(normalizedEmail)) {
     return null;
   }
 
@@ -773,7 +1145,7 @@ async function inviteUserAccountInFile({ email, role, invitedBy }) {
 
   const store = await loadStore();
   const timestamp = nowIso();
-  const sender = normalizeEmail(invitedBy) || "superadmin@clio.local";
+  const sender = normalizeEmail(invitedBy) || "superadmin.clio@gmail.com";
 
   for (const existingInvite of store.invites) {
     if (existingInvite.email !== normalizedEmail) {
@@ -794,6 +1166,7 @@ async function inviteUserAccountInFile({ email, role, invitedBy }) {
       email: normalizedEmail,
       role: requestedRole,
       status: "pending",
+      sessionVersion: 1,
       invitedBy: sender,
       invitedAt: timestamp,
       activatedAt: null,
@@ -808,8 +1181,10 @@ async function inviteUserAccountInFile({ email, role, invitedBy }) {
     };
     store.users.push(user);
   } else {
+    const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
     user.role = requestedRole;
     user.status = "pending";
+    user.sessionVersion = currentSessionVersion + 1;
     user.invitedBy = sender;
     user.invitedAt = timestamp;
     user.emailVerifiedAt = null;
@@ -891,7 +1266,10 @@ async function updateUserAccountStatusInFile({ userId, status }) {
   }
 
   const timestamp = nowIso();
+  const currentStatus = String(user.status || "").trim().toLowerCase();
+  const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
   user.status = normalizedStatus;
+  user.sessionVersion = normalizedStatus !== currentStatus ? currentSessionVersion + 1 : currentSessionVersion;
   user.updatedAt = timestamp;
   if (normalizedStatus === "active" && !user.activatedAt) {
     user.activatedAt = timestamp;
@@ -899,6 +1277,181 @@ async function updateUserAccountStatusInFile({ userId, status }) {
 
   await writeStore(store);
   return toPublicUser(user);
+}
+
+async function updateUserAccountRoleInFile({ userId, role }) {
+  const normalizedRole = String(role || "")
+    .trim()
+    .toUpperCase();
+  if (!ALLOWED_ROLE_IDS.has(normalizedRole)) {
+    throw new Error("invalid_role");
+  }
+
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.id === normalizedUserId || item.email === normalizedUserId);
+  if (!user) {
+    return null;
+  }
+
+  const currentRole = String(user.role || "").trim().toUpperCase();
+  const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
+  user.role = normalizedRole;
+  user.sessionVersion = normalizedRole !== currentRole ? currentSessionVersion + 1 : currentSessionVersion;
+  user.updatedAt = nowIso();
+
+  await writeStore(store);
+  return toPublicUser(user);
+}
+
+async function archiveUserAccountInFile({
+  userId,
+  archivedBy,
+  reason,
+  retentionDeleteAt,
+}) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.id === normalizedUserId || item.email === normalizedUserId);
+  if (!user) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const currentStatus = String(user.status || "").trim().toLowerCase();
+  const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
+  user.status = "disabled";
+  user.archivedAt = timestamp;
+  user.archivedBy = normalizeEmail(archivedBy) || "system.clio@gmail.com";
+  user.archiveReason = String(reason || "").trim() || "Resigned";
+  user.isArchived = true;
+  user.retentionDeleteAt = resolveRetentionDeleteAt({
+    archivedAt: timestamp,
+    retentionDeleteAt,
+  });
+  user.sessionVersion = currentStatus !== "disabled" ? currentSessionVersion + 1 : currentSessionVersion;
+  user.updatedAt = timestamp;
+
+  await writeStore(store);
+  return toPublicUser(user);
+}
+
+async function updateUserAccountProfileInFile({
+  userId,
+  firstName,
+  middleName,
+  lastName,
+  profilePhotoDataUrl,
+  profilePhotoStoragePath,
+}) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.id === normalizedUserId || item.email === normalizedUserId);
+  if (!user) {
+    return null;
+  }
+
+  user.firstName = normalizeNameField(firstName);
+  user.middleName = normalizeNameField(middleName);
+  user.lastName = normalizeNameField(lastName);
+  user.profilePhotoDataUrl = normalizeProfilePhotoDataUrl(profilePhotoDataUrl);
+  user.profilePhotoStoragePath = normalizeStoragePath(profilePhotoStoragePath);
+  user.profileUpdatedAt = nowIso();
+  user.updatedAt = user.profileUpdatedAt;
+
+  await writeStore(store);
+  return toPublicUser(user);
+}
+
+async function purgeDueArchivedUserAccountsInFirestore(db, { now }) {
+  const cutoff = normalizeIsoTimestamp(now) || nowIso();
+  const usersRef = collection(db, getUsersCollectionName());
+  const usersSnapshot = await getDocs(query(usersRef, where("retentionDeleteAt", "<=", cutoff)));
+  let deletedUsers = 0;
+  let deletedInvites = 0;
+  const deletedEmails = [];
+
+  for (const userSnapshot of usersSnapshot.docs) {
+    const payload = userSnapshot.data() || {};
+    const archivedAt = normalizeIsoTimestamp(payload.archivedAt);
+    if (!archivedAt) {
+      continue;
+    }
+
+    const email = normalizeEmail(payload.email || userSnapshot.id);
+    await deleteDoc(doc(db, getUsersCollectionName(), userSnapshot.id));
+    deletedUsers += 1;
+    if (email) {
+      deletedEmails.push(email);
+      const inviteRef = collection(db, getInvitesCollectionName());
+      const inviteSnapshot = await getDocs(query(inviteRef, where("email", "==", email)));
+      for (const inviteDoc of inviteSnapshot.docs) {
+        await deleteDoc(doc(db, getInvitesCollectionName(), inviteDoc.id));
+        deletedInvites += 1;
+      }
+    }
+  }
+
+  return {
+    cutoff,
+    deletedUsers,
+    deletedInvites,
+    deletedEmails,
+  };
+}
+
+async function purgeDueArchivedUserAccountsInFile({ now }) {
+  const cutoff = normalizeIsoTimestamp(now) || nowIso();
+  const store = await loadStore();
+  const dueEmails = new Set();
+
+  store.users.forEach((user) => {
+    const archivedAt = normalizeIsoTimestamp(user.archivedAt);
+    if (!archivedAt) {
+      return;
+    }
+    const retentionDeleteAt = resolveRetentionDeleteAt({
+      archivedAt,
+      retentionDeleteAt: user.retentionDeleteAt,
+    });
+    if (retentionDeleteAt <= cutoff) {
+      dueEmails.add(user.email);
+    }
+  });
+
+  if (dueEmails.size === 0) {
+    return {
+      cutoff,
+      deletedUsers: 0,
+      deletedInvites: 0,
+      deletedEmails: [],
+    };
+  }
+
+  const initialUserCount = store.users.length;
+  const initialInviteCount = store.invites.length;
+  store.users = store.users.filter((user) => !dueEmails.has(user.email));
+  store.invites = store.invites.filter((invite) => !dueEmails.has(invite.email));
+  await writeStore(store);
+
+  return {
+    cutoff,
+    deletedUsers: initialUserCount - store.users.length,
+    deletedInvites: initialInviteCount - store.invites.length,
+    deletedEmails: Array.from(dueEmails.values()),
+  };
 }
 
 async function revokeInviteByIdInFirestore(db, inviteId) {
@@ -1738,4 +2291,104 @@ export async function updateUserAccountStatus({ userId, status }) {
   }
 
   return await updateUserAccountStatusInFile({ userId, status });
+}
+
+export async function archiveUserAccount({
+  userId,
+  archivedBy,
+  reason,
+  retentionDeleteAt,
+}) {
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await archiveUserAccountInFirestore(db, {
+        userId,
+        archivedBy,
+        reason,
+        retentionDeleteAt,
+      });
+    } catch {
+      return await archiveUserAccountInFile({
+        userId,
+        archivedBy,
+        reason,
+        retentionDeleteAt,
+      });
+    }
+  }
+
+  return await archiveUserAccountInFile({
+    userId,
+    archivedBy,
+    reason,
+    retentionDeleteAt,
+  });
+}
+
+export async function updateUserAccountRole({ userId, role }) {
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await updateUserAccountRoleInFirestore(db, { userId, role });
+    } catch {
+      return await updateUserAccountRoleInFile({ userId, role });
+    }
+  }
+
+  return await updateUserAccountRoleInFile({ userId, role });
+}
+
+export async function purgeDueArchivedUserAccounts({ now } = {}) {
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await purgeDueArchivedUserAccountsInFirestore(db, { now });
+    } catch {
+      return await purgeDueArchivedUserAccountsInFile({ now });
+    }
+  }
+
+  return await purgeDueArchivedUserAccountsInFile({ now });
+}
+
+export async function updateUserAccountProfile({
+  userId,
+  firstName,
+  middleName,
+  lastName,
+  profilePhotoDataUrl,
+  profilePhotoStoragePath,
+}) {
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await updateUserAccountProfileInFirestore(db, {
+        userId,
+        firstName,
+        middleName,
+        lastName,
+        profilePhotoDataUrl,
+        profilePhotoStoragePath,
+      });
+    } catch {
+      return await updateUserAccountProfileInFile({
+        userId,
+        firstName,
+        middleName,
+        lastName,
+        profilePhotoDataUrl,
+        profilePhotoStoragePath,
+      });
+    }
+  }
+
+  return await updateUserAccountProfileInFile({
+    userId,
+    firstName,
+    middleName,
+    lastName,
+    profilePhotoDataUrl,
+    profilePhotoStoragePath,
+  });
 }

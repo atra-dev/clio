@@ -3,6 +3,11 @@ import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { updateUserAccountStatus } from "@/lib/user-accounts";
 
+async function getUserId(paramsPromise) {
+  const params = await paramsPromise;
+  return typeof params?.userId === "string" ? params.userId : "";
+}
+
 export async function PATCH(request, { params }) {
   const auth = await authorizeApiRequest(request, {
     allowedRoles: ["SUPER_ADMIN"],
@@ -15,26 +20,16 @@ export async function PATCH(request, { params }) {
   }
 
   const { session } = auth;
-  const userId = typeof params?.userId === "string" ? params.userId : "";
+  const userId = await getUserId(params);
 
   try {
     const body = await request.json();
     const nextStatus = typeof body?.status === "string" ? body.status : "";
-    const updated = await updateUserAccountStatus({
-      userId,
-      status: nextStatus,
-    });
+    const normalizedTarget = String(userId || "").trim().toLowerCase();
+    const normalizedActor = String(session.email || "").trim().toLowerCase();
+    const normalizedStatus = String(nextStatus || "").trim().toLowerCase();
 
-    if (!updated) {
-      return NextResponse.json({ message: "User not found." }, { status: 404 });
-    }
-
-    if (updated.email === session.email && updated.status !== "active") {
-      await updateUserAccountStatus({
-        userId,
-        status: "active",
-      });
-
+    if (normalizedTarget && normalizedTarget === normalizedActor && normalizedStatus !== "active") {
       await recordAuditEvent({
         activityName: "Self-disable attempt blocked",
         status: "Rejected",
@@ -42,8 +37,8 @@ export async function PATCH(request, { params }) {
         performedBy: session.email,
         sensitivity: "Sensitive",
         metadata: {
-          targetUserId: updated.id,
-          targetEmail: updated.email,
+          targetUserId: userId,
+          targetEmail: session.email,
           attemptedStatus: nextStatus,
           reason: "self_lockout_prevented",
         },
@@ -54,6 +49,15 @@ export async function PATCH(request, { params }) {
         { message: "Cannot disable your own Super Admin account." },
         { status: 400 },
       );
+    }
+
+    const updated = await updateUserAccountStatus({
+      userId,
+      status: nextStatus,
+    });
+
+    if (!updated) {
+      return NextResponse.json({ message: "User not found." }, { status: 404 });
     }
 
     await recordAuditEvent({
