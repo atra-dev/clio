@@ -25,12 +25,32 @@ const DETAIL_TABS = [
 
 const EMPLOYMENT_STATUS_OPTIONS = ["Active Employee", "Probation", "On Leave", "Resigned", "Terminated"];
 const RECORD_STATUS_OPTIONS = ["Active", "Probation", "Inactive", "Archived"];
-const ROLE_OPTIONS = [
+const DEFAULT_ROLE_OPTIONS = [
   { value: "SUPER_ADMIN", label: "Super Admin" },
   { value: "GRC", label: "GRC" },
   { value: "HR", label: "HR" },
   { value: "EA", label: "EA" },
-  { value: "Employee", label: "Employee" },
+  { value: "EMPLOYEE_L1", label: "Employee (L1)" },
+  { value: "EMPLOYEE_L2", label: "Employee (L2)" },
+  { value: "EMPLOYEE_L3", label: "Employee (L3)" },
+];
+const DEFAULT_DEPARTMENT_OPTIONS = [
+  {
+    value: "Governance, Risk, and Compliance (GRC)",
+    label: "Governance, Risk, and Compliance (GRC)",
+  },
+  {
+    value: "Research and Development (R&D)",
+    label: "Research and Development (R&D)",
+  },
+  {
+    value: "Cyber Security Operations Center (CSOC)",
+    label: "Cyber Security Operations Center (CSOC)",
+  },
+  {
+    value: "Threat Intelligence (TI)",
+    label: "Threat Intelligence (TI)",
+  },
 ];
 const GOVERNMENT_ID_FIELDS = [
   { key: "primaryId", label: "Primary Government ID" },
@@ -53,7 +73,7 @@ const initialCreateForm = {
   employeeId: "",
   name: "",
   email: "",
-  role: "Employee",
+  role: "EMPLOYEE_L1",
   department: "",
   jobTitle: "",
   hireDate: "",
@@ -111,7 +131,7 @@ const initialPayrollDraft = {
 };
 
 const initialAccessDraft = {
-  role: "Employee",
+  role: "EMPLOYEE_L1",
   status: "Active",
   managerEmail: "",
 };
@@ -166,6 +186,38 @@ function ensureObject(value) {
   return {};
 }
 
+function toCatalogOption(entry) {
+  const value = String(entry?.value || "").trim();
+  const label = String(entry?.label || value).trim();
+  if (!value) {
+    return null;
+  }
+  return {
+    value,
+    label: label || value,
+  };
+}
+
+function mergeCatalogOptions(primary, fallback) {
+  const merged = [];
+  const seen = new Set();
+
+  [...ensureArray(primary), ...ensureArray(fallback)].forEach((entry) => {
+    const option = toCatalogOption(entry);
+    if (!option) {
+      return;
+    }
+    const key = `${option.value}::${option.label}`.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push(option);
+  });
+
+  return merged;
+}
+
 function valueOrDash(value) {
   const normalized = String(value ?? "").trim();
   return normalized || "-";
@@ -208,6 +260,16 @@ function toLabel(value) {
   const normalized = String(value || "").trim();
   if (!normalized) {
     return "-";
+  }
+  const normalizedUpper = normalized.toUpperCase();
+  const roleLabelMap = {
+    EMPLOYEE: "Employee (L1)",
+    EMPLOYEE_L1: "Employee (L1)",
+    EMPLOYEE_L2: "Employee (L2)",
+    EMPLOYEE_L3: "Employee (L3)",
+  };
+  if (roleLabelMap[normalizedUpper]) {
+    return roleLabelMap[normalizedUpper];
   }
   if (!normalized.includes("_")) {
     return normalized;
@@ -374,7 +436,7 @@ function buildAccessDraft(record) {
     return initialAccessDraft;
   }
   return {
-    role: String(record.role || "Employee"),
+    role: String(record.role || "EMPLOYEE_L1"),
     status: String(record.status || "Active"),
     managerEmail: String(record.managerEmail || ""),
   };
@@ -465,6 +527,10 @@ export default function EmployeeRecordsModule({ session }) {
   const actorEmail = session?.email || "";
   const employeeRole = isEmployeeRole(actorRole);
   const canManageRecords = !employeeRole;
+  const [referenceCatalog, setReferenceCatalog] = useState({
+    roles: DEFAULT_ROLE_OPTIONS,
+    departments: DEFAULT_DEPARTMENT_OPTIONS,
+  });
 
   const [detailTab, setDetailTab] = useState("profile");
   const [records, setRecords] = useState([]);
@@ -492,6 +558,14 @@ export default function EmployeeRecordsModule({ session }) {
   const detailTabs = useMemo(
     () => (employeeRole ? DETAIL_TABS.filter((tab) => tab.id === "profile") : DETAIL_TABS),
     [employeeRole],
+  );
+  const roleCatalogOptions = useMemo(
+    () => mergeCatalogOptions(referenceCatalog.roles, DEFAULT_ROLE_OPTIONS),
+    [referenceCatalog.roles],
+  );
+  const departmentCatalogOptions = useMemo(
+    () => mergeCatalogOptions(referenceCatalog.departments, DEFAULT_DEPARTMENT_OPTIONS),
+    [referenceCatalog.departments],
   );
 
   const openRecord = useCallback((row) => {
@@ -535,6 +609,42 @@ export default function EmployeeRecordsModule({ session }) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [showCreateForm]);
+
+  useEffect(() => {
+    if (employeeRole) {
+      setReferenceCatalog({
+        roles: DEFAULT_ROLE_OPTIONS,
+        departments: DEFAULT_DEPARTMENT_OPTIONS,
+      });
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const payload = await hrisApi.settings.referenceData.list();
+        if (!isMounted) {
+          return;
+        }
+        setReferenceCatalog({
+          roles: mergeCatalogOptions(payload?.catalogs?.roles, DEFAULT_ROLE_OPTIONS),
+          departments: mergeCatalogOptions(payload?.catalogs?.departments, DEFAULT_DEPARTMENT_OPTIONS),
+        });
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setReferenceCatalog({
+          roles: DEFAULT_ROLE_OPTIONS,
+          departments: DEFAULT_DEPARTMENT_OPTIONS,
+        });
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [employeeRole]);
 
   const loadDirectory = useCallback(async () => {
     setIsLoading(true);
@@ -618,13 +728,33 @@ export default function EmployeeRecordsModule({ session }) {
   );
 
   const roleOptions = useMemo(() => {
-    const options = [...ROLE_OPTIONS];
+    const options = [...roleCatalogOptions];
     const currentRole = String(selectedRow?.role || "").trim();
     if (currentRole && !options.some((option) => option.value === currentRole)) {
       options.push({ value: currentRole, label: toLabel(currentRole) });
     }
     return options;
-  }, [selectedRow?.role]);
+  }, [roleCatalogOptions, selectedRow?.role]);
+
+  useEffect(() => {
+    if (roleCatalogOptions.length === 0) {
+      return;
+    }
+    setCreateForm((current) => {
+      const currentRole = String(current.role || "").trim();
+      if (currentRole && roleCatalogOptions.some((option) => option.value === currentRole)) {
+        return current;
+      }
+      const preferredRole =
+        roleCatalogOptions.find((option) => option.value === "EMPLOYEE_L1")?.value ||
+        roleCatalogOptions.find((option) => option.value === "Employee")?.value ||
+        roleCatalogOptions[0].value;
+      return {
+        ...current,
+        role: preferredRole,
+      };
+    });
+  }, [roleCatalogOptions]);
 
   useEffect(() => {
     if (!selectedRow) {
@@ -1076,7 +1206,7 @@ export default function EmployeeRecordsModule({ session }) {
               className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-800 focus:border-sky-400 focus:outline-none"
             >
               <option value="">All Roles</option>
-              {ROLE_OPTIONS.map((roleOption) => (
+              {roleCatalogOptions.map((roleOption) => (
                 <option key={roleOption.value} value={roleOption.value.toLowerCase()}>
                   {roleOption.label}
                 </option>
@@ -1303,12 +1433,18 @@ export default function EmployeeRecordsModule({ session }) {
           placeholder="work.email@gmail.com"
           className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
         />
-        <input
+        <select
           value={createForm.department}
           onChange={handleCreateField("department")}
-          placeholder="Department"
           className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
+        >
+          <option value="">Department</option>
+          {departmentCatalogOptions.map((departmentOption) => (
+            <option key={`create-department-${departmentOption.value}`} value={departmentOption.value}>
+              {departmentOption.label}
+            </option>
+          ))}
+        </select>
         <input
           value={createForm.jobTitle}
           onChange={handleCreateField("jobTitle")}
@@ -1326,7 +1462,7 @@ export default function EmployeeRecordsModule({ session }) {
           onChange={handleCreateField("role")}
           className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
         >
-          {ROLE_OPTIONS.map((roleOption) => (
+          {roleCatalogOptions.map((roleOption) => (
             <option key={roleOption.value} value={roleOption.value}>
               {roleOption.label}
             </option>
@@ -1499,13 +1635,19 @@ export default function EmployeeRecordsModule({ session }) {
                 disabled={!canManageRecords}
                 className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
               />
-              <input
+              <select
                 value={masterDraft.department}
                 onChange={(event) => setMasterDraft((current) => ({ ...current, department: event.target.value }))}
-                placeholder="Department"
                 disabled={!canManageRecords}
                 className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
+              >
+                <option value="">Department</option>
+                {departmentCatalogOptions.map((departmentOption) => (
+                  <option key={`profile-department-${departmentOption.value}`} value={departmentOption.value}>
+                    {departmentOption.label}
+                  </option>
+                ))}
+              </select>
               <input
                 value={masterDraft.jobTitle}
                 onChange={(event) => setMasterDraft((current) => ({ ...current, jobTitle: event.target.value }))}
@@ -1840,7 +1982,7 @@ export default function EmployeeRecordsModule({ session }) {
       ) : (
         <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
-            {detailsRow("Role Assignment", toLabel(selectedRow.role || "Employee"))}
+            {detailsRow("Role Assignment", toLabel(selectedRow.role || "EMPLOYEE_L1"))}
             {detailsRow("Manager", selectedRow.managerEmail || "-")}
             {detailsRow("Record Status", selectedRow.status || "-")}
             {detailsRow("Last Updated", formatDate(selectedRow.updatedAt))}

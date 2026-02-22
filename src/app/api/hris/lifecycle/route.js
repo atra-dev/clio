@@ -111,7 +111,14 @@ export async function POST(request) {
 
   try {
     const body = await parseJsonBody(request);
-    const result = await createLifecycleRecordBackend(body, session.email);
+    const nextPayload = {
+      ...body,
+    };
+    delete nextPayload.workflow;
+    delete nextPayload.workflowAction;
+    delete nextPayload.evidence;
+
+    const result = await createLifecycleRecordBackend(nextPayload, session.email, session.role);
     const created = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];
 

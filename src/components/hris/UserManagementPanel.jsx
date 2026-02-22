@@ -4,23 +4,33 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { ROLES } from "@/features/hris/constants";
 
-const BASE_INVITE_ROLE_IDS = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
+const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
+const EMPLOYEE_ROLE_IDS = new Set(["EMPLOYEE", "EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
+const BASE_INVITE_ROLE_IDS = new Set(["SUPER_ADMIN", "GRC", "HR", "EA", EMPLOYEE_ACCOUNT_ROLE_ID]);
 const ROLE_LABEL_BY_ID = new Map(ROLES.map((role) => [role.id, role.label]));
-const CHANGE_ROLE_OPTIONS = ROLES.map((role) => ({
-  id: role.id,
-  label: role.label,
-}));
 
-const ROLE_OPTIONS = [
-  ...ROLES.filter((role) => BASE_INVITE_ROLE_IDS.has(role.id)).map((role) => ({
-    id: role.id,
-    label: role.label,
-  })),
-  {
-    id: "EMPLOYEE_L1",
-    label: "Employee",
-  },
-];
+function normalizeAccountRoleId(roleId) {
+  const normalized = String(roleId || "").trim().toUpperCase();
+  if (EMPLOYEE_ROLE_IDS.has(normalized)) {
+    return EMPLOYEE_ACCOUNT_ROLE_ID;
+  }
+  return normalized;
+}
+
+const ACCOUNT_ROLE_OPTIONS = (() => {
+  const deduped = new Map();
+  for (const role of ROLES) {
+    const normalizedRole = normalizeAccountRoleId(role.id);
+    if (!BASE_INVITE_ROLE_IDS.has(normalizedRole) || deduped.has(normalizedRole)) {
+      continue;
+    }
+    deduped.set(normalizedRole, {
+      id: normalizedRole,
+      label: normalizedRole === EMPLOYEE_ACCOUNT_ROLE_ID ? "Employee" : role.label,
+    });
+  }
+  return Array.from(deduped.values());
+})();
 
 const initialInviteForm = {
   email: "",
@@ -71,8 +81,8 @@ function getNextStatus(status) {
 }
 
 function formatRoleLabel(roleId) {
-  const normalized = String(roleId || "").trim().toUpperCase();
-  if (normalized.startsWith("EMPLOYEE_")) {
+  const normalized = normalizeAccountRoleId(roleId);
+  if (normalized === EMPLOYEE_ACCOUNT_ROLE_ID) {
     return "Employee";
   }
   return ROLE_LABEL_BY_ID.get(normalized) || roleId;
@@ -104,7 +114,7 @@ export default function UserManagementPanel() {
       setUsers(nextUsers);
       setRoleDraftByUserId(
         nextUsers.reduce((accumulator, user) => {
-          accumulator[user.id] = user.role;
+          accumulator[user.id] = normalizeAccountRoleId(user.role);
           return accumulator;
         }, {}),
       );
@@ -201,7 +211,7 @@ export default function UserManagementPanel() {
   };
 
   const handleRoleDraftChange = (userId) => (event) => {
-    const nextRole = String(event.target.value || "").trim().toUpperCase();
+    const nextRole = normalizeAccountRoleId(event.target.value);
     setRoleDraftByUserId((current) => ({
       ...current,
       [userId]: nextRole,
@@ -209,8 +219,9 @@ export default function UserManagementPanel() {
   };
 
   const handleRoleChange = async (user) => {
-    const requestedRole = String(roleDraftByUserId[user.id] || user.role).trim().toUpperCase();
-    if (!requestedRole || requestedRole === user.role) {
+    const requestedRole = normalizeAccountRoleId(roleDraftByUserId[user.id] || user.role);
+    const currentRole = normalizeAccountRoleId(user.role);
+    if (!requestedRole || requestedRole === currentRole) {
       return;
     }
 
@@ -240,7 +251,7 @@ export default function UserManagementPanel() {
       );
       setRoleDraftByUserId((current) => ({
         ...current,
-        [payload.user.id]: payload.user.role,
+        [payload.user.id]: normalizeAccountRoleId(payload.user.role),
       }));
       setSuccessMessage(`Role updated: ${payload.user.email} is now ${formatRoleLabel(payload.user.role)}.`);
     } catch (error) {
@@ -284,7 +295,7 @@ export default function UserManagementPanel() {
               onChange={handleInviteField("role")}
               className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
             >
-              {ROLE_OPTIONS.map((role) => (
+              {ACCOUNT_ROLE_OPTIONS.map((role) => (
                 <option key={role.id} value={role.id}>
                   {role.label}
                 </option>
@@ -360,12 +371,12 @@ export default function UserManagementPanel() {
                     <td className="px-2 py-3">
                       <div className="flex items-center gap-2">
                         <select
-                          value={roleDraftByUserId[user.id] || user.role}
+                          value={normalizeAccountRoleId(roleDraftByUserId[user.id] || user.role)}
                           onChange={handleRoleDraftChange(user.id)}
                           disabled={isUpdatingRoleId === user.id}
                           className="h-8 min-w-[132px] rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:opacity-70"
                         >
-                          {CHANGE_ROLE_OPTIONS.map((role) => (
+                          {ACCOUNT_ROLE_OPTIONS.map((role) => (
                             <option key={role.id} value={role.id}>
                               {role.label}
                             </option>
@@ -377,7 +388,7 @@ export default function UserManagementPanel() {
                           disabled={
                             isUpdatingRoleId === user.id ||
                             !roleDraftByUserId[user.id] ||
-                            roleDraftByUserId[user.id] === user.role
+                            normalizeAccountRoleId(roleDraftByUserId[user.id]) === normalizeAccountRoleId(user.role)
                           }
                           className="rounded-lg border border-sky-300 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-70"
                         >

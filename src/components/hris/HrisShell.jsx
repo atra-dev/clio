@@ -43,6 +43,34 @@ function getModuleLabelForRole(moduleId, defaultLabel, role) {
   return employeeLabels[moduleId] || defaultLabel;
 }
 
+function formatRoleLabel(roleValue) {
+  const role = String(roleValue || "").trim().toUpperCase();
+  if (role === "EMPLOYEE" || role.startsWith("EMPLOYEE_")) {
+    return "Employee";
+  }
+  const map = {
+    SUPER_ADMIN: "Super Admin",
+    GRC: "GRC",
+    HR: "HR",
+    EA: "EA",
+  };
+  return map[role] || "Employee";
+}
+
+function formatDateTime(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function ModuleIcon({ moduleId, active }) {
   const iconClass = cn(
     "h-4 w-4 transition-colors",
@@ -111,6 +139,28 @@ function ModuleIcon({ moduleId, active }) {
           <rect x="4" y="15.5" width="16" height="4.3" rx="1.2" />
         </svg>
       );
+    case "access-management":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <path d="M12 3.8 5.2 6.5v5.3c0 4.1 2.5 7.7 6.8 8.4 4.3-.7 6.8-4.3 6.8-8.4V6.5L12 3.8Z" />
+          <path d="M9.2 12.3 11 14l3.8-3.9" />
+        </svg>
+      );
+    case "retention-archive":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <rect x="4.4" y="5.2" width="15.2" height="4.2" rx="1" />
+          <path d="M6.1 9.6h11.8v8.7a1.7 1.7 0 0 1-1.7 1.7H7.8a1.7 1.7 0 0 1-1.7-1.7V9.6Z" />
+          <path d="M9 13.1h6M9 16h6" />
+        </svg>
+      );
+    case "incident-management":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
+          <path d="m12 3.8 8.1 14.1a1.2 1.2 0 0 1-1 1.8H4.9a1.2 1.2 0 0 1-1-1.8L12 3.8Z" />
+          <path d="M12 9v5.2M12 17.5h.01" />
+        </svg>
+      );
     case "documents":
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={iconClass} aria-hidden="true">
@@ -150,16 +200,6 @@ function ModuleIcon({ moduleId, active }) {
         </svg>
       );
   }
-}
-
-function SignOutIcon({ className }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={className} aria-hidden="true">
-      <path d="M14 4.5h3.2a1.8 1.8 0 0 1 1.8 1.8v11.4a1.8 1.8 0 0 1-1.8 1.8H14" />
-      <path d="M10.3 16.8 6 12.5l4.3-4.3" />
-      <path d="M18.8 12.5H6.2" />
-    </svg>
-  );
 }
 
 function SidebarCloseIcon({ className }) {
@@ -202,7 +242,22 @@ export default function HrisShell({ children, session }) {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isLoadingProfileInsights, setIsLoadingProfileInsights] = useState(false);
+  const [isRevokingSessions, setIsRevokingSessions] = useState(false);
+  const [profileInsights, setProfileInsights] = useState({
+    role: String(session?.role || ""),
+    employeeId: "-",
+    employeeName: "-",
+    department: "-",
+    jobTitle: "-",
+    lastLoginAt: null,
+    lastActiveIp: "unknown",
+    lastActiveDevice: "Unknown device",
+    recentActivity: [],
+  });
   const fileInputRef = useRef(null);
+  const profileButtonRef = useRef(null);
+  const profilePanelRef = useRef(null);
   const userName = useMemo(
     () =>
       formatPersonName({
@@ -275,23 +330,45 @@ export default function HrisShell({ children, session }) {
       return;
     }
 
-    const previousOverflow = document.body.style.overflow;
     const onKeyDown = (event) => {
-      if (event.key === "Escape" && !isSavingProfile && !isUploadingPhoto) {
+      if (event.key === "Escape" && !isSavingProfile && !isUploadingPhoto && !isRevokingSessions) {
         setIsProfileModalOpen(false);
       }
     };
-
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
+    const onPointerDown = (event) => {
+      if (isSavingProfile || isUploadingPhoto || isRevokingSessions) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (profilePanelRef.current?.contains(target) || profileButtonRef.current?.contains(target)) {
+        return;
+      }
+      setIsProfileModalOpen(false);
     };
-  }, [isProfileModalOpen, isSavingProfile, isUploadingPhoto]);
 
-  const modules = getModulesForRole(role);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [isProfileModalOpen, isSavingProfile, isUploadingPhoto, isRevokingSessions]);
+
+  const modules = useMemo(() => getModulesForRole(role), [role]);
   const currentDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date());
+  const accountRoleLabel = formatRoleLabel(profileInsights.role || role);
+  const recentAccountActivity = Array.isArray(profileInsights.recentActivity)
+    ? profileInsights.recentActivity.slice(0, 5)
+    : [];
+
+  useEffect(() => {
+    modules.forEach((module) => {
+      router.prefetch(module.href);
+    });
+  }, [modules, router]);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
@@ -307,7 +384,11 @@ export default function HrisShell({ children, session }) {
     setIsSidebarCollapsed((current) => !current);
   };
 
-  const openProfileEditor = () => {
+  const toggleProfileEditor = () => {
+    if (isProfileModalOpen) {
+      closeProfileEditor();
+      return;
+    }
     setProfileDraft({
       firstName: String(profile?.firstName || ""),
       middleName: String(profile?.middleName || ""),
@@ -316,13 +397,42 @@ export default function HrisShell({ children, session }) {
       profilePhotoStoragePath: String(profile?.profilePhotoStoragePath || ""),
     });
     setIsProfileModalOpen(true);
+    loadProfileInsights();
   };
 
   const closeProfileEditor = () => {
-    if (isSavingProfile || isUploadingPhoto) {
+    if (isSavingProfile || isUploadingPhoto || isRevokingSessions) {
       return;
     }
     setIsProfileModalOpen(false);
+  };
+
+  const loadProfileInsights = async () => {
+    setIsLoadingProfileInsights(true);
+    try {
+      const response = await fetch("/api/auth/profile/activity", { method: "GET", cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to load account insights.");
+      }
+
+      setProfileInsights((current) => ({
+        ...current,
+        role: String(payload?.role || current.role || session?.role || ""),
+        employeeId: String(payload?.employeeId || "-"),
+        employeeName: String(payload?.employeeName || "-"),
+        department: String(payload?.department || "-"),
+        jobTitle: String(payload?.jobTitle || "-"),
+        lastLoginAt: payload?.lastLoginAt || null,
+        lastActiveIp: String(payload?.lastActiveIp || "unknown"),
+        lastActiveDevice: String(payload?.lastActiveDevice || "Unknown device"),
+        recentActivity: Array.isArray(payload?.recentActivity) ? payload.recentActivity : [],
+      }));
+    } catch (error) {
+      toast.error(error.message || "Unable to load account insights.");
+    } finally {
+      setIsLoadingProfileInsights(false);
+    }
   };
 
   const handleDraftChange = (field) => (event) => {
@@ -381,7 +491,7 @@ export default function HrisShell({ children, session }) {
   };
 
   const handleProfileSave = async () => {
-    if (isUploadingPhoto) {
+    if (isUploadingPhoto || isRevokingSessions) {
       return;
     }
     setIsSavingProfile(true);
@@ -424,6 +534,30 @@ export default function HrisShell({ children, session }) {
       toast.error(error.message || "Unable to save profile.");
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  const handleSignOutAllDevices = async () => {
+    if (isSavingProfile || isUploadingPhoto || isSigningOut || isRevokingSessions) {
+      return;
+    }
+
+    setIsRevokingSessions(true);
+    try {
+      const response = await fetch("/api/auth/sessions/revoke", { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to revoke active sessions.");
+      }
+
+      toast.success("All active sessions were signed out.");
+      setIsProfileModalOpen(false);
+      router.replace("/login");
+      router.refresh();
+    } catch (error) {
+      toast.error(error.message || "Unable to revoke active sessions.");
+    } finally {
+      setIsRevokingSessions(false);
     }
   };
 
@@ -478,7 +612,7 @@ export default function HrisShell({ children, session }) {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-700/80">Navigation</p>
               </div>
               <nav
-                className="mt-2 max-h-full space-y-1.5 overflow-y-auto pr-1 pb-3 [scrollbar-color:#bfdbfe_transparent] [scrollbar-width:thin]"
+                className="mt-2 max-h-full space-y-1 overflow-y-auto pr-1 pb-3 [scrollbar-color:#bfdbfe_transparent] [scrollbar-width:thin]"
                 aria-label="Main navigation"
               >
                 {modules.map((module) => {
@@ -488,10 +622,11 @@ export default function HrisShell({ children, session }) {
                     <div key={module.id}>
                       <Link
                         href={module.href}
+                        prefetch
                         aria-current={isActive ? "page" : undefined}
                         title={isSidebarCollapsed ? moduleLabel : undefined}
                         className={cn(
-                          "group flex items-center gap-3 rounded-xl border py-2.5 text-sm transition",
+                          "group flex items-center gap-2.5 rounded-lg border py-2 text-[13px] transition",
                           isSidebarCollapsed ? "justify-center px-2.5" : "px-3",
                           isActive
                             ? "border-sky-200 bg-white text-sky-700 shadow-[0_12px_28px_-20px_rgba(14,116,214,0.8)]"
@@ -500,7 +635,7 @@ export default function HrisShell({ children, session }) {
                       >
                         <span
                           className={cn(
-                            "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition",
+                            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
                             isActive ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white",
                           )}
                         >
@@ -508,9 +643,9 @@ export default function HrisShell({ children, session }) {
                         </span>
                         <span
                           className={cn(
-                            "overflow-hidden whitespace-nowrap font-medium transition-all duration-300 ease-out",
+                            "overflow-hidden whitespace-nowrap font-medium leading-none transition-all duration-300 ease-out",
                             isActive ? "text-sky-700" : "text-slate-800",
-                            isSidebarCollapsed ? "max-w-0 -translate-x-2 opacity-0" : "max-w-[10rem] translate-x-0 opacity-100",
+                            isSidebarCollapsed ? "max-w-0 -translate-x-2 opacity-0" : "max-w-[11.5rem] translate-x-0 opacity-100",
                           )}
                         >
                           {moduleLabel}
@@ -528,29 +663,7 @@ export default function HrisShell({ children, session }) {
               </nav>
             </div>
 
-            <div className="mt-auto shrink-0 pt-5">
-              <button
-                type="button"
-                onClick={handleSignOut}
-                disabled={isSigningOut}
-                title={isSidebarCollapsed ? "Sign out" : undefined}
-                aria-label="Sign out"
-                className={cn(
-                  "inline-flex h-10 items-center rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-700 transition-all duration-300 ease-out hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70",
-                  isSidebarCollapsed ? "mx-auto w-10 justify-center px-0" : "w-full justify-center gap-2",
-                )}
-              >
-                <SignOutIcon className="h-4 w-4" />
-                <span
-                  className={cn(
-                    "overflow-hidden whitespace-nowrap transition-all duration-300 ease-out",
-                    isSidebarCollapsed ? "max-w-0 opacity-0" : "max-w-[8rem] opacity-100",
-                  )}
-                >
-                  {isSigningOut ? "Signing out..." : "Sign out"}
-                </span>
-              </button>
-            </div>
+            <div className="mt-auto shrink-0 pt-2" />
           </div>
         </aside>
 
@@ -561,14 +674,16 @@ export default function HrisShell({ children, session }) {
               <p className="text-xs text-slate-500">Today: {currentDate}</p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="relative flex items-center gap-3">
               <button
+                ref={profileButtonRef}
                 type="button"
-                onClick={openProfileEditor}
+                onClick={toggleProfileEditor}
                 disabled={isProfileLoading}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-left transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-wait disabled:opacity-70"
-                aria-label="Open account profile editor"
-                title="Edit account profile"
+                aria-label="Open account profile"
+                title="Account profile"
+                aria-expanded={isProfileModalOpen}
               >
                 {userAvatar ? (
                   <span className="inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -583,7 +698,209 @@ export default function HrisShell({ children, session }) {
                   <p className="max-w-[12rem] truncate text-xs font-semibold text-slate-900">{userName}</p>
                   <p className="max-w-[12rem] truncate text-[11px] text-slate-500">{userEmail}</p>
                 </span>
+                <span className="inline-flex h-5 w-5 items-center justify-center text-slate-400">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5" aria-hidden="true">
+                    <path d="m6.7 9.3 5.3 5.4 5.3-5.4" />
+                  </svg>
+                </span>
               </button>
+
+              <div
+                ref={profilePanelRef}
+                role="dialog"
+                aria-label="Account profile"
+                aria-hidden={!isProfileModalOpen}
+                className={cn(
+                  "absolute right-0 top-[calc(100%+0.6rem)] z-50 w-[min(94vw,42rem)] origin-top-right rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_22px_60px_-28px_rgba(15,23,42,0.45)] transition-all duration-200 sm:p-5",
+                  isProfileModalOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">Account Profile</h2>
+                    <p className="mt-0.5 text-sm text-slate-600">Update your name and profile picture.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeProfileEditor}
+                    disabled={isSavingProfile || isUploadingPhoto || isRevokingSessions}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-70"
+                    aria-label="Close profile panel"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4 w-4" aria-hidden="true">
+                      <path d="m6 6 12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-4">
+                  <div className="flex items-center gap-3">
+                    {profileDraft.profilePhotoDataUrl ? (
+                      <span className="inline-flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+                        <Image
+                          src={profileDraft.profilePhotoDataUrl}
+                          alt="Profile preview"
+                          width={56}
+                          height={56}
+                          className="h-full w-full object-cover"
+                          unoptimized
+                        />
+                      </span>
+                    ) : (
+                      <span className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white">
+                        {userInitials}
+                      </span>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploadingPhoto || isSavingProfile || isRevokingSessions}
+                        className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        {isUploadingPhoto ? "Uploading..." : "Upload Photo"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removeProfilePhoto}
+                        disabled={isUploadingPhoto || isSavingProfile || isRevokingSessions}
+                        className="inline-flex h-9 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                      >
+                        Remove
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        onChange={handlePhotoFileChange}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2.5 sm:grid-cols-3">
+                    <input
+                      value={profileDraft.firstName}
+                      onChange={handleDraftChange("firstName")}
+                      placeholder="First name"
+                      className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                    />
+                    <input
+                      value={profileDraft.middleName}
+                      onChange={handleDraftChange("middleName")}
+                      placeholder="Middle name"
+                      className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                    />
+                    <input
+                      value={profileDraft.lastName}
+                      onChange={handleDraftChange("lastName")}
+                      placeholder="Last name"
+                      className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                    />
+                  </div>
+
+                  <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Role</p>
+                        <p className="text-sm font-medium text-slate-900">{accountRoleLabel}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee ID</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.employeeId || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Department</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.department || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Position</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.jobTitle || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Login</p>
+                        <p className="text-sm font-medium text-slate-900">{formatDateTime(profileInsights.lastLoginAt)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Active</p>
+                        <p className="text-sm font-medium text-slate-900">
+                          {profileInsights.lastActiveDevice || "Unknown device"}{" "}
+                          <span className="text-xs text-slate-500">({profileInsights.lastActiveIp || "unknown"})</span>
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                        Recent Account Activity
+                      </p>
+                      {isLoadingProfileInsights ? (
+                        <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
+                      ) : null}
+                    </div>
+                    {isLoadingProfileInsights ? (
+                      <div className="flex justify-center py-3">
+                        <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
+                      </div>
+                    ) : recentAccountActivity.length === 0 ? (
+                      <p className="mt-2 text-xs text-slate-500">No recent account activity.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-2">
+                        {recentAccountActivity.map((item) => (
+                          <li key={item.id || `${item.activityName}-${item.loggedAt}`} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                            <p className="text-xs font-medium text-slate-800">{item.activityName}</p>
+                            <p className="mt-0.5 text-[11px] text-slate-500">
+                              {item.module} • {item.status} • {item.relativeTime || item.loggedAt}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      disabled={isSigningOut || isSavingProfile || isUploadingPhoto || isRevokingSessions}
+                      className="inline-flex h-9 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-70"
+                    >
+                      {isSigningOut ? "Signing out..." : "Sign out"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSignOutAllDevices}
+                      disabled={isRevokingSessions || isSigningOut || isSavingProfile || isUploadingPhoto}
+                      className="inline-flex h-9 items-center rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-70"
+                    >
+                      {isRevokingSessions ? "Revoking..." : "Sign out all devices"}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={closeProfileEditor}
+                      disabled={isSavingProfile || isUploadingPhoto || isRevokingSessions}
+                      className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleProfileSave}
+                      disabled={isSavingProfile || isUploadingPhoto || isRevokingSessions}
+                      className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
+                    >
+                      {isUploadingPhoto ? "Uploading..." : isSavingProfile ? "Saving..." : "Save Profile"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </header>
 
@@ -596,124 +913,6 @@ export default function HrisShell({ children, session }) {
         </div>
       </div>
 
-      {isProfileModalOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Edit account profile"
-          onClick={closeProfileEditor}
-        >
-          <div
-            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">Edit Account Profile</h2>
-                <p className="mt-0.5 text-sm text-slate-600">Update your name and profile picture.</p>
-              </div>
-              <button
-                type="button"
-                onClick={closeProfileEditor}
-                disabled={isSavingProfile}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-70"
-                aria-label="Close profile editor"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4 w-4" aria-hidden="true">
-                  <path d="m6 6 12 12M18 6 6 18" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center gap-3">
-                {profileDraft.profilePhotoDataUrl ? (
-                  <span className="inline-flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
-                    <Image
-                      src={profileDraft.profilePhotoDataUrl}
-                      alt="Profile preview"
-                      width={56}
-                      height={56}
-                      className="h-full w-full object-cover"
-                      unoptimized
-                    />
-                  </span>
-                ) : (
-                  <span className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white">
-                    {userInitials}
-                  </span>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingPhoto || isSavingProfile}
-                    className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    {isUploadingPhoto ? "Uploading..." : "Upload Photo"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={removeProfilePhoto}
-                    disabled={isUploadingPhoto || isSavingProfile}
-                    className="inline-flex h-9 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
-                  >
-                    Remove
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/jpg,image/webp"
-                    className="hidden"
-                    onChange={handlePhotoFileChange}
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <input
-                  value={profileDraft.firstName}
-                  onChange={handleDraftChange("firstName")}
-                  placeholder="First name"
-                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-                <input
-                  value={profileDraft.middleName}
-                  onChange={handleDraftChange("middleName")}
-                  placeholder="Middle name"
-                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-                <input
-                  value={profileDraft.lastName}
-                  onChange={handleDraftChange("lastName")}
-                  placeholder="Last name"
-                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeProfileEditor}
-                disabled={isSavingProfile || isUploadingPhoto}
-                className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleProfileSave}
-                disabled={isSavingProfile || isUploadingPhoto}
-                className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-              >
-                {isUploadingPhoto ? "Uploading..." : isSavingProfile ? "Saving..." : "Save Profile"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

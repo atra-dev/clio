@@ -182,15 +182,72 @@ export function mapBackendError(reason, fallbackMessage) {
         status: 400,
         message: "Target role is required and must be a valid system role.",
       };
+    case "forbidden_target_role":
+      return {
+        status: 403,
+        message: "Target role assignment is not allowed by lifecycle permission policy.",
+      };
     case "role_sync_failed":
       return {
         status: 409,
         message: "Employee user account was not found. Invite or activate the account before applying role changes.",
       };
+    case "approval_required":
+      return {
+        status: 409,
+        message: "Workflow approval chain must be completed before setting this status.",
+      };
+    case "invalid_workflow_action":
+      return {
+        status: 400,
+        message: "Invalid workflow action payload.",
+      };
+    case "invalid_approval_decision":
+      return {
+        status: 400,
+        message: "Approval decision must be approve or reject.",
+      };
+    case "no_pending_approval_step":
+      return {
+        status: 409,
+        message: "No pending approval step remains for this workflow.",
+      };
+    case "approval_not_allowed_for_role":
+      return {
+        status: 403,
+        message: "Current role is not allowed to approve the active step.",
+      };
     case "invalid_template_name":
       return { status: 400, message: "Template name is required." };
     case "invalid_export_dataset":
       return { status: 400, message: "Export dataset is required." };
+    case "invalid_reference_kind":
+      return { status: 400, message: "Reference type is invalid." };
+    case "invalid_reference_label":
+      return {
+        status: 400,
+        message: "Reference label is required and must be within the allowed length.",
+      };
+    case "invalid_retention_module":
+      return {
+        status: 400,
+        message: "Retention module filter is invalid.",
+      };
+    case "invalid_purge_confirmation":
+      return {
+        status: 400,
+        message: "Invalid purge confirmation phrase.",
+      };
+    case "duplicate_reference_value":
+      return {
+        status: 409,
+        message: "Reference value already exists.",
+      };
+    case "immutable_reference_item":
+      return {
+        status: 403,
+        message: "System reference values cannot be removed.",
+      };
     case "access_revocation_failed":
       return {
         status: 409,
@@ -222,7 +279,11 @@ export async function logApiAudit({
   performedBy = "system@gmail.com",
   metadata,
 }) {
-  await recordAuditEvent({
+  const shouldWriteAsync =
+    process.env.CLIO_AUDIT_ASYNC === "true" ||
+    (process.env.CLIO_AUDIT_ASYNC !== "false" && process.env.NODE_ENV !== "production");
+
+  const writePromise = recordAuditEvent({
     activityName,
     status,
     module,
@@ -231,4 +292,10 @@ export async function logApiAudit({
     metadata,
     request,
   }).catch(() => null);
+
+  if (shouldWriteAsync) {
+    return;
+  }
+
+  await writePromise;
 }

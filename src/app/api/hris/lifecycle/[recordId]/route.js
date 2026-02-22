@@ -107,7 +107,23 @@ export async function PATCH(request, { params }) {
 
   try {
     const body = await parseJsonBody(request);
-    const result = await updateLifecycleRecordBackend(recordId, body, session.email);
+    const workflowPatch = body?.workflow && typeof body.workflow === "object" ? body.workflow : null;
+    const workflowActionType = String(body?.workflowAction?.type || "")
+      .trim()
+      .toLowerCase();
+
+    if (workflowPatch) {
+      return NextResponse.json(
+        { message: "Direct workflow patch is not allowed. Use workflow actions and approval endpoint." },
+        { status: 403 },
+      );
+    }
+
+    if (workflowActionType === "approval-decision" || workflowActionType === "approve" || workflowActionType === "reject") {
+      return NextResponse.json({ message: "Approval flow must use the lifecycle approval endpoint." }, { status: 403 });
+    }
+
+    const result = await updateLifecycleRecordBackend(recordId, body, session.email, session.role);
     const updated = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];
     if (!updated) {

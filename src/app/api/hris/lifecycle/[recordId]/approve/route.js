@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeApiRequest } from "@/lib/api-authorization";
-import { forceOffboardLifecycleRecordBackend } from "@/lib/hris-backend";
+import { approveLifecycleRecordBackend } from "@/lib/hris-backend";
 import {
   canActorEditModule,
   logApiAudit,
@@ -17,7 +17,7 @@ export async function POST(request, { params }) {
   const auth = await authorizeApiRequest(request, {
     requiredPermissions: ["lifecycle:view"],
     auditModule: "Employment Lifecycle",
-    auditAction: "Lifecycle offboarding request",
+    auditAction: "Lifecycle approval request",
   });
   if (auth.error) {
     return auth.error;
@@ -25,17 +25,17 @@ export async function POST(request, { params }) {
 
   const { session } = auth;
   const recordId = await getRecordId(params);
-  const canOffboard = canActorEditModule({
+  const canApprove = canActorEditModule({
     role: session.role,
-    editPermission: "lifecycle:edit",
+    editPermission: "lifecycle:approve",
     isSelfResource: false,
   });
 
-  if (!canOffboard) {
+  if (!canApprove) {
     await logApiAudit({
       request,
       module: "Employment Lifecycle",
-      activityName: "Lifecycle offboarding blocked by permission policy",
+      activityName: "Lifecycle approval blocked by permission policy",
       status: "Rejected",
       sensitivity: "Sensitive",
       performedBy: session.email,
@@ -49,8 +49,15 @@ export async function POST(request, { params }) {
 
   try {
     const body = await parseJsonBody(request);
-    const reason = typeof body.reason === "string" ? body.reason : "";
-    const result = await forceOffboardLifecycleRecordBackend(recordId, session.email, reason, session.role);
+    const result = await approveLifecycleRecordBackend(
+      recordId,
+      {
+        decision: body?.decision,
+        note: body?.note,
+      },
+      session.email,
+      session.role,
+    );
     const updated = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];
     if (!updated) {
@@ -60,7 +67,7 @@ export async function POST(request, { params }) {
     await logApiAudit({
       request,
       module: "Employment Lifecycle",
-      activityName: "Immediate offboarding completed",
+      activityName: "Lifecycle workflow approval processed",
       status: "Approved",
       sensitivity: "Sensitive",
       performedBy: session.email,
@@ -68,26 +75,26 @@ export async function POST(request, { params }) {
         recordId,
         employeeEmail: updated.employeeEmail || null,
         status: updated.status || null,
-        reason: reason || null,
+        decision: String(body?.decision || "").trim() || null,
         effects,
       },
     });
 
     return NextResponse.json({ ok: true, record: updated, effects });
   } catch (error) {
-    const rawReason = error instanceof Error ? error.message : "unknown_error";
-    const mapped = mapBackendError(rawReason, "Unable to complete offboarding action.");
+    const reason = error instanceof Error ? error.message : "unknown_error";
+    const mapped = mapBackendError(reason, "Unable to process lifecycle approval.");
 
     await logApiAudit({
       request,
       module: "Employment Lifecycle",
-      activityName: "Immediate offboarding failed",
+      activityName: "Lifecycle workflow approval failed",
       status: "Failed",
       sensitivity: "Sensitive",
       performedBy: session.email,
       metadata: {
         recordId,
-        reason: rawReason,
+        reason,
       },
     });
 

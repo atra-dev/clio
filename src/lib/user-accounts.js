@@ -15,7 +15,6 @@ import {
   where,
 } from "firebase/firestore/lite";
 import { ROLES } from "@/features/hris/constants";
-import { normalizeRole } from "@/lib/hris";
 import { getFirestoreDb, isFirestoreEnabled } from "@/lib/firebase";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -23,6 +22,7 @@ const USER_STORE_FILE = path.join(DATA_DIR, "user-accounts.json");
 const ALLOWED_STATUSES = new Set(["pending", "active", "disabled"]);
 const ALLOWED_INVITE_STATUSES = new Set(["sent", "otp_sent", "verified", "revoked", "expired"]);
 const ALLOWED_ROLE_IDS = new Set(ROLES.map((role) => role.id));
+const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
 const DEFAULT_INVITE_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const DEFAULT_OTP_TTL_SECONDS = 300;
@@ -335,6 +335,46 @@ function parseEmailList(rawValue, fallback = []) {
     .filter(Boolean);
 }
 
+function isEmployeeRoleId(roleId) {
+  const normalized = String(roleId || "")
+    .trim()
+    .toUpperCase();
+  return normalized === "EMPLOYEE" || normalized.startsWith("EMPLOYEE_");
+}
+
+function normalizeRequestedAccountRole(roleId) {
+  const normalized = String(roleId || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized === "EMPLOYEE") {
+    return EMPLOYEE_ACCOUNT_ROLE_ID;
+  }
+
+  if (!ALLOWED_ROLE_IDS.has(normalized)) {
+    return "";
+  }
+
+  if (isEmployeeRoleId(normalized)) {
+    return EMPLOYEE_ACCOUNT_ROLE_ID;
+  }
+
+  return normalized;
+}
+
+function normalizeStoredAccountRole(roleId, fallbackRole = "HR") {
+  const requested = normalizeRequestedAccountRole(roleId);
+  if (requested) {
+    return requested;
+  }
+
+  const fallback = normalizeRequestedAccountRole(fallbackRole);
+  return fallback || "HR";
+}
+
 function getBootstrapAccounts() {
   const groups = [
     {
@@ -370,7 +410,7 @@ function getBootstrapAccounts() {
   return groups.flatMap((group) =>
     group.emails.map((email) => ({
       email,
-      role: group.role,
+      role: normalizeRequestedAccountRole(group.role) || group.role,
     })),
   );
 }
@@ -381,7 +421,7 @@ function normalizeUserRecord(user) {
     return null;
   }
 
-  const role = normalizeRole(user?.role);
+  const role = normalizeStoredAccountRole(user?.role, "HR");
   const status = ALLOWED_STATUSES.has(user?.status) ? user.status : "pending";
   const invitedAt = typeof user?.invitedAt === "string" ? user.invitedAt : nowIso();
   const updatedAt = typeof user?.updatedAt === "string" ? user.updatedAt : invitedAt;
@@ -420,7 +460,7 @@ function normalizeUserRecord(user) {
   return {
     id: typeof user?.id === "string" && user.id.trim().length > 0 ? user.id : email,
     email,
-    role: ALLOWED_ROLE_IDS.has(role) ? role : "HR",
+    role,
     status,
     sessionVersion: normalizeSessionVersion(user?.sessionVersion, 1),
     invitedBy: normalizeEmail(user?.invitedBy) || "system.clio@gmail.com",
@@ -454,7 +494,7 @@ function normalizeInviteRecord(invite) {
     return null;
   }
 
-  const role = normalizeRole(invite?.role);
+  const role = normalizeStoredAccountRole(invite?.role, "HR");
   const invitedAt = typeof invite?.invitedAt === "string" ? invite.invitedAt : nowIso();
   const expiresAt =
     typeof invite?.expiresAt === "string"
@@ -487,7 +527,7 @@ function normalizeInviteRecord(invite) {
   return {
     id: typeof invite?.id === "string" && invite.id.trim().length > 0 ? invite.id : createId("INV"),
     email,
-    role: ALLOWED_ROLE_IDS.has(role) ? role : "HR",
+    role,
     invitedBy: normalizeEmail(invite?.invitedBy) || "system.clio@gmail.com",
     invitedAt,
     expiresAt,
@@ -777,16 +817,43 @@ async function markUserLoginInFirestore(db, email) {
   return updated ? toPublicUser(updated) : null;
 }
 
+async function revokeUserSessionsInFirestore(db, { userId }) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedUserId);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const currentData = snapshot.data() || {};
+  const currentSessionVersion = normalizeSessionVersion(currentData?.sessionVersion, 1);
+  const timestamp = nowIso();
+  const nextPayload = {
+    sessionVersion: currentSessionVersion + 1,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...currentData,
+    ...nextPayload,
+  });
+  return updated ? toPublicUser(updated) : null;
+}
+
 async function inviteUserAccountInFirestore(db, { email, role, invitedBy }) {
   const normalizedEmail = normalizeEmail(email);
   if (!isValidEmail(normalizedEmail)) {
     throw new Error("invalid_email");
   }
 
-  const requestedRole = String(role || "")
-    .trim()
-    .toUpperCase();
-  if (!ALLOWED_ROLE_IDS.has(requestedRole)) {
+  const requestedRole = normalizeRequestedAccountRole(role);
+  if (!requestedRole) {
     throw new Error("invalid_role");
   }
 
@@ -921,10 +988,8 @@ async function updateUserAccountStatusInFirestore(db, { userId, status }) {
 }
 
 async function updateUserAccountRoleInFirestore(db, { userId, role }) {
-  const normalizedRole = String(role || "")
-    .trim()
-    .toUpperCase();
-  if (!ALLOWED_ROLE_IDS.has(normalizedRole)) {
+  const normalizedRole = normalizeRequestedAccountRole(role);
+  if (!normalizedRole) {
     throw new Error("invalid_role");
   }
 
@@ -940,7 +1005,7 @@ async function updateUserAccountRoleInFirestore(db, { userId, role }) {
   }
 
   const currentData = snapshot.data() || {};
-  const currentRole = String(currentData?.role || "").trim().toUpperCase();
+  const currentRole = normalizeStoredAccountRole(currentData?.role, "HR");
   const currentSessionVersion = normalizeSessionVersion(currentData?.sessionVersion, 1);
   const timestamp = nowIso();
   const nextPayload = {
@@ -1130,16 +1195,33 @@ async function markUserLoginInFile(email) {
   return toPublicUser(target);
 }
 
+async function revokeUserSessionsInFile({ userId }) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.id === normalizedUserId || item.email === normalizedUserId);
+  if (!user) {
+    return null;
+  }
+
+  const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
+  user.sessionVersion = currentSessionVersion + 1;
+  user.updatedAt = nowIso();
+  await writeStore(store);
+  return toPublicUser(user);
+}
+
 async function inviteUserAccountInFile({ email, role, invitedBy }) {
   const normalizedEmail = normalizeEmail(email);
   if (!isValidEmail(normalizedEmail)) {
     throw new Error("invalid_email");
   }
 
-  const requestedRole = String(role || "")
-    .trim()
-    .toUpperCase();
-  if (!ALLOWED_ROLE_IDS.has(requestedRole)) {
+  const requestedRole = normalizeRequestedAccountRole(role);
+  if (!requestedRole) {
     throw new Error("invalid_role");
   }
 
@@ -1280,10 +1362,8 @@ async function updateUserAccountStatusInFile({ userId, status }) {
 }
 
 async function updateUserAccountRoleInFile({ userId, role }) {
-  const normalizedRole = String(role || "")
-    .trim()
-    .toUpperCase();
-  if (!ALLOWED_ROLE_IDS.has(normalizedRole)) {
+  const normalizedRole = normalizeRequestedAccountRole(role);
+  if (!normalizedRole) {
     throw new Error("invalid_role");
   }
 
@@ -1298,7 +1378,7 @@ async function updateUserAccountRoleInFile({ userId, role }) {
     return null;
   }
 
-  const currentRole = String(user.role || "").trim().toUpperCase();
+  const currentRole = normalizeStoredAccountRole(user.role, "HR");
   const currentSessionVersion = normalizeSessionVersion(user.sessionVersion, 1);
   user.role = normalizedRole;
   user.sessionVersion = normalizedRole !== currentRole ? currentSessionVersion + 1 : currentSessionVersion;
@@ -2265,6 +2345,24 @@ export async function markUserLogin(email) {
   }
 
   return await markUserLoginInFile(normalizedEmail);
+}
+
+export async function revokeUserSessions({ userId }) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  if (!normalizedUserId) {
+    throw new Error("invalid_user");
+  }
+
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await revokeUserSessionsInFirestore(db, { userId: normalizedUserId });
+    } catch {
+      return await revokeUserSessionsInFile({ userId: normalizedUserId });
+    }
+  }
+
+  return await revokeUserSessionsInFile({ userId: normalizedUserId });
 }
 
 export async function inviteUserAccount({ email, role, invitedBy }) {

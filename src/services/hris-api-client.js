@@ -108,6 +108,12 @@ export const hrisApi = {
         body: JSON.stringify(payload),
       });
     },
+    async approve(recordId, payload = {}) {
+      return await requestJson(`/api/hris/lifecycle/${encodeURIComponent(recordId)}/approve`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
   },
 
   attendance: {
@@ -232,5 +238,36 @@ export const hrisApi = {
       });
     },
   },
-};
 
+  retention: {
+    async list(params = {}) {
+      return await requestJson(`/api/hris/retention${buildQuery(params)}`, { method: "GET" });
+    },
+    async purge(payload = {}) {
+      return await requestJson("/api/hris/retention", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+  },
+
+  settings: {
+    referenceData: {
+      async list() {
+        return await requestJson("/api/hris/settings/reference-data", { method: "GET" });
+      },
+      async create(payload) {
+        return await requestJson("/api/hris/settings/reference-data", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      },
+      async remove(payload) {
+        return await requestJson("/api/hris/settings/reference-data", {
+          method: "DELETE",
+          body: JSON.stringify(payload),
+        });
+      },
+    },
+  },
+};

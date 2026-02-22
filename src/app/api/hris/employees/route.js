@@ -30,7 +30,7 @@ function normalizeEmail(value) {
 function sanitizeSelfCreatePayload(body, sessionEmail) {
   return {
     email: normalizeEmail(sessionEmail),
-    role: "Employee",
+    role: "EMPLOYEE_L1",
     status: "Active",
     employmentStatus: "Active Employee",
     firstName: asString(body?.firstName),

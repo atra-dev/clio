@@ -18,9 +18,14 @@ service firebase.storage {
       allow read, write: if isSignedIn();
     }
 
+    // Lifecycle evidence: authenticated users only.
+    // For strict RBAC, add custom claims (role) and restrict to approver/editor roles.
+    match /clio/lifecycle-evidence/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
   }
 }
-

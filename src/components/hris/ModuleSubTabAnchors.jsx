@@ -1,12 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { toSubTabAnchor } from "@/lib/subtab-anchor";
 import { cn } from "@/lib/utils";
 
-const MODULE_SUBTABS = {};
+const MODULE_SUBTABS = {
+  "employment-lifecycle": [
+    { id: "workflow-status-tracking", label: "Workflow Status Tracking" },
+    { id: "onboarding", label: "Onboarding" },
+    { id: "role-changes", label: "Role Changes" },
+    { id: "disciplinary-records", label: "Disciplinary Records" },
+    { id: "offboarding-access-revocation", label: "Offboarding + Access Revocation" },
+  ],
+};
 
 export default function ModuleSubTabAnchors({ moduleId, moduleHref, visible = true }) {
   const pathname = usePathname();
@@ -32,26 +39,41 @@ export default function ModuleSubTabAnchors({ moduleId, moduleHref, visible = tr
     return null;
   }
 
+  const handleSubTabClick = (anchor) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextUrl = `${moduleHref}#${anchor}`;
+    window.history.pushState(null, "", nextUrl);
+    setHash(anchor);
+    window.dispatchEvent(
+      new CustomEvent("clio:subtab-anchor", {
+        detail: { moduleId, anchor },
+      }),
+    );
+  };
+
   return (
     <div className="mt-1.5 space-y-1.5 pl-12 pr-1">
-      {subTabs.map((subTab) => {
+      {subTabs.map((subTab, index) => {
         const anchor = toSubTabAnchor(subTab.id);
-        const href = `${moduleHref}#${anchor}`;
-        const isActive = hash === anchor || (!hash && subTab.id === "directory");
+        const isActive = hash === anchor || (!hash && index === 0);
 
         return (
-          <Link
+          <button
             key={subTab.id}
-            href={href}
+            type="button"
+            onClick={() => handleSubTabClick(anchor)}
             className={cn(
-              "block rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition",
+              "block w-full rounded-lg border px-2.5 py-1.5 text-left text-[11px] font-medium transition",
               isActive
                 ? "border-sky-200 bg-sky-50 text-sky-700"
                 : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-white hover:text-slate-800",
             )}
           >
             {subTab.label}
-          </Link>
+          </button>
         );
       })}
     </div>

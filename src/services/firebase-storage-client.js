@@ -67,6 +67,13 @@ function buildEmployeeDocumentPath({ employeeRecordId, employeeEmail, file }) {
   return `clio/employee-documents/${employeeScope}/${nowStamp()}-${fileBase}-${randomSuffix()}.${extension}`;
 }
 
+function buildLifecycleEvidencePath({ lifecycleRecordId, employeeEmail, file }) {
+  const workflowScope = sanitizeSegment(lifecycleRecordId || employeeEmail || "lifecycle", "lifecycle");
+  const fileBase = sanitizeSegment(String(file?.name || "").replace(/\.[^.]+$/, ""), "evidence");
+  const extension = inferExtension(file?.name, file?.type);
+  return `clio/lifecycle-evidence/${workflowScope}/${nowStamp()}-${fileBase}-${randomSuffix()}.${extension}`;
+}
+
 function normalizeUploadError(error, fallback) {
   const message = String(error?.message || "").trim();
   if (message.includes("firebase_storage_bucket_not_configured")) {
@@ -127,6 +134,31 @@ export async function uploadEmployeeDocumentToStorage({ file, employeeRecordId, 
     };
   } catch (error) {
     throw new Error(normalizeUploadError(error, "Unable to upload document file."));
+  }
+}
+
+export async function uploadLifecycleEvidenceToStorage({ file, lifecycleRecordId, employeeEmail }) {
+  if (!file) {
+    throw new Error("Evidence file is required.");
+  }
+
+  try {
+    const storage = getFirebaseClientStorage();
+    const storagePath = buildLifecycleEvidencePath({ lifecycleRecordId, employeeEmail, file });
+    const storageRef = ref(storage, storagePath);
+    await uploadBytes(storageRef, file, {
+      contentType: file.type || "application/octet-stream",
+      cacheControl: "private,max-age=0",
+    });
+    const downloadUrl = await getDownloadURL(storageRef);
+    return {
+      storagePath,
+      downloadUrl,
+      contentType: file.type || "",
+      sizeBytes: Number(file.size) || 0,
+    };
+  } catch (error) {
+    throw new Error(normalizeUploadError(error, "Unable to upload lifecycle evidence."));
   }
 }
 

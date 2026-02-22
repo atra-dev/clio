@@ -2,7 +2,7 @@ import DocumentTemplateRepositoryModule from "@/components/hris/modules/Document
 import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
-  title: "Template Repository | Clio HRIS",
+  title: "Document Repository | Clio HRIS",
 };
 
 export default async function DocumentsPage() {
@@ -11,7 +11,7 @@ export default async function DocumentsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Document Template Repository</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Document Repository</h1>
         <p className="mt-1 text-sm text-slate-600">
           Templates library, employee document mapping, contract sets, version tracking, and upload audit history.
         </p>

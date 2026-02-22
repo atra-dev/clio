@@ -1,4 +1,5 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import SettingsReferenceDataModule from "@/components/hris/modules/SettingsReferenceDataModule";
 import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
@@ -16,6 +17,8 @@ export default async function SettingsPage() {
           Security governance controls, privacy safeguards, and retention-aligned configuration.
         </p>
       </header>
+
+      <SettingsReferenceDataModule />
 
       <section className="grid gap-4 lg:grid-cols-3">
         <SurfaceCard title="Account Security" subtitle="Protection controls for HRIS access">

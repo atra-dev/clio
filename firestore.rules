@@ -140,6 +140,12 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() || isGRC();
     }
 
+    // Settings Reference Catalog (roles/departments for module select inputs)
+    match /settings_reference_data/{recordId} {
+      allow read: if isPrivilegedRole();
+      allow create, update, delete: if isPrivilegedRole();
+    }
+
     // Immutable Audit Trail
     match /clio_audit_logs/{logId} {
       allow read: if isSuperAdmin() || isGRC();
