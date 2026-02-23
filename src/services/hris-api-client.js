@@ -81,6 +81,12 @@ export const hrisApi = {
         }),
       });
     },
+    async logDocumentAccess(recordId, payload) {
+      return await requestJson(`/api/hris/employees/${encodeURIComponent(recordId)}/documents/access`, {
+        method: "POST",
+        body: JSON.stringify(payload || {}),
+      });
+    },
   },
 
   lifecycle: {
@@ -246,6 +252,27 @@ export const hrisApi = {
     async purge(payload = {}) {
       return await requestJson("/api/hris/retention", {
         method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+  },
+
+  incidents: {
+    async list(params = {}) {
+      return await requestJson(`/api/hris/incidents${buildQuery(params)}`, { method: "GET" });
+    },
+    async get(recordId) {
+      return await requestJson(`/api/hris/incidents/${encodeURIComponent(recordId)}`, { method: "GET" });
+    },
+    async create(payload) {
+      return await requestJson("/api/hris/incidents", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    async update(recordId, payload) {
+      return await requestJson(`/api/hris/incidents/${encodeURIComponent(recordId)}`, {
+        method: "PATCH",
         body: JSON.stringify(payload),
       });
     },

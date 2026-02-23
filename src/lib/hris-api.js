@@ -221,6 +221,26 @@ export function mapBackendError(reason, fallbackMessage) {
       return { status: 400, message: "Template name is required." };
     case "invalid_export_dataset":
       return { status: 400, message: "Export dataset is required." };
+    case "invalid_incident_title":
+      return { status: 400, message: "Incident title is required." };
+    case "invalid_incident_evidence_payload":
+      return { status: 400, message: "Incident evidence payload must be a valid document array." };
+    case "invalid_incident_evidence_name":
+      return { status: 400, message: "Incident evidence file name is required." };
+    case "invalid_incident_evidence_reference":
+      return { status: 400, message: "Incident evidence must include a valid file reference." };
+    case "invalid_incident_evidence_extension":
+      return { status: 400, message: "Incident evidence file extension is not allowed." };
+    case "invalid_incident_evidence_content_type":
+      return { status: 400, message: "Incident evidence MIME type is not allowed." };
+    case "invalid_incident_evidence_size":
+      return { status: 400, message: "Incident evidence file size exceeds the allowed limit." };
+    case "incident_evidence_av_not_configured":
+      return { status: 503, message: "Evidence security scan provider is not configured." };
+    case "incident_evidence_av_hook_failed":
+      return { status: 502, message: "Evidence security scan failed. Retry after security provider is available." };
+    case "incident_evidence_av_blocked":
+      return { status: 403, message: "Evidence file blocked by malware/security policy scan." };
     case "invalid_reference_kind":
       return { status: 400, message: "Reference type is invalid." };
     case "invalid_reference_label":
@@ -298,6 +318,88 @@ export function mapBackendError(reason, fallbackMessage) {
     default:
       return { status: 400, message: fallbackMessage || "Unable to process request." };
   }
+}
+
+function normalizeAuditTextValue(value) {
+  return String(value || "").trim();
+}
+
+function toComparableAuditValue(value) {
+  if (value == null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => toComparableAuditValue(entry));
+  }
+  if (typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((accumulator, key) => {
+        accumulator[key] = toComparableAuditValue(value[key]);
+        return accumulator;
+      }, {});
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return value;
+}
+
+export function areAuditValuesEqual(left, right) {
+  return JSON.stringify(toComparableAuditValue(left)) === JSON.stringify(toComparableAuditValue(right));
+}
+
+export function resolveAuditChangedFields(previousRecord, nextRecord, candidateFields = []) {
+  const fields = Array.isArray(candidateFields) ? candidateFields : [];
+  return fields.filter((field) => !areAuditValuesEqual(previousRecord?.[field], nextRecord?.[field]));
+}
+
+export function resolveAuditViewedFields(record, excludeFields = []) {
+  if (!record || typeof record !== "object") {
+    return [];
+  }
+  const exclude = new Set(
+    (Array.isArray(excludeFields) ? excludeFields : []).map((field) => normalizeAuditTextValue(field)),
+  );
+  return Object.keys(record)
+    .filter((field) => !exclude.has(field))
+    .sort();
+}
+
+export function resolveAuditRecordRef(record, fallbackRecordId = "", candidateKeys = []) {
+  const keys = Array.isArray(candidateKeys) ? candidateKeys : [];
+  const defaultCandidates = [
+    record?.employeeId,
+    record?.workflowId,
+    record?.lifecycleId,
+    record?.templateId,
+    record?.exportId,
+    record?.id,
+    fallbackRecordId,
+  ];
+  for (const key of keys) {
+    const fromRecord = normalizeAuditTextValue(record?.[key]);
+    if (fromRecord) {
+      return fromRecord;
+    }
+  }
+  for (const candidate of defaultCandidates) {
+    const normalized = normalizeAuditTextValue(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "N/A";
+}
+
+export function summarizeAuditFieldList(fields = [], emptyFallback = "No field details recorded.") {
+  const normalized = ensureArray(fields)
+    .map((field) => normalizeAuditTextValue(field))
+    .filter(Boolean);
+  if (normalized.length === 0) {
+    return emptyFallback;
+  }
+  return normalized.join(", ");
 }
 
 export async function logApiAudit({

@@ -17,6 +17,8 @@ import {
   mapBackendError,
   normalizeEmail,
   parseJsonBody,
+  resolveAuditRecordRef,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 const SELF_EDITABLE_LEAVE_FIELDS = new Set([
@@ -108,6 +110,15 @@ export async function GET(request) {
         resultCount: enrichedRecords.length,
         ownerFilterApplied: Boolean(ownerEmail),
         hasStatusFilter: Boolean(statusFilter),
+        viewedRecordRefs: enrichedRecords.slice(0, 25).map((row) => ({
+          recordId: row.id,
+          recordRef: resolveAuditRecordRef(row, row.id, ["employeeId", "id"]),
+          employeeEmail: row.employeeEmail || "",
+          leaveType: row.leaveType || "",
+          status: row.status || "",
+        })),
+        auditNote: `Listed ${enrichedRecords.length} leave request record(s) in the current query window.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -201,10 +212,20 @@ export async function POST(request) {
       performedBy: session.email,
       metadata: {
         recordId: created.id,
+        recordRef: resolveAuditRecordRef(created, created.id, ["employeeId", "id"]),
         employeeEmail: created.employeeEmail,
         leaveType: created.leaveType,
         status: created.status,
         selfService: !fullEdit,
+        resourceType: "Leave Request",
+        resourceLabel: `${created.employee || created.employeeEmail || "Employee"} ${created.leaveType ? `- ${created.leaveType}` : ""}`.trim(),
+        changedFields: Object.keys(nextPayload || {}),
+        changedFieldCount: Object.keys(nextPayload || {}).length,
+        auditNote: `Created leave request with fields: ${summarizeAuditFieldList(
+          Object.keys(nextPayload || {}),
+          "No explicit payload fields captured.",
+        )}.`,
+        nextAction: "No further action required.",
       },
     });
 

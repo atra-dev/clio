@@ -1090,6 +1090,27 @@ export default function EmployeeRecordsModule({ session }) {
     }
   };
 
+  const openDocument = (document, index) => {
+    const targetRecordId = normalizeRecordId(selectedId) || normalizeRecordId(selectedRow?.id);
+    const documentUrl = String(document?.ref || "").trim();
+    if (!documentUrl) {
+      return;
+    }
+
+    if (targetRecordId) {
+      hrisApi.employees
+        .logDocumentAccess(targetRecordId, {
+          documentId: String(document?.id || document?.recordId || index).trim(),
+          documentName: String(document?.name || "").trim(),
+          documentType: String(document?.type || "").trim(),
+          documentRef: documentUrl,
+        })
+        .catch(() => null);
+    }
+
+    window.open(documentUrl, "_blank", "noopener,noreferrer");
+  };
+
   const saveMasterData = async () => {
     if (!selectedRow?.id || !canManageRecords) {
       return;
@@ -1966,14 +1987,13 @@ export default function EmployeeRecordsModule({ session }) {
                       <td className="px-3 py-2 text-right">
                         <div className="inline-flex items-center justify-end gap-2">
                           {String(document.ref || "").trim() ? (
-                            <a
-                              href={String(document.ref)}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => openDocument(document, index)}
                               className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
                             >
                               Open
-                            </a>
+                            </button>
                           ) : null}
                           {canManageRecords ? (
                             <button

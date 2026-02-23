@@ -40,6 +40,83 @@ function sanitizeSelfEditPayload(payload) {
   }, {});
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function toComparableValue(value) {
+  if (value == null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => toComparableValue(item));
+  }
+  if (typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((accumulator, key) => {
+        accumulator[key] = toComparableValue(value[key]);
+        return accumulator;
+      }, {});
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return value;
+}
+
+function valuesAreEqual(left, right) {
+  return JSON.stringify(toComparableValue(left)) === JSON.stringify(toComparableValue(right));
+}
+
+function normalizeDocumentSummaryList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry, index) => {
+    const item = entry && typeof entry === "object" ? entry : {};
+    return {
+      id: normalizeText(item.id || item.recordId || item.storagePath || item.ref || `${index}`),
+      name: normalizeText(item.name || "Employee Document") || "Employee Document",
+      type: normalizeText(item.type || "General") || "General",
+    };
+  });
+}
+
+function summarizeDocumentDiff(previousDocuments, nextDocuments) {
+  const previous = normalizeDocumentSummaryList(previousDocuments);
+  const next = normalizeDocumentSummaryList(nextDocuments);
+  const previousById = new Map(previous.map((item) => [item.id, item]));
+  const nextById = new Map(next.map((item) => [item.id, item]));
+
+  const added = next.filter((item) => !previousById.has(item.id));
+  const removed = previous.filter((item) => !nextById.has(item.id));
+  const modified = next.filter((item) => {
+    const before = previousById.get(item.id);
+    if (!before) {
+      return false;
+    }
+    return !valuesAreEqual(before, item);
+  });
+
+  return {
+    totalBefore: previous.length,
+    totalAfter: next.length,
+    added,
+    removed,
+    modified,
+  };
+}
+
+function resolveViewedFieldList(record) {
+  if (!record || typeof record !== "object") {
+    return [];
+  }
+  return Object.keys(record)
+    .filter((key) => !["activityHistory", "traceability", "metadata"].includes(key))
+    .sort();
+}
+
 async function getRecordId(paramsPromise) {
   const params = await paramsPromise;
   return typeof params?.recordId === "string" ? params.recordId : "";
@@ -85,6 +162,10 @@ export async function GET(request, { params }) {
       return NextResponse.json({ message: "Forbidden." }, { status: 403 });
     }
 
+    const sanitizedRecord = sanitizeEmployeeRecordForViewer(record, session.role);
+    const viewedFields = resolveViewedFieldList(sanitizedRecord);
+    const accessedDocuments = normalizeDocumentSummaryList(sanitizedRecord.documents).slice(0, 20);
+
     await logApiAudit({
       request,
       module: "Employee Records",
@@ -94,11 +175,22 @@ export async function GET(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
-        employeeEmail: record.email,
+        recordRef: sanitizedRecord.employeeId || recordId,
+        employeeEmail: sanitizedRecord.email,
+        resourceType: "Employee Record",
+        resourceLabel: sanitizedRecord.name || sanitizedRecord.employeeId || sanitizedRecord.email,
+        viewedFields,
+        viewedFieldCount: viewedFields.length,
+        accessedDocuments,
+        accessedDocumentCount: accessedDocuments.length,
+        auditNote:
+          accessedDocuments.length > 0
+            ? `Viewed employee record and ${accessedDocuments.length} attached document reference(s).`
+            : "Viewed employee record profile and employment fields.",
+        nextAction: "No further action required.",
       },
     });
 
-    const sanitizedRecord = sanitizeEmployeeRecordForViewer(record, session.role);
     const actorDirectory = await createActorDirectory(collectEmployeeActorValues(sanitizedRecord));
     return NextResponse.json({ record: enrichEmployeeRecordActors(sanitizedRecord, actorDirectory) });
   } catch (error) {
@@ -198,6 +290,26 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
 
+    const updatedFieldKeys = Object.keys(nextPayload || {});
+    const changedFields = updatedFieldKeys.filter((field) => !valuesAreEqual(current?.[field], updated?.[field]));
+    const documentChanges = summarizeDocumentDiff(current?.documents, updated?.documents);
+    const hasDocumentMutation =
+      documentChanges.added.length > 0 ||
+      documentChanges.removed.length > 0 ||
+      documentChanges.modified.length > 0;
+    const normalizedChangedFields = hasDocumentMutation && !changedFields.includes("documents")
+      ? [...changedFields, "documents"]
+      : changedFields;
+    const changedFieldCount = normalizedChangedFields.length;
+    const documentSummaryText =
+      hasDocumentMutation
+        ? `Documents changed (added: ${documentChanges.added.length}, removed: ${documentChanges.removed.length}, modified: ${documentChanges.modified.length}).`
+        : "No document attachment changes.";
+    const changedSummaryText =
+      changedFieldCount > 0
+        ? `Updated fields: ${normalizedChangedFields.join(", ")}. ${documentSummaryText}`
+        : "Update request completed but no field values changed.";
+
     await logApiAudit({
       request,
       module: "Employee Records",
@@ -207,9 +319,17 @@ export async function PATCH(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: updated.employeeId || recordId,
         employeeEmail: updated.email,
-        updatedFields: Object.keys(nextPayload),
+        resourceType: "Employee Record",
+        resourceLabel: updated.name || updated.employeeId || updated.email,
+        updatedFields: updatedFieldKeys,
+        changedFields: normalizedChangedFields,
+        changedFieldCount,
+        documentChanges,
         selfServiceUpdate: !hasFullEdit,
+        auditNote: changedSummaryText,
+        nextAction: changedFieldCount > 0 ? "No further action required." : "Review payload and retry if needed.",
       },
     });
 

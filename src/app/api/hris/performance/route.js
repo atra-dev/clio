@@ -10,6 +10,8 @@ import {
   logApiAudit,
   mapBackendError,
   parseJsonBody,
+  resolveAuditRecordRef,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 export async function GET(request) {
@@ -58,6 +60,15 @@ export async function GET(request) {
         ownerFilterApplied: Boolean(ownerEmail),
         hasPeriodFilter: Boolean(periodFilter),
         hasStatusFilter: Boolean(statusFilter),
+        viewedRecordRefs: records.slice(0, 25).map((row) => ({
+          recordId: row.id,
+          recordRef: resolveAuditRecordRef(row, row.id, ["employeeId", "id"]),
+          employeeEmail: row.employeeEmail || "",
+          period: row.period || "",
+          status: row.status || "",
+        })),
+        auditNote: `Listed ${records.length} performance record(s) in the current query window.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -127,9 +138,19 @@ export async function POST(request) {
       performedBy: session.email,
       metadata: {
         recordId: created.id,
+        recordRef: resolveAuditRecordRef(created, created.id, ["employeeId", "id"]),
         employeeEmail: created.employeeEmail || null,
         period: created.period || null,
         status: created.status || null,
+        resourceType: "Performance Record",
+        resourceLabel: `${created.employee || created.employeeEmail || "Employee"} ${created.period ? `- ${created.period}` : ""}`.trim(),
+        changedFields: Object.keys(body || {}),
+        changedFieldCount: Object.keys(body || {}).length,
+        auditNote: `Created performance record with fields: ${summarizeAuditFieldList(
+          Object.keys(body || {}),
+          "No explicit payload fields captured.",
+        )}.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -153,4 +174,3 @@ export async function POST(request) {
     return NextResponse.json({ message: mapped.message }, { status: mapped.status });
   }
 }
-

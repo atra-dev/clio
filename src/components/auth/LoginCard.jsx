@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { useEffect, useState } from "react";
+import {
+  GoogleAuthProvider,
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from "firebase/auth";
 import { useRouter } from "next/navigation";
 import BrandMark from "@/components/ui/BrandMark";
 import { getFirebaseClientAuth } from "@/lib/firebase-client-auth";
@@ -10,6 +16,39 @@ export default function LoginCard() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const buildGoogleProvider = () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: "select_account",
+    });
+    return provider;
+  };
+
+  const mapLoginError = (error) => {
+    const rawCode = String(error?.code || "").trim();
+    const rawMessage = String(error?.message || "").trim();
+
+    if (rawCode === "auth/unauthorized-domain") {
+      return "Current domain is not authorized in Firebase Authentication settings.";
+    }
+    if (rawCode === "auth/invalid-api-key") {
+      return "Firebase API key is invalid. Check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local.";
+    }
+    if (rawCode === "auth/internal-error") {
+      return "Firebase sign-in failed due to browser/CSP restrictions. Allow popups and cookies for localhost, then restart dev server and try again.";
+    }
+    if (rawCode === "auth/multi-factor-auth-required") {
+      return "MFA is currently disabled in this app. Remove this user's enrolled MFA factors in Firebase Authentication, then sign in again.";
+    }
+    if (rawCode === "auth/invalid-app-credential") {
+      return "MFA is disabled in this app. If this user still has SMS MFA enrolled in Firebase, unenroll it first.";
+    }
+    if (rawMessage.startsWith("firebase_client_not_configured")) {
+      return "Firebase client is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID, then restart npm run dev.";
+    }
+    return error?.message || "Unable to complete Google sign-in.";
+  };
 
   const completeWorkspaceLogin = async (auth, firebaseUser) => {
     const idToken = await firebaseUser.getIdToken(true);
@@ -31,44 +70,78 @@ export default function LoginCard() {
     }
   };
 
+  useEffect(() => {
+    let active = true;
+    const processRedirectResult = async () => {
+      try {
+        const auth = getFirebaseClientAuth();
+        const redirectResult = await getRedirectResult(auth);
+        if (!active || !redirectResult?.user) {
+          return;
+        }
+        setIsSubmitting(true);
+        setErrorMessage("");
+        await completeWorkspaceLogin(auth, redirectResult.user);
+        router.replace("/dashboard");
+        router.refresh();
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(mapLoginError(error));
+      } finally {
+        if (active) {
+          setIsSubmitting(false);
+        }
+      }
+    };
+
+    processRedirectResult();
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
   const handleGoogleLogin = async () => {
     setIsSubmitting(true);
     setErrorMessage("");
 
+    let auth;
+    let provider;
+
     try {
-      const auth = getFirebaseClientAuth();
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: "select_account",
-      });
+      auth = getFirebaseClientAuth();
+      provider = buildGoogleProvider();
 
-      const result = await signInWithPopup(auth, provider);
-      await completeWorkspaceLogin(auth, result.user);
+      const popupResult = await signInWithPopup(auth, provider);
+      if (popupResult?.user) {
+        await completeWorkspaceLogin(auth, popupResult.user);
+        router.replace("/dashboard");
+        router.refresh();
+        return;
+      }
 
-      router.replace("/dashboard");
-      router.refresh();
+      await signInWithRedirect(auth, provider);
+      return;
     } catch (error) {
       const rawCode = String(error?.code || "").trim();
-      const rawMessage = String(error?.message || "").trim();
+      const canFallbackToRedirect =
+        rawCode === "auth/popup-blocked" ||
+        rawCode === "auth/popup-closed-by-user" ||
+        rawCode === "auth/cancelled-popup-request" ||
+        rawCode === "auth/internal-error";
 
-      const message =
-        rawCode === "auth/popup-closed-by-user"
-          ? "Google sign-in was cancelled."
-          : rawCode === "auth/popup-blocked"
-            ? "Popup was blocked by your browser. Allow popups and try again."
-            : rawCode === "auth/unauthorized-domain"
-              ? "Current domain is not authorized in Firebase Authentication settings."
-              : rawCode === "auth/invalid-api-key"
-                ? "Firebase API key is invalid. Check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local."
-                : rawMessage.startsWith("firebase_client_not_configured")
-                  ? "Firebase client is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID, then restart npm run dev."
-                  : rawCode === "auth/multi-factor-auth-required"
-                    ? "MFA is currently disabled in this app. Remove this user's enrolled MFA factors in Firebase Authentication, then sign in again."
-                    : rawCode === "auth/invalid-app-credential"
-                      ? "MFA is disabled in this app. If this user still has SMS MFA enrolled in Firebase, unenroll it first."
-                    : error?.message || "Unable to log in.";
+      if (canFallbackToRedirect && auth && provider) {
+        try {
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError) {
+          setErrorMessage(mapLoginError(redirectError));
+          return;
+        }
+      }
 
-      setErrorMessage(message);
+      setErrorMessage(mapLoginError(error));
     } finally {
       setIsSubmitting(false);
     }

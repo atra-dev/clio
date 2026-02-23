@@ -10,6 +10,10 @@ import {
   logApiAudit,
   mapBackendError,
   parseJsonBody,
+  resolveAuditChangedFields,
+  resolveAuditRecordRef,
+  resolveAuditViewedFields,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 async function getRecordId(paramsPromise) {
@@ -66,7 +70,13 @@ export async function GET(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(record, recordId, ["employeeId", "id"]),
         employeeEmail: record.employeeEmail || null,
+        resourceType: "Performance Record",
+        resourceLabel: `${record.employee || record.employeeEmail || "Employee"} ${record.period ? `- ${record.period}` : ""}`.trim(),
+        viewedFields: resolveAuditViewedFields(record, ["traceability"]),
+        auditNote: `Viewed performance record for ${record.employeeEmail || "employee"}.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -132,6 +142,7 @@ export async function PATCH(request, { params }) {
     if (!updated) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
+    const changedFields = resolveAuditChangedFields(record, updated, Object.keys(body || {}));
 
     await logApiAudit({
       request,
@@ -142,8 +153,18 @@ export async function PATCH(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(updated, recordId, ["employeeId", "id"]),
         employeeEmail: updated.employeeEmail || null,
         updatedFields: Object.keys(body || {}),
+        changedFields,
+        changedFieldCount: changedFields.length,
+        resourceType: "Performance Record",
+        resourceLabel: `${updated.employee || updated.employeeEmail || "Employee"} ${updated.period ? `- ${updated.period}` : ""}`.trim(),
+        auditNote:
+          changedFields.length > 0
+            ? `Updated performance fields: ${summarizeAuditFieldList(changedFields)}.`
+            : "Update request completed but no performance field values changed.",
+        nextAction: changedFields.length > 0 ? "No further action required." : "Review update payload and retry if needed.",
       },
     });
 

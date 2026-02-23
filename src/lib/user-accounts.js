@@ -15,6 +15,7 @@ import {
   where,
 } from "firebase/firestore/lite";
 import { ROLES } from "@/features/hris/constants";
+import { syncFirebaseCustomClaimsForUser } from "@/lib/firebase-custom-claims";
 import { getFirestoreDb, isFirestoreEnabled } from "@/lib/firebase";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -486,6 +487,48 @@ function normalizeUserRecord(user) {
     updatedAt,
     source: user?.source === "bootstrap" ? "bootstrap" : "invite",
   };
+}
+
+async function syncCustomClaimsForPublicUser(
+  user,
+  { allowMissingUser = true, strict = false } = {},
+) {
+  if (!user || typeof user !== "object") {
+    return {
+      ok: false,
+      reason: "invalid_user_payload",
+      email: "",
+    };
+  }
+
+  const email = normalizeEmail(user.email);
+  if (!email) {
+    return {
+      ok: false,
+      reason: "invalid_user_email",
+      email: "",
+    };
+  }
+
+  try {
+    return await syncFirebaseCustomClaimsForUser({
+      email,
+      role: normalizeStoredAccountRole(user.role, "HR"),
+      status: String(user.status || "").trim().toLowerCase() || "pending",
+      sessionVersion: normalizeSessionVersion(user.sessionVersion, 1),
+      allowMissingUser,
+      strict,
+    });
+  } catch (error) {
+    if (strict) {
+      throw error;
+    }
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : "firebase_claims_sync_failed",
+      email,
+    };
+  }
 }
 
 function normalizeInviteRecord(invite) {
@@ -2269,20 +2312,29 @@ export async function verifyInviteEmail({ token }) {
     "invite_user_not_found",
     "account_disabled",
   ]);
+
+  let result;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await completeInviteEmailVerificationInFirestore(db, { token });
+      result = await completeInviteEmailVerificationInFirestore(db, { token });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "";
       if (inviteBusinessErrors.has(reason)) {
         throw error;
       }
-      return await completeInviteEmailVerificationInFile({ token });
+      result = await completeInviteEmailVerificationInFile({ token });
     }
+  } else {
+    result = await completeInviteEmailVerificationInFile({ token });
   }
 
-  return await completeInviteEmailVerificationInFile({ token });
+  await syncCustomClaimsForPublicUser(result?.user, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return result;
 }
 
 export async function revokeInviteById(inviteId) {
@@ -2353,42 +2405,66 @@ export async function revokeUserSessions({ userId }) {
     throw new Error("invalid_user");
   }
 
+  let updatedUser;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await revokeUserSessionsInFirestore(db, { userId: normalizedUserId });
+      updatedUser = await revokeUserSessionsInFirestore(db, { userId: normalizedUserId });
     } catch {
-      return await revokeUserSessionsInFile({ userId: normalizedUserId });
+      updatedUser = await revokeUserSessionsInFile({ userId: normalizedUserId });
     }
+  } else {
+    updatedUser = await revokeUserSessionsInFile({ userId: normalizedUserId });
   }
 
-  return await revokeUserSessionsInFile({ userId: normalizedUserId });
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return updatedUser;
 }
 
 export async function inviteUserAccount({ email, role, invitedBy }) {
+  let result;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await inviteUserAccountInFirestore(db, { email, role, invitedBy });
+      result = await inviteUserAccountInFirestore(db, { email, role, invitedBy });
     } catch {
-      return await inviteUserAccountInFile({ email, role, invitedBy });
+      result = await inviteUserAccountInFile({ email, role, invitedBy });
     }
+  } else {
+    result = await inviteUserAccountInFile({ email, role, invitedBy });
   }
 
-  return await inviteUserAccountInFile({ email, role, invitedBy });
+  await syncCustomClaimsForPublicUser(result?.user, {
+    allowMissingUser: true,
+    strict: false,
+  });
+
+  return result;
 }
 
 export async function updateUserAccountStatus({ userId, status }) {
+  let updatedUser;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await updateUserAccountStatusInFirestore(db, { userId, status });
+      updatedUser = await updateUserAccountStatusInFirestore(db, { userId, status });
     } catch {
-      return await updateUserAccountStatusInFile({ userId, status });
+      updatedUser = await updateUserAccountStatusInFile({ userId, status });
     }
+  } else {
+    updatedUser = await updateUserAccountStatusInFile({ userId, status });
   }
 
-  return await updateUserAccountStatusInFile({ userId, status });
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return updatedUser;
 }
 
 export async function archiveUserAccount({
@@ -2397,44 +2473,60 @@ export async function archiveUserAccount({
   reason,
   retentionDeleteAt,
 }) {
+  let updatedUser;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await archiveUserAccountInFirestore(db, {
+      updatedUser = await archiveUserAccountInFirestore(db, {
         userId,
         archivedBy,
         reason,
         retentionDeleteAt,
       });
     } catch {
-      return await archiveUserAccountInFile({
+      updatedUser = await archiveUserAccountInFile({
         userId,
         archivedBy,
         reason,
         retentionDeleteAt,
       });
     }
+  } else {
+    updatedUser = await archiveUserAccountInFile({
+      userId,
+      archivedBy,
+      reason,
+      retentionDeleteAt,
+    });
   }
 
-  return await archiveUserAccountInFile({
-    userId,
-    archivedBy,
-    reason,
-    retentionDeleteAt,
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
   });
+
+  return updatedUser;
 }
 
 export async function updateUserAccountRole({ userId, role }) {
+  let updatedUser;
   const db = await getFirestoreStore();
   if (db) {
     try {
-      return await updateUserAccountRoleInFirestore(db, { userId, role });
+      updatedUser = await updateUserAccountRoleInFirestore(db, { userId, role });
     } catch {
-      return await updateUserAccountRoleInFile({ userId, role });
+      updatedUser = await updateUserAccountRoleInFile({ userId, role });
     }
+  } else {
+    updatedUser = await updateUserAccountRoleInFile({ userId, role });
   }
 
-  return await updateUserAccountRoleInFile({ userId, role });
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return updatedUser;
 }
 
 export async function purgeDueArchivedUserAccounts({ now } = {}) {

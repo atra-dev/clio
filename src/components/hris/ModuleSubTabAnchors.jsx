@@ -21,6 +21,11 @@ const MODULE_SUBTABS = {
     { id: "disciplinary-records", label: "Disciplinary Records" },
     { id: "offboarding-access-revocation", label: "Offboarding + Access Revocation" },
   ],
+  "incident-management": [
+    { id: "escalation-plan", label: "Escalation Plan" },
+    { id: "regulatory-72-hour-notification", label: "72-Hour Notification" },
+    { id: "forensic-logging", label: "Forensic Logging" },
+  ],
 };
 
 const EMPLOYEE_VISIBLE_SUBTABS = new Set(["profile", "documents"]);

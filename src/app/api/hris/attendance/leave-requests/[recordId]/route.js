@@ -10,6 +10,10 @@ import {
   logApiAudit,
   mapBackendError,
   parseJsonBody,
+  resolveAuditChangedFields,
+  resolveAuditRecordRef,
+  resolveAuditViewedFields,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 const SELF_EDITABLE_LEAVE_FIELDS = new Set([
@@ -86,8 +90,14 @@ export async function GET(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(record, recordId, ["employeeId", "id"]),
         employeeEmail: record.employeeEmail || null,
         status: record.status || null,
+        resourceType: "Leave Request",
+        resourceLabel: `${record.employee || record.employeeEmail || "Employee"} ${record.leaveType ? `- ${record.leaveType}` : ""}`.trim(),
+        viewedFields: resolveAuditViewedFields(record, ["modificationTrail"]),
+        auditNote: `Viewed leave request for ${record.employeeEmail || "employee"}.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -183,6 +193,7 @@ export async function PATCH(request, { params }) {
     if (!updated) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
+    const changedFields = resolveAuditChangedFields(current, updated, Object.keys(nextPayload || {}));
 
     await logApiAudit({
       request,
@@ -193,10 +204,20 @@ export async function PATCH(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(updated, recordId, ["employeeId", "id"]),
         employeeEmail: updated.employeeEmail || null,
         status: updated.status || null,
         updatedFields: Object.keys(nextPayload),
+        changedFields,
+        changedFieldCount: changedFields.length,
         selfServiceUpdate: !fullEdit,
+        resourceType: "Leave Request",
+        resourceLabel: `${updated.employee || updated.employeeEmail || "Employee"} ${updated.leaveType ? `- ${updated.leaveType}` : ""}`.trim(),
+        auditNote:
+          changedFields.length > 0
+            ? `Updated leave request fields: ${summarizeAuditFieldList(changedFields)}.`
+            : "Update request completed but no leave request field values changed.",
+        nextAction: changedFields.length > 0 ? "No further action required." : "Review update payload and retry if needed.",
       },
     });
 

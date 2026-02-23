@@ -9,7 +9,32 @@ import {
   logApiAudit,
   mapBackendError,
   parseJsonBody,
+  resolveAuditChangedFields,
+  resolveAuditRecordRef,
+  resolveAuditViewedFields,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
+
+function summarizeLifecycleEvidence(record) {
+  const evidenceItems = Array.isArray(record?.evidence) ? record.evidence : [];
+  return evidenceItems
+    .map((entry, index) => {
+      const source = entry && typeof entry === "object" ? entry : {};
+      const name = String(source.name || source.fileName || "").trim();
+      const type = String(source.type || "Lifecycle Evidence").trim();
+      const id = String(source.id || source.recordId || source.storagePath || `${index + 1}`).trim();
+      if (!name && !id) {
+        return null;
+      }
+      return {
+        id,
+        name: name || "Lifecycle Evidence",
+        type: type || "Lifecycle Evidence",
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+}
 
 async function getRecordId(paramsPromise) {
   const params = await paramsPromise;
@@ -34,6 +59,7 @@ export async function GET(request, { params }) {
     if (!record) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
+    const accessedDocuments = summarizeLifecycleEvidence(record);
 
     await logApiAudit({
       request,
@@ -44,8 +70,17 @@ export async function GET(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(record, recordId, ["workflowId", "employeeId", "id"]),
         employeeEmail: record.employeeEmail || null,
         category: record.category || null,
+        status: record.status || null,
+        resourceType: "Lifecycle Workflow",
+        resourceLabel: `${record.category || "Lifecycle"} - ${record.employeeEmail || "Employee"}`,
+        viewedFields: resolveAuditViewedFields(record, ["traceability"]),
+        accessedDocuments,
+        accessedDocumentCount: accessedDocuments.length,
+        auditNote: `Viewed lifecycle workflow (${record.category || "Uncategorized"}) for ${record.employeeEmail || "employee"}.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -129,6 +164,8 @@ export async function PATCH(request, { params }) {
     if (!updated) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
+    const changedFields = resolveAuditChangedFields(current, updated, Object.keys(body || {}));
+    const evidenceSummary = summarizeLifecycleEvidence(updated);
 
     await logApiAudit({
       request,
@@ -139,11 +176,23 @@ export async function PATCH(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(updated, recordId, ["workflowId", "employeeId", "id"]),
         employeeEmail: updated.employeeEmail || null,
         category: updated.category || null,
         status: updated.status || null,
         updatedFields: Object.keys(body || {}),
+        changedFields,
+        changedFieldCount: changedFields.length,
+        resourceType: "Lifecycle Workflow",
+        resourceLabel: `${updated.category || "Lifecycle"} - ${updated.employeeEmail || "Employee"}`,
+        accessedDocuments: evidenceSummary,
+        accessedDocumentCount: evidenceSummary.length,
         effects,
+        auditNote:
+          changedFields.length > 0
+            ? `Updated lifecycle fields: ${summarizeAuditFieldList(changedFields)}.`
+            : "Update request completed but no lifecycle field values changed.",
+        nextAction: changedFields.length > 0 ? "No further action required." : "Review update payload and retry if needed.",
       },
     });
 

@@ -125,6 +125,13 @@ export async function GET(request) {
         ownerFilterApplied: Boolean(ownerEmail),
         hasSearchQuery: Boolean(queryText),
         hasStatusFilter: Boolean(statusFilter),
+        viewedRecordRefs: records.slice(0, 25).map((record) => ({
+          recordId: record.id,
+          employeeId: record.employeeId || "",
+          employeeEmail: record.email || "",
+        })),
+        auditNote: `Listed ${records.length} employee record(s) in current page window.`,
+        nextAction: "No further action required.",
       },
     });
 

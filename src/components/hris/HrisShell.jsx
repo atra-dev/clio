@@ -2,18 +2,27 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import BrandMark from "@/components/ui/BrandMark";
 import ModuleSubTabAnchors from "@/components/hris/ModuleSubTabAnchors";
 import { useToast } from "@/components/ui/ToastProvider";
 import { getModulesForRole, normalizeRole } from "@/lib/hris";
+import { canAccessModule } from "@/lib/rbac";
+import { MODULES } from "@/features/hris/constants";
 import { formatPersonName } from "@/lib/name-utils";
 import {
   removeStorageObjectByPath,
   uploadProfilePhotoToStorage,
 } from "@/services/firebase-storage-client";
 import { cn } from "@/lib/utils";
+
+const MODULE_ID_BY_HREF = new Map(
+  MODULES.map((module) => [String(module?.href || "").trim().toLowerCase(), module.id]),
+);
+const MODULE_ID_BY_LABEL = new Map(
+  MODULES.map((module) => [String(module?.label || "").trim().toLowerCase(), module.id]),
+);
 
 function getInitials(label) {
   const initials = label
@@ -94,6 +103,87 @@ function formatDate(value) {
     day: "2-digit",
     year: "numeric",
   }).format(date);
+}
+
+function formatSourceIp(value) {
+  const ip = String(value || "").trim();
+  if (!ip || ip.toLowerCase() === "unknown") {
+    return "Unknown";
+  }
+
+  const localIpSet = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);
+  if (localIpSet.has(ip.toLowerCase())) {
+    return `Localhost (${ip})`;
+  }
+
+  return ip;
+}
+
+function formatNotificationRelativeTime(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Just now";
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  if (diffMinutes <= 0) {
+    return "Just now";
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) {
+    return `${diffDays}d ago`;
+  }
+  return formatDateTime(date.toISOString());
+}
+
+function notificationSeverityClass(value) {
+  const severity = String(value || "").trim().toLowerCase();
+  if (severity === "critical") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  if (severity === "high") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (severity === "low") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  return "border-sky-200 bg-sky-50 text-sky-700";
+}
+
+function resolveActionPathname(actionUrl) {
+  const raw = String(actionUrl || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const base = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+    return String(new URL(raw, base).pathname || "").trim().toLowerCase();
+  } catch {
+    return raw.split("?")[0].split("#")[0].trim().toLowerCase();
+  }
+}
+
+function resolveNotificationModuleId(notification) {
+  const actionPathname = resolveActionPathname(notification?.actionUrl);
+  if (actionPathname) {
+    const firstSegment = actionPathname.replace(/^\/+/, "").split("/")[0];
+    const fromHref = MODULE_ID_BY_HREF.get(`/${firstSegment}`);
+    if (fromHref) {
+      return fromHref;
+    }
+  }
+
+  const moduleLabel = String(notification?.module || "").trim().toLowerCase();
+  return MODULE_ID_BY_LABEL.get(moduleLabel) || "";
 }
 
 function ModuleIcon({ moduleId, active }) {
@@ -265,6 +355,11 @@ export default function HrisShell({ children, session }) {
   });
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
+  const [isMarkingNotifications, setIsMarkingNotifications] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isLoadingProfileInsights, setIsLoadingProfileInsights] = useState(false);
@@ -287,6 +382,8 @@ export default function HrisShell({ children, session }) {
     recentActivity: [],
   });
   const fileInputRef = useRef(null);
+  const notificationsButtonRef = useRef(null);
+  const notificationsPanelRef = useRef(null);
   const profileButtonRef = useRef(null);
   const profilePanelRef = useRef(null);
   const userName = useMemo(
@@ -356,28 +453,79 @@ export default function HrisShell({ children, session }) {
     };
   }, [toast, userEmail]);
 
+  const loadNotifications = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) {
+      setIsLoadingNotifications(true);
+    }
+    try {
+      const response = await fetch("/api/notifications?status=all&limit=16", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to load notifications.");
+      }
+      setNotifications(Array.isArray(payload?.records) ? payload.records : []);
+      setNotificationUnreadCount(Number(payload?.unreadCount || 0));
+    } catch (error) {
+      if (!quiet) {
+        toast.error(error.message || "Unable to load notifications.");
+      }
+    } finally {
+      if (!quiet) {
+        setIsLoadingNotifications(false);
+      }
+    }
+  }, [toast]);
+
   useEffect(() => {
-    if (!isProfileModalOpen || typeof window === "undefined") {
+    loadNotifications().catch(() => null);
+    const timer = window.setInterval(() => {
+      loadNotifications({ quiet: true }).catch(() => null);
+    }, 30000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    if ((!isProfileModalOpen && !isNotificationsOpen) || typeof window === "undefined") {
       return;
     }
 
     const onKeyDown = (event) => {
-      if (event.key === "Escape" && !isSavingProfile && !isUploadingPhoto && !isRevokingSessions) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (!isSavingProfile && !isUploadingPhoto && !isRevokingSessions) {
         setIsProfileModalOpen(false);
+      }
+      if (!isMarkingNotifications) {
+        setIsNotificationsOpen(false);
       }
     };
     const onPointerDown = (event) => {
-      if (isSavingProfile || isUploadingPhoto || isRevokingSessions) {
-        return;
-      }
       const target = event.target;
       if (!(target instanceof Node)) {
         return;
       }
-      if (profilePanelRef.current?.contains(target) || profileButtonRef.current?.contains(target)) {
+
+      const insideProfile =
+        profilePanelRef.current?.contains(target) || profileButtonRef.current?.contains(target);
+      const insideNotifications =
+        notificationsPanelRef.current?.contains(target) || notificationsButtonRef.current?.contains(target);
+      if (insideProfile || insideNotifications) {
         return;
       }
-      setIsProfileModalOpen(false);
+
+      if (!isSavingProfile && !isUploadingPhoto && !isRevokingSessions) {
+        setIsProfileModalOpen(false);
+      }
+      if (!isMarkingNotifications) {
+        setIsNotificationsOpen(false);
+      }
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -386,7 +534,14 @@ export default function HrisShell({ children, session }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("mousedown", onPointerDown);
     };
-  }, [isProfileModalOpen, isSavingProfile, isUploadingPhoto, isRevokingSessions]);
+  }, [
+    isMarkingNotifications,
+    isNotificationsOpen,
+    isProfileModalOpen,
+    isRevokingSessions,
+    isSavingProfile,
+    isUploadingPhoto,
+  ]);
 
   const modules = useMemo(() => getModulesForRole(role), [role]);
   const currentDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date());
@@ -395,6 +550,22 @@ export default function HrisShell({ children, session }) {
   const recentAccountActivity = Array.isArray(profileInsights.recentActivity)
     ? profileInsights.recentActivity.slice(0, 5)
     : [];
+  const canOpenNotificationTarget = useCallback(
+    (notification) => {
+      const actionUrl = String(notification?.actionUrl || "").trim();
+      if (!actionUrl) {
+        return false;
+      }
+
+      const moduleId = resolveNotificationModuleId(notification);
+      if (!moduleId) {
+        return false;
+      }
+
+      return canAccessModule(role, moduleId);
+    },
+    [role],
+  );
 
   useEffect(() => {
     modules.forEach((module) => {
@@ -416,6 +587,16 @@ export default function HrisShell({ children, session }) {
     setIsSidebarCollapsed((current) => !current);
   };
 
+  const toggleNotificationsPanel = () => {
+    if (isNotificationsOpen) {
+      setIsNotificationsOpen(false);
+      return;
+    }
+    setIsProfileModalOpen(false);
+    setIsNotificationsOpen(true);
+    loadNotifications({ quiet: true }).catch(() => null);
+  };
+
   const toggleProfileEditor = () => {
     if (isProfileModalOpen) {
       closeProfileEditor();
@@ -428,6 +609,7 @@ export default function HrisShell({ children, session }) {
       profilePhotoDataUrl: String(profile?.profilePhotoDataUrl || ""),
       profilePhotoStoragePath: String(profile?.profilePhotoStoragePath || ""),
     });
+    setIsNotificationsOpen(false);
     setIsProfileModalOpen(true);
     loadProfileInsights();
   };
@@ -437,6 +619,87 @@ export default function HrisShell({ children, session }) {
       return;
     }
     setIsProfileModalOpen(false);
+  };
+
+  const markNotificationAsRead = async (record) => {
+    const recordId = String(record?.id || record?.recordId || "").trim();
+    if (!recordId || String(record?.status || "").trim().toLowerCase() === "read") {
+      return;
+    }
+
+    setIsMarkingNotifications(true);
+    try {
+      const response = await fetch(`/api/notifications/${encodeURIComponent(recordId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ read: true }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to update notification.");
+      }
+
+      setNotifications((current) =>
+        current.map((item) =>
+          String(item?.id || item?.recordId || "").trim() === recordId
+            ? { ...item, status: "read", readAt: new Date().toISOString() }
+            : item,
+        ),
+      );
+      setNotificationUnreadCount((current) => Math.max(0, current - 1));
+    } catch (error) {
+      toast.error(error.message || "Unable to update notification.");
+    } finally {
+      setIsMarkingNotifications(false);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    if (isMarkingNotifications) {
+      return;
+    }
+    setIsMarkingNotifications(true);
+    try {
+      const response = await fetch("/api/notifications/read-all", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ limit: 200 }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to mark notifications as read.");
+      }
+
+      setNotifications((current) =>
+        current.map((item) => ({
+          ...item,
+          status: "read",
+          readAt: item?.readAt || new Date().toISOString(),
+        })),
+      );
+      setNotificationUnreadCount(0);
+    } catch (error) {
+      toast.error(error.message || "Unable to mark notifications as read.");
+    } finally {
+      setIsMarkingNotifications(false);
+    }
+  };
+
+  const openNotificationTarget = async (notification) => {
+    if (!canOpenNotificationTarget(notification)) {
+      return;
+    }
+
+    await markNotificationAsRead(notification);
+    const actionUrl = String(notification?.actionUrl || "").trim();
+    if (actionUrl) {
+      setIsNotificationsOpen(false);
+      router.push(actionUrl);
+    }
   };
 
   const loadProfileInsights = async () => {
@@ -715,38 +978,146 @@ export default function HrisShell({ children, session }) {
               <p className="text-xs text-slate-500">Today: {currentDate}</p>
             </div>
 
-            <div className="relative flex items-center gap-3">
-              <button
-                ref={profileButtonRef}
-                type="button"
-                onClick={toggleProfileEditor}
-                disabled={isProfileLoading}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-left transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-wait disabled:opacity-70"
-                aria-label="Open account profile"
-                title="Account profile"
-                aria-expanded={isProfileModalOpen}
-              >
-                {userAvatar ? (
-                  <span className="inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                    <Image src={userAvatar} alt="Profile picture" width={32} height={32} className="h-full w-full object-cover" unoptimized />
-                  </span>
-                ) : (
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
-                    {userInitials}
-                  </span>
-                )}
-                <span className="hidden text-left sm:block">
-                  <p className="max-w-[12rem] truncate text-xs font-semibold text-slate-900">{userName}</p>
-                  <p className="max-w-[12rem] truncate text-[11px] text-slate-500">{userEmail}</p>
-                </span>
-                <span className="inline-flex h-5 w-5 items-center justify-center text-slate-400">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5" aria-hidden="true">
-                    <path d="m6.7 9.3 5.3 5.4 5.3-5.4" />
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <button
+                  ref={notificationsButtonRef}
+                  type="button"
+                  onClick={toggleNotificationsPanel}
+                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/60"
+                  aria-label="Open notifications"
+                  aria-expanded={isNotificationsOpen}
+                  title="Notifications"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4.5 w-4.5" aria-hidden="true">
+                    <path d="M7.3 10.2a4.7 4.7 0 1 1 9.4 0v3.3l1.4 2v1h-12v-1l1.2-2v-3.3" />
+                    <path d="M10.1 17.6a2.1 2.1 0 0 0 3.8 0" />
                   </svg>
-                </span>
-              </button>
+                  {notificationUnreadCount > 0 ? (
+                    <span className="absolute -right-1.5 -top-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                    </span>
+                  ) : null}
+                </button>
 
-              <div
+                <div
+                  ref={notificationsPanelRef}
+                  role="dialog"
+                  aria-label="Notifications"
+                  aria-hidden={!isNotificationsOpen}
+                  className={cn(
+                    "absolute right-0 top-[calc(100%+0.55rem)] z-50 w-[min(92vw,24rem)] max-h-[calc(100dvh-8rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_20px_50px_-30px_rgba(15,23,42,0.45)] transition-all duration-200",
+                    isNotificationsOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Notifications</p>
+                      <p className="text-[11px] text-slate-500">
+                        {notificationUnreadCount > 0
+                          ? `${notificationUnreadCount} unread alert${notificationUnreadCount === 1 ? "" : "s"}`
+                          : "No unread alerts"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={markAllNotificationsAsRead}
+                      disabled={isMarkingNotifications || notificationUnreadCount === 0}
+                      className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Mark all read
+                    </button>
+                  </div>
+
+                  <div className="mt-2">
+                    {isLoadingNotifications ? (
+                      <div className="flex justify-center py-6">
+                        <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
+                        No notifications yet.
+                      </p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {notifications.map((item) => {
+                          const itemId = String(item?.id || item?.recordId || "").trim() || `${item?.title}-${item?.createdAt}`;
+                          const unread = String(item?.status || "").trim().toLowerCase() !== "read";
+                          const canOpen = canOpenNotificationTarget(item);
+                          return (
+                            <li key={itemId}>
+                              <button
+                                type="button"
+                                onClick={() => openNotificationTarget(item)}
+                                disabled={!canOpen}
+                                aria-disabled={!canOpen}
+                                title={canOpen ? "Open notification" : "You do not have access to open this notification target."}
+                                className={cn(
+                                  "w-full rounded-lg border px-2.5 py-2 text-left transition",
+                                  canOpen ? "hover:bg-slate-50" : "cursor-default",
+                                  unread ? "border-sky-200 bg-sky-50/50" : "border-slate-200 bg-white",
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-xs font-semibold text-slate-900">{String(item?.title || "Security notification")}</p>
+                                  <span
+                                    className={cn(
+                                      "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold capitalize",
+                                      notificationSeverityClass(item?.severity),
+                                    )}
+                                  >
+                                    {String(item?.severity || "medium")}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-slate-600">{String(item?.message || "")}</p>
+                                {!canOpen ? (
+                                  <p className="mt-1 text-[10px] font-medium text-slate-500">Read-only alert for visibility.</p>
+                                ) : null}
+                                <p className="mt-1 text-[10px] text-slate-500">
+                                  {formatNotificationRelativeTime(item?.createdAt)} | {String(item?.module || "System")}
+                                </p>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative">
+                <button
+                  ref={profileButtonRef}
+                  type="button"
+                  onClick={toggleProfileEditor}
+                  disabled={isProfileLoading}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-left transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-wait disabled:opacity-70"
+                  aria-label="Open account profile"
+                  title="Account profile"
+                  aria-expanded={isProfileModalOpen}
+                >
+                  {userAvatar ? (
+                    <span className="inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                      <Image src={userAvatar} alt="Profile picture" width={32} height={32} className="h-full w-full object-cover" unoptimized />
+                    </span>
+                  ) : (
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
+                      {userInitials}
+                    </span>
+                  )}
+                  <span className="hidden text-left sm:block">
+                    <p className="max-w-[12rem] truncate text-xs font-semibold text-slate-900">{userName}</p>
+                    <p className="max-w-[12rem] truncate text-[11px] text-slate-500">{userEmail}</p>
+                  </span>
+                  <span className="inline-flex h-5 w-5 items-center justify-center text-slate-400">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="m6.7 9.3 5.3 5.4 5.3-5.4" />
+                    </svg>
+                  </span>
+                </button>
+
+                <div
                 ref={profilePanelRef}
                 role="dialog"
                 aria-label="Account profile"
@@ -893,9 +1264,12 @@ export default function HrisShell({ children, session }) {
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Active</p>
                         <p className="text-sm font-medium text-slate-900">
-                          {profileInsights.lastActiveDevice || "Unknown device"}{" "}
-                          <span className="text-xs text-slate-500">({profileInsights.lastActiveIp || "unknown"})</span>
+                          {profileInsights.lastActiveDevice || "Unknown device"}
                         </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Source IP</p>
+                        <p className="text-sm font-medium text-slate-900">{formatSourceIp(profileInsights.lastActiveIp)}</p>
                       </div>
                     </div>
                   </section>
@@ -968,6 +1342,7 @@ export default function HrisShell({ children, session }) {
                       {isUploadingPhoto ? "Uploading..." : isSavingProfile ? "Saving..." : "Save Profile"}
                     </button>
                   </div>
+                </div>
                 </div>
               </div>
             </div>

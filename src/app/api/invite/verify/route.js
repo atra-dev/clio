@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { getInviteForEmailVerification, verifyInviteEmail } from "@/lib/user-accounts";
 
@@ -65,10 +66,82 @@ function statusForReason(reason) {
   return 400;
 }
 
+function applyRateLimitHeaders(response, rateLimitResult) {
+  if (!rateLimitResult?.headers || typeof rateLimitResult.headers !== "object") {
+    return response;
+  }
+  for (const [headerKey, headerValue] of Object.entries(rateLimitResult.headers)) {
+    response.headers.set(headerKey, String(headerValue));
+  }
+  return response;
+}
+
+function jsonResponse(payload, { status = 200, rateLimit } = {}) {
+  const response = NextResponse.json(payload, { status });
+  return applyRateLimitHeaders(response, rateLimit);
+}
+
 export async function GET(request) {
+  let activeRateLimit = enforceRateLimitByRequest({
+    request,
+    scope: "invite-verify-get-ip",
+    limit: 80,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!activeRateLimit.allowed) {
+    await recordAuditEvent({
+      activityName: "Invite verification lookup rate-limited (IP)",
+      status: "Rejected",
+      module: "User Management",
+      performedBy: "anonymous@gmail.com",
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "rate_limit_exceeded",
+        scope: "invite-verify-get-ip",
+      },
+      request,
+    });
+    return jsonResponse(
+      { message: "Too many verification requests. Please try again shortly." },
+      { status: 429, rateLimit: activeRateLimit },
+    );
+  }
+
   const token = normalizeToken(request.nextUrl.searchParams.get("token"));
+  activeRateLimit = enforceRateLimitByRequest({
+    request,
+    scope: "invite-verify-get-token",
+    identifier: token || undefined,
+    limit: 30,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!activeRateLimit.allowed) {
+    await recordAuditEvent({
+      activityName: "Invite verification lookup rate-limited (token)",
+      status: "Rejected",
+      module: "User Management",
+      performedBy: "anonymous@gmail.com",
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "rate_limit_exceeded",
+        scope: "invite-verify-get-token",
+        tokenHint: tokenHint(token),
+      },
+      request,
+    });
+    return jsonResponse(
+      { message: "Too many verification attempts for this invite link. Please wait and retry." },
+      { status: 429, rateLimit: activeRateLimit },
+    );
+  }
+
   if (!token) {
-    return NextResponse.json({ message: messageForReason("invalid_invite_token") }, { status: 400 });
+    return jsonResponse(
+      { message: messageForReason("invalid_invite_token") },
+      { status: 400, rateLimit: activeRateLimit },
+    );
   }
 
   try {
@@ -86,30 +159,39 @@ export async function GET(request) {
         },
         request,
       });
-      return NextResponse.json({ message: messageForReason("invite_not_found") }, { status: 404 });
+      return jsonResponse(
+        { message: messageForReason("invite_not_found") },
+        { status: 404, rateLimit: activeRateLimit },
+      );
     }
 
     if (invite.status === "expired") {
-      return NextResponse.json({ message: messageForReason("invite_expired"), invite }, { status: 410 });
+      return jsonResponse(
+        { message: messageForReason("invite_expired"), invite },
+        { status: 410, rateLimit: activeRateLimit },
+      );
     }
 
     if (invite.status === "revoked") {
-      return NextResponse.json({ message: messageForReason("invite_revoked"), invite }, { status: 403 });
+      return jsonResponse(
+        { message: messageForReason("invite_revoked"), invite },
+        { status: 403, rateLimit: activeRateLimit },
+      );
     }
 
-    return NextResponse.json({ ok: true, invite });
+    return jsonResponse({ ok: true, invite }, { rateLimit: activeRateLimit });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     if (reason === "invite_already_verified") {
       const invite = await getInviteForEmailVerification(token).catch(() => null);
-      return NextResponse.json(
+      return jsonResponse(
         {
           ok: true,
           alreadyVerified: true,
           invite,
           message: messageForReason(reason),
         },
-        { status: 200 },
+        { status: 200, rateLimit: activeRateLimit },
       );
     }
 
@@ -126,14 +208,40 @@ export async function GET(request) {
       request,
     });
 
-    return NextResponse.json(
+    return jsonResponse(
       { message: messageForReason(reason) },
-      { status: statusForReason(reason) },
+      { status: statusForReason(reason), rateLimit: activeRateLimit },
     );
   }
 }
 
 export async function POST(request) {
+  let activeRateLimit = enforceRateLimitByRequest({
+    request,
+    scope: "invite-verify-post-ip",
+    limit: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!activeRateLimit.allowed) {
+    await recordAuditEvent({
+      activityName: "Invite verification submit rate-limited (IP)",
+      status: "Rejected",
+      module: "User Management",
+      performedBy: "anonymous@gmail.com",
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "rate_limit_exceeded",
+        scope: "invite-verify-post-ip",
+      },
+      request,
+    });
+    return jsonResponse(
+      { message: "Too many verification attempts. Please wait before trying again." },
+      { status: 429, rateLimit: activeRateLimit },
+    );
+  }
+
   let token = "";
   try {
     const body = await request.json();
@@ -142,8 +250,39 @@ export async function POST(request) {
     token = "";
   }
 
+  activeRateLimit = enforceRateLimitByRequest({
+    request,
+    scope: "invite-verify-post-token",
+    identifier: token || undefined,
+    limit: 8,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!activeRateLimit.allowed) {
+    await recordAuditEvent({
+      activityName: "Invite verification submit rate-limited (token)",
+      status: "Rejected",
+      module: "User Management",
+      performedBy: "anonymous@gmail.com",
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "rate_limit_exceeded",
+        scope: "invite-verify-post-token",
+        tokenHint: tokenHint(token),
+      },
+      request,
+    });
+    return jsonResponse(
+      { message: "Too many verification attempts for this invite. Please try again later." },
+      { status: 429, rateLimit: activeRateLimit },
+    );
+  }
+
   if (!token) {
-    return NextResponse.json({ message: messageForReason("invalid_invite_token") }, { status: 400 });
+    return jsonResponse(
+      { message: messageForReason("invalid_invite_token") },
+      { status: 400, rateLimit: activeRateLimit },
+    );
   }
 
   try {
@@ -163,25 +302,25 @@ export async function POST(request) {
       request,
     });
 
-    return NextResponse.json({
+    return jsonResponse({
       ok: true,
       user: result.user,
       invite: result.invite,
       message: "Email verification completed. You can now sign in with Google.",
-    });
+    }, { rateLimit: activeRateLimit });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
 
     if (reason === "invite_already_verified") {
       const invite = await getInviteForEmailVerification(token).catch(() => null);
-      return NextResponse.json(
+      return jsonResponse(
         {
           ok: true,
           alreadyVerified: true,
           invite,
           message: messageForReason(reason),
         },
-        { status: 200 },
+        { status: 200, rateLimit: activeRateLimit },
       );
     }
 
@@ -198,9 +337,9 @@ export async function POST(request) {
       request,
     });
 
-    return NextResponse.json(
+    return jsonResponse(
       { message: messageForReason(reason) },
-      { status: statusForReason(reason) },
+      { status: statusForReason(reason), rateLimit: activeRateLimit },
     );
   }
 }

@@ -48,6 +48,34 @@ function asCsvValue(value) {
   return raw;
 }
 
+function summarizeFieldList(list) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return "";
+  }
+  return list
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function summarizeDocumentList(list) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return "";
+  }
+  return list
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const name = String(item.name || "").trim();
+      const type = String(item.type || "").trim();
+      const id = String(item.id || "").trim();
+      return [name, type ? `[${type}]` : "", id ? `#${id}` : ""].filter(Boolean).join(" ");
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
 export async function GET(request) {
   const auth = await authorizeApiRequest(request, {
     requiredPermissions: ["activity_log:view"],
@@ -92,6 +120,13 @@ export async function GET(request) {
         row.requestPath,
         row.requestMethod,
         row.sourceIp,
+        row.browser,
+        row.operatingSystem,
+        row.deviceSummary,
+        row.recordRef,
+        summarizeFieldList(row.changedFields),
+        summarizeFieldList(row.viewedFields),
+        summarizeDocumentList(row.accessedDocuments),
       ].join(" "),
     );
 
@@ -132,6 +167,13 @@ export async function GET(request) {
       "requestPath",
       "requestMethod",
       "sourceIp",
+      "browser",
+      "operatingSystem",
+      "deviceSummary",
+      "recordRef",
+      "changedFields",
+      "viewedFields",
+      "accessedDocuments",
       "category",
     ];
     const lines = enrichedFiltered.map((row) =>
@@ -148,6 +190,13 @@ export async function GET(request) {
         row.requestPath,
         row.requestMethod,
         row.sourceIp,
+        row.browser,
+        row.operatingSystem,
+        row.deviceSummary,
+        row.recordRef,
+        summarizeFieldList(row.changedFields),
+        summarizeFieldList(row.viewedFields),
+        summarizeDocumentList(row.accessedDocuments),
         inferActivityCategory(row),
       ]
         .map(asCsvValue)

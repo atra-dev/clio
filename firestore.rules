@@ -7,11 +7,21 @@ service cloud.firestore {
     }
 
     function role() {
-      return isAuthenticated() ? request.auth.token.role : null;
+      if (!isAuthenticated()) {
+        return null;
+      }
+      return request.auth.token.role is string
+        ? request.auth.token.role
+        : (request.auth.token.clioRole is string ? request.auth.token.clioRole : null);
     }
 
     function actorEmail() {
-      return isAuthenticated() ? request.auth.token.email : null;
+      if (!isAuthenticated()) {
+        return null;
+      }
+      return request.auth.token.email is string
+        ? request.auth.token.email
+        : (request.auth.token.clioEmail is string ? request.auth.token.clioEmail : null);
     }
 
     function isSuperAdmin() {
@@ -146,6 +156,26 @@ service cloud.firestore {
       allow create: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(request.resource.data.requestedBy));
       allow update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(resource.data.requestedBy) && exportRequestEditableSelfFieldsOnly());
       allow delete: if isSuperAdmin() || isGRC();
+    }
+
+    // Incident Management (Breach and Response)
+    match /security_incidents/{recordId} {
+      allow read: if isSuperAdmin() || isGRC();
+      allow create, update: if isSuperAdmin() || isGRC();
+      allow delete: if isSuperAdmin();
+    }
+
+    // In-app notifications (security alerts and workflow notices)
+    match /clio_notifications/{notificationId} {
+      allow read: if isSuperAdmin() ||
+        (isAuthenticated() && (
+          resource.data.broadcast == true ||
+          isOwnerEmail(resource.data.recipientEmail)
+        ));
+      allow create: if isSuperAdmin() || isPrivilegedRole();
+      allow update: if isSuperAdmin() ||
+        (isAuthenticated() && isOwnerEmail(resource.data.recipientEmail));
+      allow delete: if isSuperAdmin();
     }
 
     // Settings Reference Catalog (roles/departments for module select inputs)

@@ -10,6 +10,10 @@ import {
   logApiAudit,
   mapBackendError,
   parseJsonBody,
+  resolveAuditChangedFields,
+  resolveAuditRecordRef,
+  resolveAuditViewedFields,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 const SELF_EDITABLE_ATTENDANCE_FIELDS = new Set([
@@ -88,7 +92,13 @@ export async function GET(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(record, recordId, ["employeeId", "id"]),
         employeeEmail: record.employeeEmail || null,
+        resourceType: "Attendance Record",
+        resourceLabel: `${record.employee || record.employeeEmail || "Employee"} ${record.date ? `- ${record.date}` : ""}`.trim(),
+        viewedFields: resolveAuditViewedFields(record, ["modificationTrail"]),
+        auditNote: `Viewed attendance record for ${record.employeeEmail || "employee"}.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -180,6 +190,7 @@ export async function PATCH(request, { params }) {
     if (!updated) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
+    const changedFields = resolveAuditChangedFields(current, updated, Object.keys(nextPayload || {}));
 
     await logApiAudit({
       request,
@@ -190,9 +201,19 @@ export async function PATCH(request, { params }) {
       performedBy: session.email,
       metadata: {
         recordId,
+        recordRef: resolveAuditRecordRef(updated, recordId, ["employeeId", "id"]),
         employeeEmail: updated.employeeEmail || null,
         updatedFields: Object.keys(nextPayload),
+        changedFields,
+        changedFieldCount: changedFields.length,
+        resourceType: "Attendance Record",
+        resourceLabel: `${updated.employee || updated.employeeEmail || "Employee"} ${updated.date ? `- ${updated.date}` : ""}`.trim(),
         selfServiceUpdate: !fullEdit,
+        auditNote:
+          changedFields.length > 0
+            ? `Updated attendance fields: ${summarizeAuditFieldList(changedFields)}.`
+            : "Update request completed but no attendance field values changed.",
+        nextAction: changedFields.length > 0 ? "No further action required." : "Review update payload and retry if needed.",
       },
     });
 

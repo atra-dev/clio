@@ -17,6 +17,8 @@ import {
   mapBackendError,
   normalizeEmail,
   parseJsonBody,
+  resolveAuditRecordRef,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
 
 const SELF_EDITABLE_ATTENDANCE_FIELDS = new Set([
@@ -125,6 +127,15 @@ export async function GET(request) {
         ownerFilterApplied: Boolean(ownerEmail),
         hasStatusFilter: Boolean(statusFilter),
         hasDateRangeFilter: Boolean(dateFromFilter || dateToFilter),
+        viewedRecordRefs: enrichedRecords.slice(0, 25).map((row) => ({
+          recordId: row.id,
+          recordRef: resolveAuditRecordRef(row, row.id, ["employeeId", "id"]),
+          employeeEmail: row.employeeEmail || "",
+          date: row.date || "",
+          status: row.status || "",
+        })),
+        auditNote: `Listed ${enrichedRecords.length} attendance record(s) in the current query window.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -215,8 +226,18 @@ export async function POST(request) {
       performedBy: session.email,
       metadata: {
         recordId: created.id,
+        recordRef: resolveAuditRecordRef(created, created.id, ["employeeId", "id"]),
         employeeEmail: created.employeeEmail,
+        resourceType: "Attendance Record",
+        resourceLabel: `${created.employee || created.employeeEmail || "Employee"} ${created.date ? `- ${created.date}` : ""}`.trim(),
         selfService: !fullEdit,
+        changedFields: Object.keys(nextPayload || {}),
+        changedFieldCount: Object.keys(nextPayload || {}).length,
+        auditNote: `Created attendance record with fields: ${summarizeAuditFieldList(
+          Object.keys(nextPayload || {}),
+          "No explicit payload fields captured.",
+        )}.`,
+        nextAction: "No further action required.",
       },
     });
 

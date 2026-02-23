@@ -23,11 +23,14 @@ import {
 } from "@/lib/user-accounts";
 import { deliverInviteEmail } from "@/lib/invite-delivery";
 import { formatEmployeeName } from "@/lib/name-utils";
+import { listAuditEvents } from "@/lib/audit-log";
 
 const MAX_AUDIT_TRAIL_ITEMS = 80;
 const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const MAX_LIFECYCLE_CHECKLIST_ITEMS = 32;
 const MAX_LIFECYCLE_EVIDENCE_ITEMS = 80;
+const MAX_INCIDENT_EVIDENCE_ITEMS = 50;
+const MAX_INCIDENT_FORENSIC_SAMPLES = 8;
 const MAX_REFERENCE_LABEL_LENGTH = 72;
 const MAX_REFERENCE_CATALOG_ITEMS = 256;
 const ALLOWED_REFERENCE_KINDS = new Set(["role", "department"]);
@@ -116,6 +119,46 @@ const LIFECYCLE_WORKFLOW_TEMPLATES = {
 const LIFECYCLE_PRIVILEGED_TARGET_ROLES = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
 const LIFECYCLE_ASSIGNABLE_BY_PRIVILEGED = new Set(["EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
 const LIFECYCLE_ASSIGNABLE_BY_GRC = new Set(["GRC", "HR", "EA", "EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
+const INCIDENT_SEVERITY_LEVELS = ["Low", "Medium", "High", "Critical"];
+const INCIDENT_STATUS_VALUES = ["Open", "Containment", "Investigating", "Escalated", "Regulatory Review", "Resolved", "Closed"];
+const INCIDENT_CONTAINMENT_STATUS_VALUES = ["Not Started", "In Progress", "Contained"];
+const INCIDENT_IMPACT_STATUS_VALUES = ["Pending", "In Progress", "Completed"];
+const INCIDENT_TYPE_VALUES = [
+  "Unauthorized Access",
+  "Data Exposure",
+  "Credential Compromise",
+  "Insider Misuse",
+  "Malware / Ransomware",
+  "Policy Violation",
+  "System Misconfiguration",
+  "Other",
+];
+const DEFAULT_INCIDENT_EVIDENCE_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_INCIDENT_EVIDENCE_ALLOWED_EXTENSIONS = new Set([
+  "pdf",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "csv",
+  "txt",
+]);
+const DEFAULT_INCIDENT_EVIDENCE_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "text/plain",
+]);
 
 function env(name, fallback) {
   const value = String(process.env[name] || "").trim();
@@ -130,6 +173,42 @@ function parseBooleanEnv(name, fallbackValue = false) {
     return fallbackValue;
   }
   return raw === "true" || raw === "1" || raw === "yes";
+}
+
+function parseCsvSet(value, fallbackSet) {
+  const normalized = String(value || "")
+    .split(",")
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (normalized.length === 0) {
+    return new Set([...fallbackSet]);
+  }
+  return new Set(normalized);
+}
+
+function parseIntegerEnv(name, fallbackValue, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(String(process.env[name] || "").trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallbackValue;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function getIncidentEvidenceValidationConfig() {
+  return {
+    maxBytes: parseIntegerEnv("CLIO_INCIDENT_EVIDENCE_MAX_BYTES", DEFAULT_INCIDENT_EVIDENCE_MAX_BYTES, {
+      min: 128 * 1024,
+      max: 50 * 1024 * 1024,
+    }),
+    allowedExtensions: parseCsvSet(
+      process.env.CLIO_INCIDENT_EVIDENCE_ALLOWED_EXTENSIONS,
+      DEFAULT_INCIDENT_EVIDENCE_ALLOWED_EXTENSIONS,
+    ),
+    allowedMimeTypes: parseCsvSet(
+      process.env.CLIO_INCIDENT_EVIDENCE_ALLOWED_MIME_TYPES,
+      DEFAULT_INCIDENT_EVIDENCE_ALLOWED_MIME_TYPES,
+    ),
+  };
 }
 
 function isInviteDeliveryRequired() {
@@ -286,6 +365,28 @@ function asArray(value) {
 function asObject(value, fallback = {}) {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value;
+  }
+  return fallback;
+}
+
+function asBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return fallback;
+    }
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n", "off"].includes(normalized)) {
+      return false;
+    }
   }
   return fallback;
 }
@@ -1047,6 +1148,7 @@ function getCollectionName(key) {
     performance: env("CLIO_FIRESTORE_PERFORMANCE_COLLECTION", "performance_records"),
     templates: env("CLIO_FIRESTORE_TEMPLATES_COLLECTION", "document_templates"),
     exports: env("CLIO_FIRESTORE_EXPORTS_COLLECTION", "export_requests"),
+    incidents: env("CLIO_FIRESTORE_INCIDENTS_COLLECTION", "security_incidents"),
     settingsReference: env("CLIO_FIRESTORE_SETTINGS_REFERENCE_COLLECTION", "settings_reference_data"),
   };
   return map[key] || key;
@@ -2572,6 +2674,521 @@ export async function markExportAsCompletedBackend(recordId, actorEmail) {
     },
     actorEmail,
   );
+}
+
+function normalizeIncidentSeverity(value, fallback = "Medium") {
+  const normalized = asString(value, fallback).toLowerCase();
+  const matched = INCIDENT_SEVERITY_LEVELS.find((entry) => entry.toLowerCase() === normalized);
+  return matched || "Medium";
+}
+
+function normalizeIncidentStatus(value, fallback = "Open") {
+  const normalized = asString(value, fallback).toLowerCase();
+  const matched = INCIDENT_STATUS_VALUES.find((entry) => entry.toLowerCase() === normalized);
+  return matched || "Open";
+}
+
+function normalizeIncidentContainmentStatus(value, fallback = "Not Started") {
+  const normalized = asString(value, fallback).toLowerCase();
+  const matched = INCIDENT_CONTAINMENT_STATUS_VALUES.find((entry) => entry.toLowerCase() === normalized);
+  return matched || "Not Started";
+}
+
+function normalizeIncidentImpactStatus(value, fallback = "Pending") {
+  const normalized = asString(value, fallback).toLowerCase();
+  const matched = INCIDENT_IMPACT_STATUS_VALUES.find((entry) => entry.toLowerCase() === normalized);
+  return matched || "Pending";
+}
+
+function normalizeIncidentType(value, fallback = "Other") {
+  const normalized = asString(value, fallback).toLowerCase();
+  const matched = INCIDENT_TYPE_VALUES.find((entry) => entry.toLowerCase() === normalized);
+  return matched || "Other";
+}
+
+function buildIncidentCode(isoValue = nowIso()) {
+  const date = new Date(isoValue || nowIso());
+  if (Number.isNaN(date.getTime())) {
+    return `INC-${Date.now().toString().slice(-10)}`;
+  }
+  const yyyy = String(date.getUTCFullYear());
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mi = String(date.getUTCMinutes()).padStart(2, "0");
+  const random = Math.random().toString(36).slice(2, 5).toUpperCase();
+  return `INC-${yyyy}${mm}${dd}-${hh}${mi}${random}`;
+}
+
+function extractEvidenceExtension(value) {
+  const normalized = asString(value).toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  const clean = normalized.split("?")[0].split("#")[0];
+  const token = clean.split(".").pop() || "";
+  if (!/^[a-z0-9]{2,10}$/.test(token)) {
+    return "";
+  }
+  return token;
+}
+
+function sanitizeIncidentEvidenceDocuments(value, actorEmail, fallbackNowIso) {
+  const timestamp = asString(fallbackNowIso, nowIso());
+  const config = getIncidentEvidenceValidationConfig();
+  return asArray(value)
+    .map((entry, index) => {
+      const source = asObject(entry, {});
+      const uploadedAt = toIsoOrEmpty(source.uploadedAt || timestamp) || timestamp;
+      const uploadedBy = normalizeEmail(source.uploadedBy || actorEmail);
+      const name = asString(source.name, `Incident Evidence ${index + 1}`);
+      const type = asString(source.type, "Incident Evidence");
+      const ref = asString(source.ref);
+      const storagePath = asString(source.storagePath);
+      const fileExtension = extractEvidenceExtension(source.fileExtension || name || storagePath || ref);
+      const contentType = normalizeText(source.contentType);
+      const sizeBytes = Number.isFinite(Number(source.sizeBytes)) ? Number(source.sizeBytes) : 0;
+      const id = asString(source.id || source.recordId || storagePath || `${index + 1}`);
+      if (!name && !ref && !storagePath) {
+        return null;
+      }
+      if (fileExtension && !config.allowedExtensions.has(fileExtension)) {
+        throw new Error("invalid_incident_evidence_extension");
+      }
+      if (contentType && !config.allowedMimeTypes.has(contentType)) {
+        throw new Error("invalid_incident_evidence_content_type");
+      }
+      if (sizeBytes > config.maxBytes) {
+        throw new Error("invalid_incident_evidence_size");
+      }
+      return {
+        id,
+        name: name || "Incident Evidence",
+        type: type || "Incident Evidence",
+        ref,
+        storagePath,
+        fileExtension,
+        contentType,
+        sizeBytes,
+        scanStatus: asString(source.scanStatus),
+        scanReference: asString(source.scanReference),
+        scannedAt: toIsoOrEmpty(source.scannedAt || ""),
+        uploadedAt,
+        uploadedBy: uploadedBy || actorEmail,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, MAX_INCIDENT_EVIDENCE_ITEMS);
+}
+
+function resolveIncidentEscalationLevel({ severity, restrictedPiiInvolved, executiveNotificationRequired }) {
+  if (severity === "Critical" || executiveNotificationRequired) {
+    return "Executive";
+  }
+  if (severity === "High" || restrictedPiiInvolved) {
+    return "GRC";
+  }
+  return "Operational";
+}
+
+function resolveIncidentRegulatoryStatus({
+  regulatoryNotificationRequired,
+  regulatoryNotifiedAt,
+  regulatoryDueAt,
+  nowIsoValue = nowIso(),
+}) {
+  if (!regulatoryNotificationRequired) {
+    return "Not Required";
+  }
+  if (toTimeMs(regulatoryNotifiedAt)) {
+    return "Notified";
+  }
+  const dueAtMs = toTimeMs(regulatoryDueAt);
+  const nowMs = toTimeMs(nowIsoValue) || Date.now();
+  if (Number.isFinite(dueAtMs) && dueAtMs < nowMs) {
+    return "Overdue";
+  }
+  return "Pending";
+}
+
+function incidentSeverityRank(value) {
+  const severity = normalizeIncidentSeverity(value);
+  switch (severity) {
+    case "Critical":
+      return 3;
+    case "High":
+      return 2;
+    case "Medium":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function isIncidentAccessEvent(row) {
+  const method = normalizeText(row?.requestMethod);
+  const activity = normalizeText(row?.activityName);
+  return method === "get" || activity.includes("viewed") || activity.includes("listed") || activity.includes("access");
+}
+
+function isIncidentExportEvent(row) {
+  const moduleName = normalizeText(row?.module);
+  const path = normalizeText(row?.requestPath);
+  const activity = normalizeText(row?.activityName);
+  return moduleName.includes("export") || path.includes("/api/hris/exports") || activity.includes("export");
+}
+
+function isIncidentDeletionEvent(row) {
+  const method = normalizeText(row?.requestMethod);
+  const activity = normalizeText(row?.activityName);
+  return (
+    method === "delete" ||
+    activity.includes("delete") ||
+    activity.includes("purge") ||
+    activity.includes("removed") ||
+    activity.includes("archive")
+  );
+}
+
+function isIncidentAdministrativeEvent(row) {
+  const moduleName = normalizeText(row?.module);
+  const method = normalizeText(row?.requestMethod);
+  const activity = normalizeText(row?.activityName);
+  return (
+    moduleName.includes("authorization") ||
+    moduleName.includes("user management") ||
+    moduleName.includes("access management") ||
+    method === "patch" ||
+    method === "post" ||
+    activity.includes("approve") ||
+    activity.includes("revok") ||
+    activity.includes("invite") ||
+    activity.includes("role")
+  );
+}
+
+function normalizeIncidentForensicSample(row) {
+  return {
+    id: asString(row?.id),
+    activityName: asString(row?.activityName),
+    module: asString(row?.module),
+    status: asString(row?.status),
+    occurredAt: asString(row?.occurredAt),
+    performedBy: asString(row?.performedBy),
+    requestMethod: asString(row?.requestMethod),
+    requestPath: asString(row?.requestPath),
+  };
+}
+
+function incidentMatchesSubject(row, subjectEmail) {
+  const subject = normalizeEmail(subjectEmail);
+  if (!subject) {
+    return true;
+  }
+
+  const metadata = asObject(row?.metadata, {});
+  const candidates = [
+    row?.performedBy,
+    row?.performedByEmail,
+    metadata.employeeEmail,
+    metadata.ownerEmail,
+    metadata.requestedBy,
+    metadata.targetEmployeeEmail,
+    metadata.affectedEmployeeEmail,
+  ];
+  return candidates.some((value) => normalizeEmail(value) === subject);
+}
+
+async function buildIncidentForensicSnapshot(record, { limit } = {}) {
+  const nowIsoValue = nowIso();
+  const windowStart = toIsoOrEmpty(record?.forensicWindowStart || record?.detectedAt) || nowIsoValue;
+  const windowEnd = toIsoOrEmpty(record?.forensicWindowEnd || nowIsoValue) || nowIsoValue;
+  const windowStartMs = toTimeMs(windowStart) || 0;
+  const windowEndMs = toTimeMs(windowEnd) || Date.now();
+  const subjectEmail = normalizeEmail(record?.affectedEmployeeEmail || record?.employeeEmail || "");
+  const safeLimit = Number.isFinite(Number(limit)) ? Number(limit) : 1800;
+
+  let rows = [];
+  try {
+    rows = await listAuditEvents({ limit: Math.max(100, Math.min(5000, safeLimit)) });
+  } catch {
+    rows = [];
+  }
+
+  const scopedRows = rows.filter((row) => {
+    const occurredAtMs = toTimeMs(row?.occurredAt || row?.loggedAt);
+    if (!Number.isFinite(occurredAtMs)) {
+      return false;
+    }
+    if (occurredAtMs < windowStartMs || occurredAtMs > windowEndMs) {
+      return false;
+    }
+    return incidentMatchesSubject(row, subjectEmail);
+  });
+
+  const buckets = {
+    accessLogs: [],
+    exportLogs: [],
+    administrativeActions: [],
+    deletionActivities: [],
+  };
+
+  scopedRows.forEach((row) => {
+    const sample = normalizeIncidentForensicSample(row);
+    if (isIncidentDeletionEvent(row)) {
+      buckets.deletionActivities.push(sample);
+      return;
+    }
+    if (isIncidentExportEvent(row)) {
+      buckets.exportLogs.push(sample);
+      return;
+    }
+    if (isIncidentAdministrativeEvent(row)) {
+      buckets.administrativeActions.push(sample);
+      return;
+    }
+    if (isIncidentAccessEvent(row)) {
+      buckets.accessLogs.push(sample);
+    }
+  });
+
+  return {
+    generatedAt: nowIsoValue,
+    windowStart,
+    windowEnd,
+    scopedSubjectEmail: subjectEmail || "",
+    totalScopedLogs: scopedRows.length,
+    accessLogsCount: buckets.accessLogs.length,
+    exportLogsCount: buckets.exportLogs.length,
+    administrativeActionsCount: buckets.administrativeActions.length,
+    deletionActivitiesCount: buckets.deletionActivities.length,
+    accessLogs: buckets.accessLogs.slice(0, MAX_INCIDENT_FORENSIC_SAMPLES),
+    exportLogs: buckets.exportLogs.slice(0, MAX_INCIDENT_FORENSIC_SAMPLES),
+    administrativeActions: buckets.administrativeActions.slice(0, MAX_INCIDENT_FORENSIC_SAMPLES),
+    deletionActivities: buckets.deletionActivities.slice(0, MAX_INCIDENT_FORENSIC_SAMPLES),
+  };
+}
+
+function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
+  const timestamp = nowIso();
+  const title = asString(payload?.title, asString(base?.title));
+  if (!title) {
+    throw new Error("invalid_incident_title");
+  }
+
+  const detectedAt = toIsoOrEmpty(payload?.detectedAt || base?.detectedAt || timestamp) || timestamp;
+  const severity = normalizeIncidentSeverity(payload?.severity, asString(base?.severity, "Medium"));
+  const incidentType = normalizeIncidentType(payload?.incidentType, asString(base?.incidentType, "Other"));
+  const restrictedPiiInvolved = asBoolean(payload?.restrictedPiiInvolved, asBoolean(base?.restrictedPiiInvolved, false));
+  const executiveNotificationRequired = asBoolean(
+    payload?.executiveNotificationRequired,
+    severity === "Critical" || asBoolean(base?.executiveNotificationRequired, false),
+  );
+  const escalationRequired = asBoolean(
+    payload?.escalationRequired,
+    executiveNotificationRequired ||
+      restrictedPiiInvolved ||
+      incidentSeverityRank(severity) >= incidentSeverityRank("High") ||
+      asBoolean(base?.escalationRequired, false),
+  );
+  const escalationLevel = resolveIncidentEscalationLevel({
+    severity,
+    restrictedPiiInvolved,
+    executiveNotificationRequired,
+  });
+
+  const status = normalizeIncidentStatus(payload?.status, asString(base?.status, "Open"));
+  const containmentStatus = normalizeIncidentContainmentStatus(
+    payload?.containmentStatus,
+    asString(base?.containmentStatus, "Not Started"),
+  );
+  const impactAssessmentStatus = normalizeIncidentImpactStatus(
+    payload?.impactAssessmentStatus,
+    asString(base?.impactAssessmentStatus, "Pending"),
+  );
+
+  const regulatoryNotificationRequired = asBoolean(
+    payload?.regulatoryNotificationRequired,
+    restrictedPiiInvolved || asBoolean(base?.regulatoryNotificationRequired, false),
+  );
+  const regulatoryDueAt = regulatoryNotificationRequired
+    ? asString(base?.regulatoryDueAt, addHoursToIso(detectedAt, 72))
+    : "";
+  const regulatoryNotifiedAt = toIsoOrEmpty(payload?.regulatoryNotifiedAt || base?.regulatoryNotifiedAt || "");
+  const affectedIndividualsNotifiedAt = toIsoOrEmpty(
+    payload?.affectedIndividualsNotifiedAt || base?.affectedIndividualsNotifiedAt || "",
+  );
+  const regulatoryStatus = resolveIncidentRegulatoryStatus({
+    regulatoryNotificationRequired,
+    regulatoryNotifiedAt,
+    regulatoryDueAt,
+    nowIsoValue: timestamp,
+  });
+
+  const documentationRetained = asBoolean(payload?.documentationRetained, asBoolean(base?.documentationRetained, false));
+  const documentationRetainedAt = documentationRetained
+    ? toIsoOrEmpty(payload?.documentationRetainedAt || base?.documentationRetainedAt || timestamp) || timestamp
+    : "";
+  const executiveNotifiedAt = toIsoOrEmpty(payload?.executiveNotifiedAt || base?.executiveNotifiedAt || "");
+  const grcAlertedAt = escalationRequired
+    ? toIsoOrEmpty(payload?.grcAlertedAt || base?.grcAlertedAt || timestamp) || timestamp
+    : "";
+
+  const containmentStartedAt =
+    containmentStatus === "In Progress" || containmentStatus === "Contained"
+      ? toIsoOrEmpty(payload?.containmentStartedAt || base?.containmentStartedAt || timestamp) || timestamp
+      : toIsoOrEmpty(payload?.containmentStartedAt || base?.containmentStartedAt || "");
+  const containmentCompletedAt =
+    containmentStatus === "Contained"
+      ? toIsoOrEmpty(payload?.containmentCompletedAt || base?.containmentCompletedAt || timestamp) || timestamp
+      : toIsoOrEmpty(payload?.containmentCompletedAt || base?.containmentCompletedAt || "");
+  const impactAssessmentCompletedAt =
+    impactAssessmentStatus === "Completed"
+      ? toIsoOrEmpty(payload?.impactAssessmentCompletedAt || base?.impactAssessmentCompletedAt || timestamp) || timestamp
+      : toIsoOrEmpty(payload?.impactAssessmentCompletedAt || base?.impactAssessmentCompletedAt || "");
+
+  const forensicWindowStart = toIsoOrEmpty(payload?.forensicWindowStart || base?.forensicWindowStart || detectedAt) || detectedAt;
+  const forensicWindowEnd = toIsoOrEmpty(payload?.forensicWindowEnd || base?.forensicWindowEnd || timestamp) || timestamp;
+  const evidenceDocuments = sanitizeIncidentEvidenceDocuments(
+    Object.prototype.hasOwnProperty.call(asObject(payload, {}), "evidenceDocuments")
+      ? payload?.evidenceDocuments
+      : base?.evidenceDocuments,
+    actorEmail,
+    timestamp,
+  );
+  const detectionWindowStart = toIsoOrEmpty(payload?.detectionWindowStart || base?.detectionWindowStart || "");
+  const detectionWindowEnd = toIsoOrEmpty(payload?.detectionWindowEnd || base?.detectionWindowEnd || "");
+  const alertRecipients = asArray(payload?.alertRecipients || base?.alertRecipients)
+    .map((value) => normalizeEmail(value))
+    .filter(Boolean)
+    .slice(0, 40);
+
+  return {
+    incidentCode: asString(base?.incidentCode, buildIncidentCode(detectedAt)),
+    title,
+    summary: asString(payload?.summary, asString(base?.summary)),
+    incidentType,
+    severity,
+    status,
+    restrictedPiiInvolved,
+    affectedEmployeeEmail: normalizeEmail(payload?.affectedEmployeeEmail || base?.affectedEmployeeEmail),
+    ownerEmail: normalizeEmail(payload?.ownerEmail || base?.ownerEmail || actorEmail),
+    escalationRequired,
+    escalationLevel,
+    executiveNotificationRequired,
+    executiveNotifiedAt,
+    grcAlertedAt,
+    containmentStatus,
+    containmentSummary: asString(payload?.containmentSummary, asString(base?.containmentSummary)),
+    containmentStartedAt,
+    containmentCompletedAt,
+    impactAssessmentStatus,
+    impactSummary: asString(payload?.impactSummary, asString(base?.impactSummary)),
+    impactAssessmentCompletedAt,
+    regulatoryNotificationRequired,
+    regulatoryDueAt,
+    regulatoryNotifiedAt,
+    affectedIndividualsNotifiedAt,
+    regulatoryStatus,
+    documentationRetained,
+    documentationRetainedAt,
+    documentationLocation: asString(payload?.documentationLocation, asString(base?.documentationLocation)),
+    forensicWindowStart,
+    forensicWindowEnd,
+    evidenceDocuments,
+    evidenceDocumentsCount: evidenceDocuments.length,
+    notes: asString(payload?.notes, asString(base?.notes)),
+    classificationStandard: asString(payload?.classificationStandard, asString(base?.classificationStandard, "CLIO-IR-SEVERITY-V1")),
+    autoGenerated: asBoolean(payload?.autoGenerated, asBoolean(base?.autoGenerated, false)),
+    detectionRuleId: asString(payload?.detectionRuleId, asString(base?.detectionRuleId)),
+    detectionFingerprint: asString(payload?.detectionFingerprint, asString(base?.detectionFingerprint)),
+    detectionWindowStart,
+    detectionWindowEnd,
+    sourceSystem: asString(payload?.sourceSystem, asString(base?.sourceSystem)),
+    sourceEventId: asString(payload?.sourceEventId, asString(base?.sourceEventId)),
+    sourceEventModule: asString(payload?.sourceEventModule, asString(base?.sourceEventModule)),
+    sourceEventPath: asString(payload?.sourceEventPath, asString(base?.sourceEventPath)),
+    sourceIp: asString(payload?.sourceIp, asString(base?.sourceIp)),
+    alertRecipients,
+    alertDispatchSummary: asObject(payload?.alertDispatchSummary, asObject(base?.alertDispatchSummary, {})),
+    externalIntegrations: asObject(payload?.externalIntegrations, asObject(base?.externalIntegrations, {})),
+    lastAlertDispatchAt: toIsoOrEmpty(payload?.lastAlertDispatchAt || base?.lastAlertDispatchAt || ""),
+    detectedAt,
+    resolvedAt: toIsoOrEmpty(payload?.resolvedAt || base?.resolvedAt || (status === "Resolved" ? timestamp : "")),
+    closedAt: toIsoOrEmpty(payload?.closedAt || base?.closedAt || (status === "Closed" ? timestamp : "")),
+    createdAt: asString(base?.createdAt, timestamp),
+    createdBy: asString(base?.createdBy, actorEmail),
+    updatedAt: timestamp,
+    updatedBy: actorEmail,
+    traceability: appendTrail(base?.traceability, {
+      at: timestamp,
+      by: actorEmail,
+      action: base ? "update" : "create",
+      status,
+      severity,
+      escalationLevel,
+      regulatoryStatus,
+    }),
+  };
+}
+
+function withIncidentForensic(record, forensicSnapshot, actorEmail) {
+  const snapshot = asObject(forensicSnapshot, {});
+  return {
+    ...record,
+    forensicSnapshot: snapshot,
+    forensicSummary: {
+      accessLogsCount: Number(snapshot.accessLogsCount || 0),
+      exportLogsCount: Number(snapshot.exportLogsCount || 0),
+      administrativeActionsCount: Number(snapshot.administrativeActionsCount || 0),
+      deletionActivitiesCount: Number(snapshot.deletionActivitiesCount || 0),
+      totalScopedLogs: Number(snapshot.totalScopedLogs || 0),
+      generatedAt: asString(snapshot.generatedAt),
+      windowStart: asString(snapshot.windowStart),
+      windowEnd: asString(snapshot.windowEnd),
+    },
+    forensicLastUpdatedAt: asString(snapshot.generatedAt, nowIso()),
+    forensicLastUpdatedBy: actorEmail,
+  };
+}
+
+export async function listIncidentRecordsBackend() {
+  return await listCollectionRecords(getCollectionName("incidents"));
+}
+
+export async function getIncidentRecordBackend(recordId) {
+  return await getCollectionRecordById(getCollectionName("incidents"), recordId);
+}
+
+export async function createIncidentRecordBackend(payload, actorEmail) {
+  const normalized = normalizeIncidentWritePayload(payload, actorEmail);
+  const forensicSnapshot = await buildIncidentForensicSnapshot(normalized, {
+    limit: Number.parseInt(env("CLIO_INCIDENT_FORENSIC_LOG_LIMIT", "1800"), 10),
+  });
+  const withForensic = withIncidentForensic(normalized, forensicSnapshot, actorEmail);
+  return await createCollectionRecord(getCollectionName("incidents"), withForensic);
+}
+
+export async function updateIncidentRecordBackend(recordId, payload, actorEmail) {
+  const current = await getIncidentRecordBackend(recordId);
+  if (!current) {
+    return null;
+  }
+  const normalized = normalizeIncidentWritePayload(payload, actorEmail, { base: current });
+  const shouldRefreshForensic =
+    asBoolean(payload?.refreshForensicSnapshot, false) ||
+    Object.prototype.hasOwnProperty.call(asObject(payload, {}), "forensicWindowStart") ||
+    Object.prototype.hasOwnProperty.call(asObject(payload, {}), "forensicWindowEnd") ||
+    Object.prototype.hasOwnProperty.call(asObject(payload, {}), "affectedEmployeeEmail") ||
+    Object.prototype.hasOwnProperty.call(asObject(payload, {}), "detectedAt");
+
+  const forensicSnapshot = shouldRefreshForensic
+    ? await buildIncidentForensicSnapshot(normalized, {
+        limit: Number.parseInt(env("CLIO_INCIDENT_FORENSIC_LOG_LIMIT", "1800"), 10),
+      })
+    : asObject(current.forensicSnapshot, {});
+  const withForensic = withIncidentForensic(normalized, forensicSnapshot, actorEmail);
+  return await updateCollectionRecord(getCollectionName("incidents"), recordId, withForensic);
 }
 
 async function purgeCollectionByRetention(collectionName, cutoff) {

@@ -29,7 +29,11 @@ export async function POST(request, { params }) {
     performedBy: session.email,
     metadata: {
       recordId,
+      recordRef: recordId,
+      resourceType: "Lifecycle Workflow",
       reason: "approval_chain_disabled",
+      auditNote: "Lifecycle approval endpoint invoked while approval chain is disabled by policy.",
+      nextAction: "Use direct lifecycle status update actions from Lifecycle Records.",
     },
   });
 

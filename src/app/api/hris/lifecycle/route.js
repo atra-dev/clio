@@ -10,7 +10,30 @@ import {
   mapBackendError,
   normalizeEmail,
   parseJsonBody,
+  resolveAuditRecordRef,
+  summarizeAuditFieldList,
 } from "@/lib/hris-api";
+
+function summarizeLifecycleEvidence(record) {
+  const evidenceItems = Array.isArray(record?.evidence) ? record.evidence : [];
+  return evidenceItems
+    .map((entry, index) => {
+      const source = entry && typeof entry === "object" ? entry : {};
+      const name = String(source.name || source.fileName || "").trim();
+      const type = String(source.type || "Lifecycle Evidence").trim();
+      const id = String(source.id || source.recordId || source.storagePath || `${index + 1}`).trim();
+      if (!name && !id) {
+        return null;
+      }
+      return {
+        id,
+        name: name || "Lifecycle Evidence",
+        type: type || "Lifecycle Evidence",
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+}
 
 export async function GET(request) {
   const auth = await authorizeApiRequest(request, {
@@ -53,6 +76,15 @@ export async function GET(request) {
         hasEmployeeFilter: Boolean(queryEmployeeEmail),
         hasCategoryFilter: Boolean(queryCategory),
         hasStatusFilter: Boolean(queryStatus),
+        viewedRecordRefs: records.slice(0, 25).map((row) => ({
+          recordId: row.id,
+          recordRef: resolveAuditRecordRef(row, row.id, ["workflowId", "employeeId", "id"]),
+          employeeEmail: row.employeeEmail || "",
+          category: row.category || "",
+          status: row.status || "",
+        })),
+        auditNote: `Listed ${records.length} lifecycle workflow record(s) in the current query window.`,
+        nextAction: "No further action required.",
       },
     });
 
@@ -121,6 +153,8 @@ export async function POST(request) {
     const result = await createLifecycleRecordBackend(nextPayload, session.email, session.role);
     const created = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];
+    const accessedDocuments = summarizeLifecycleEvidence(created);
+    const payloadFields = Object.keys(nextPayload || {});
 
     await logApiAudit({
       request,
@@ -131,10 +165,22 @@ export async function POST(request) {
       performedBy: session.email,
       metadata: {
         recordId: created.id,
+        recordRef: resolveAuditRecordRef(created, created.id, ["workflowId", "employeeId", "id"]),
         employeeEmail: created.employeeEmail || null,
         category: created.category,
         status: created.status,
+        resourceType: "Lifecycle Workflow",
+        resourceLabel: `${created.category || "Lifecycle"} - ${created.employeeEmail || "Employee"}`,
+        changedFields: payloadFields,
+        changedFieldCount: payloadFields.length,
+        accessedDocuments,
+        accessedDocumentCount: accessedDocuments.length,
         effects,
+        auditNote: `Created lifecycle workflow with fields: ${summarizeAuditFieldList(
+          payloadFields,
+          "No explicit payload fields captured.",
+        )}.`,
+        nextAction: "No further action required.",
       },
     });
 
