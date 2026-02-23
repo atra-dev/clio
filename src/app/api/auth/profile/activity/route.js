@@ -3,6 +3,7 @@ import { authorizeApiRequest } from "@/lib/api-authorization";
 import { listAuditEvents } from "@/lib/audit-log";
 import { listEmployeeRecordsBackend } from "@/lib/hris-backend";
 import { getLoginAccount } from "@/lib/user-accounts";
+import { formatEmployeeName } from "@/lib/name-utils";
 
 const RECENT_ACTIVITY_LIMIT = 5;
 const AUDIT_SCAN_LIMIT = 300;
@@ -104,13 +105,28 @@ export async function GET(request) {
   const lastContextEvent = ownEvents.find(
     (entry) => String(entry?.sourceIp || "").trim() !== "unknown" || String(entry?.userAgent || "").trim() !== "unknown",
   );
+  const employeeName = formatEmployeeName({
+    firstName: employeeRecord?.firstName,
+    middleName: employeeRecord?.middleName,
+    lastName: employeeRecord?.lastName,
+    suffix: employeeRecord?.suffix,
+    fallback: employeeRecord?.name,
+    fallbackEmail: employeeRecord?.email || actorEmail,
+    fallbackLabel: "Employee",
+  });
 
   return NextResponse.json({
-    role: toText(account?.role || session.role, "EMPLOYEE_L1"),
+    role: toText(account?.role || session.role, "EMPLOYEE"),
+    employmentRole: toText(employeeRecord?.role || account?.role || session.role, "EMPLOYEE"),
     employeeId: toText(employeeRecord?.employeeId || account?.id || "-", "-"),
-    employeeName: toText(employeeRecord?.name || "-", "-"),
+    employeeName: toText(employeeName, "-"),
     department: toText(employeeRecord?.department || "-", "-"),
     jobTitle: toText(employeeRecord?.jobTitle || "-", "-"),
+    employmentStatus: toText(employeeRecord?.employmentStatus || "-", "-"),
+    recordStatus: toText(employeeRecord?.status || "-", "-"),
+    managerEmail: toText(employeeRecord?.managerEmail || "-", "-"),
+    hireDate: toText(employeeRecord?.hireDate || "-", "-"),
+    employeeEmail: toText(employeeRecord?.email || actorEmail, actorEmail),
     lastLoginAt: account?.lastLoginAt || null,
     lastActiveIp: toText(lastContextEvent?.sourceIp || "unknown", "unknown"),
     lastActiveDevice: summarizeDevice(lastContextEvent?.userAgent || "unknown"),

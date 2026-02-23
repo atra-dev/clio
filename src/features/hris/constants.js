@@ -159,9 +159,9 @@ export const MODULE_ACCESS = {
     "exports",
     "settings",
   ],
-  EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
-  EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
-  EMPLOYEE_L3: ["dashboard", "employees", "attendance", "performance", "documents", "requests"],
+  EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance"],
+  EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance"],
+  EMPLOYEE_L3: ["dashboard", "employees", "attendance", "performance"],
 };
 
 export const LOGIN_HIGHLIGHTS = [

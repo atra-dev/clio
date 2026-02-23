@@ -125,7 +125,8 @@ export default function RetentionArchiveModule({ session }) {
 
   const [section, setSection] = useState("overview");
   const [filters, setFilters] = useState(initialFilters);
-  const [records, setRecords] = useState([]);
+  const [employeeGroups, setEmployeeGroups] = useState([]);
+  const [activeEmployeeGroupId, setActiveEmployeeGroupId] = useState("");
   const [summary, setSummary] = useState(initialSummary);
   const [policy, setPolicy] = useState(initialPolicy);
   const [pagination, setPagination] = useState({
@@ -155,9 +156,10 @@ export default function RetentionArchiveModule({ session }) {
         dueWithinDays: filters.dueWithinDays,
         page: filters.page,
         pageSize: filters.pageSize,
+        view: "employee",
       });
 
-      setRecords(Array.isArray(payload.records) ? payload.records : []);
+      setEmployeeGroups(Array.isArray(payload.employeeGroups) ? payload.employeeGroups : []);
       setSummary(payload.summary && typeof payload.summary === "object" ? payload.summary : initialSummary);
       setPolicy(payload.policy && typeof payload.policy === "object" ? payload.policy : initialPolicy);
       setPagination(
@@ -171,7 +173,7 @@ export default function RetentionArchiveModule({ session }) {
             },
       );
     } catch (error) {
-      setRecords([]);
+      setEmployeeGroups([]);
       setSummary(initialSummary);
       setPolicy(initialPolicy);
       setPagination({
@@ -204,6 +206,10 @@ export default function RetentionArchiveModule({ session }) {
   const nextDueCount = Math.max(0, Number(summary.dueWithinWindow || 0) - Number(summary.dueNow || 0));
   const pageStart = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
   const pageEnd = Math.min(pagination.total, pagination.page * pagination.pageSize);
+  const activeEmployeeGroup = useMemo(
+    () => employeeGroups.find((group) => group.id === activeEmployeeGroupId) || null,
+    [employeeGroups, activeEmployeeGroupId],
+  );
 
   const setFilter = (field, value) => {
     setFilters((current) => ({
@@ -221,6 +227,14 @@ export default function RetentionArchiveModule({ session }) {
         page: nextPage,
       };
     });
+  };
+
+  const openEmployeeDetails = (groupId) => {
+    setActiveEmployeeGroupId(String(groupId || "").trim());
+  };
+
+  const closeEmployeeDetails = () => {
+    setActiveEmployeeGroupId("");
   };
 
   const handlePurgeSubmit = async (event) => {
@@ -372,7 +386,7 @@ export default function RetentionArchiveModule({ session }) {
             <input
               value={filters.q}
               onChange={(event) => setFilter("q", event.target.value)}
-              placeholder="Search record, email, reason"
+              placeholder="Search employee, module, reason"
               className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none md:col-span-2"
             />
             <select
@@ -410,38 +424,68 @@ export default function RetentionArchiveModule({ session }) {
 
           <div className="mt-4">
             {isLoading ? (
-              <p className="text-sm text-slate-600">Loading retention archive records...</p>
-            ) : records.length === 0 ? (
-              <EmptyState title="No archived records found" subtitle="Adjust filters or archive records from lifecycle/offboarding flows." />
+              <p className="text-sm text-slate-600">Loading archived employee groups...</p>
+            ) : employeeGroups.length === 0 ? (
+              <EmptyState title="No archived employee groups found" subtitle="Adjust filters or archive records from lifecycle/offboarding flows." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                      <th className="px-2 py-3 font-medium">Module</th>
-                      <th className="px-2 py-3 font-medium">Record</th>
+                      <th className="px-2 py-3 font-medium">Employee</th>
+                      <th className="px-2 py-3 font-medium">Modules</th>
+                      <th className="px-2 py-3 font-medium">Archived Data</th>
                       <th className="px-2 py-3 font-medium">Archived At</th>
                       <th className="px-2 py-3 font-medium">Retention Delete At</th>
                       <th className="px-2 py-3 font-medium">Deletion State</th>
                       <th className="px-2 py-3 font-medium">Countdown</th>
-                      <th className="px-2 py-3 font-medium">Reason</th>
+                      <th className="px-2 py-3 font-medium text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {records.map((row) => (
+                    {employeeGroups.map((row) => (
                       <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                        <td className="px-2 py-3 text-slate-900">{row.moduleLabel}</td>
                         <td className="px-2 py-3">
-                          <p className="font-medium text-slate-900">{row.title || row.recordId || "-"}</p>
-                          <p className="text-xs text-slate-500">{row.subtitle || row.ownerEmail || "-"}</p>
+                          <p className="font-medium text-slate-900">{row.employeeName || "Employee"}</p>
+                          <p className="text-xs text-slate-500">{row.employeeEmail || "-"}</p>
                         </td>
+                        <td className="px-2 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 0 ? (
+                              row.moduleBreakdown.slice(0, 3).map((item) => (
+                                <span
+                                  key={`${row.id}-${item.moduleId}`}
+                                  className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
+                                >
+                                  {item.moduleLabel} ({item.count})
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-slate-500">-</span>
+                            )}
+                            {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 3 ? (
+                              <span className="inline-flex rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                                +{row.moduleBreakdown.length - 3}
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-2 py-3 text-xs text-slate-600">{row.totalRecords || 0} item(s)</td>
                         <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.archivedAt)}</td>
                         <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.retentionDeleteAt)}</td>
                         <td className="px-2 py-3">
                           <StatusBadge value={DELETION_STATE_LABEL[row.deletionState] || row.deletionState || "Unknown"} />
                         </td>
                         <td className="px-2 py-3 text-xs text-slate-600">{formatCountdown(row.daysToDeletion)}</td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{row.archiveReason || "-"}</td>
+                        <td className="px-2 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openEmployeeDetails(row.id)}
+                            className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                          >
+                            View
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -452,7 +496,7 @@ export default function RetentionArchiveModule({ session }) {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             <p>
-              Showing {pageStart}-{pageEnd} of {pagination.total} records
+              Showing {pageStart}-{pageEnd} of {pagination.total} employees
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -476,6 +520,97 @@ export default function RetentionArchiveModule({ session }) {
               </button>
             </div>
           </div>
+
+          {activeEmployeeGroup ? (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Retention Group Details"
+              onClick={closeEmployeeDetails}
+            >
+              <div
+                className="w-full max-w-6xl rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-5"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">Retention Details</h3>
+                    <p className="text-sm text-slate-600">
+                      {activeEmployeeGroup.employeeName || "Employee"} {activeEmployeeGroup.employeeEmail ? `(${activeEmployeeGroup.employeeEmail})` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeEmployeeDetails}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50"
+                    aria-label="Close retention details"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4 w-4" aria-hidden="true">
+                      <path d="m6 6 12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Archived Data</p>
+                    <p className="mt-1 text-base font-semibold text-slate-900">{activeEmployeeGroup.totalRecords || 0}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Next Deletion</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatDateTime(activeEmployeeGroup.retentionDeleteAt)}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Deletion State</p>
+                    <div className="mt-1">
+                      <StatusBadge
+                        value={
+                          DELETION_STATE_LABEL[activeEmployeeGroup.deletionState] ||
+                          activeEmployeeGroup.deletionState ||
+                          "Unknown"
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="max-h-[50vh] overflow-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.1em] text-slate-500">
+                        <th className="px-2 py-3 font-medium">Module</th>
+                        <th className="px-2 py-3 font-medium">Record</th>
+                        <th className="px-2 py-3 font-medium">Archived At</th>
+                        <th className="px-2 py-3 font-medium">Retention Delete At</th>
+                        <th className="px-2 py-3 font-medium">State</th>
+                        <th className="px-2 py-3 font-medium">Countdown</th>
+                        <th className="px-2 py-3 font-medium">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(activeEmployeeGroup.records || []).map((item) => (
+                        <tr key={item.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                          <td className="px-2 py-3 text-slate-900">{item.moduleLabel || "-"}</td>
+                          <td className="px-2 py-3">
+                            <p className="font-medium text-slate-900">{item.title || item.recordId || "-"}</p>
+                            <p className="text-xs text-slate-500">{item.subtitle || "-"}</p>
+                          </td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(item.archivedAt)}</td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(item.retentionDeleteAt)}</td>
+                          <td className="px-2 py-3">
+                            <StatusBadge value={DELETION_STATE_LABEL[item.deletionState] || item.deletionState || "Unknown"} />
+                          </td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatCountdown(item.daysToDeletion)}</td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{item.archiveReason || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </SurfaceCard>
       ) : null}
 

@@ -14,12 +14,14 @@ import {
   uploadEmployeeDocumentToStorage,
 } from "@/services/firebase-storage-client";
 import { hrisApi } from "@/services/hris-api-client";
+import { toSubTabAnchor } from "@/lib/subtab-anchor";
 
 const DETAIL_TABS = [
   { id: "profile", label: "Employee Profile" },
   { id: "compliance", label: "Government & Compliance IDs" },
   { id: "payroll", label: "Payroll Information" },
   { id: "access", label: "Access & Role Assignment" },
+  { id: "documents", label: "Employee Attached Documents" },
   { id: "activity", label: "Recent Activity" },
 ];
 
@@ -221,6 +223,11 @@ function mergeCatalogOptions(primary, fallback) {
 function valueOrDash(value) {
   const normalized = String(value ?? "").trim();
   return normalized || "-";
+}
+
+function asInputValue(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized === "-" ? "" : normalized;
 }
 
 function formatActorName(nameValue, emailValue) {
@@ -556,7 +563,7 @@ export default function EmployeeRecordsModule({ session }) {
   const detailsPanelRef = useRef(null);
   const documentInputRef = useRef(null);
   const detailTabs = useMemo(
-    () => (employeeRole ? DETAIL_TABS.filter((tab) => tab.id === "profile") : DETAIL_TABS),
+    () => (employeeRole ? DETAIL_TABS.filter((tab) => tab.id === "profile" || tab.id === "documents") : DETAIL_TABS),
     [employeeRole],
   );
   const roleCatalogOptions = useMemo(
@@ -716,16 +723,91 @@ export default function EmployeeRecordsModule({ session }) {
   }, [loadSelectedRecord]);
 
   useEffect(() => {
-    if (!employeeRole || detailTab === "profile") {
+    const allowedTabs = new Set(detailTabs.map((tab) => tab.id));
+    if (allowedTabs.has(detailTab)) {
       return;
     }
-    setDetailTab("profile");
-  }, [detailTab, employeeRole]);
+    setDetailTab(detailTabs[0]?.id || "profile");
+  }, [detailTab, detailTabs]);
 
-  const selectedRow = useMemo(
-    () => records.find((item) => item.id === selectedId) || selectedRecord || null,
-    [records, selectedId, selectedRecord],
-  );
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const allowedTabs = new Set(detailTabs.map((tab) => tab.id));
+    const syncDetailTabFromHash = (rawHash = window.location.hash) => {
+      const hash = String(rawHash || "")
+        .replace(/^#/, "")
+        .trim()
+        .toLowerCase();
+      if (!hash) {
+        return;
+      }
+
+      const matched = DETAIL_TABS.find((tab) => toSubTabAnchor(tab.id) === hash);
+      if (matched && allowedTabs.has(matched.id)) {
+        setDetailTab(matched.id);
+        if (selectedId) {
+          setShowDetailsPanel(true);
+        }
+      }
+    };
+
+    const onSubTabAnchor = (event) => {
+      if (event?.detail?.moduleId && event.detail.moduleId !== "employees") {
+        return;
+      }
+      const nextAnchor = event?.detail?.anchor;
+      if (!nextAnchor) {
+        syncDetailTabFromHash();
+        return;
+      }
+      syncDetailTabFromHash(`#${nextAnchor}`);
+    };
+
+    syncDetailTabFromHash();
+    window.addEventListener("hashchange", syncDetailTabFromHash);
+    window.addEventListener("popstate", syncDetailTabFromHash);
+    window.addEventListener("clio:subtab-anchor", onSubTabAnchor);
+    return () => {
+      window.removeEventListener("hashchange", syncDetailTabFromHash);
+      window.removeEventListener("popstate", syncDetailTabFromHash);
+      window.removeEventListener("clio:subtab-anchor", onSubTabAnchor);
+    };
+  }, [detailTabs, selectedId]);
+
+  const selectedRow = useMemo(() => {
+    const selectedDirectoryRow = records.find((item) => item.id === selectedId) || null;
+    const selectedDetailId = normalizeRecordId(selectedRecord?.id || selectedRecord?.recordId);
+
+    if (selectedDirectoryRow && selectedRecord && selectedDetailId === selectedDirectoryRow.id) {
+      const merged = {
+        ...selectedDirectoryRow,
+        ...selectedRecord,
+        id: selectedDirectoryRow.id,
+      };
+      return {
+        ...merged,
+        name: composeRecordDisplayName(merged),
+      };
+    }
+
+    if (selectedDirectoryRow) {
+      return selectedDirectoryRow;
+    }
+
+    if (selectedRecord) {
+      const normalizedId = normalizeRecordId(selectedRecord.id || selectedRecord.recordId);
+      return {
+        ...selectedRecord,
+        id: normalizedId,
+        name: composeRecordDisplayName(selectedRecord),
+      };
+    }
+
+    return null;
+  }, [records, selectedId, selectedRecord]);
 
   const roleOptions = useMemo(() => {
     const options = [...roleCatalogOptions];
@@ -1553,7 +1635,11 @@ export default function EmployeeRecordsModule({ session }) {
   const renderProfile = () => (
     <SurfaceCard
       title={employeeRole ? "My Profile" : "Employee Profile"}
-      subtitle="Full employee information in one consolidated view"
+      subtitle={
+        employeeRole
+          ? "View your employment snapshot and update personal contact details."
+          : "Full employee information in one consolidated view"
+      }
     >
       {!selectedRow ? (
         <EmptyState
@@ -1592,218 +1678,321 @@ export default function EmployeeRecordsModule({ session }) {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-3">
-            <div className="grid gap-2 md:grid-cols-3">
-              <input
-                value={masterDraft.employeeId}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, employeeId: event.target.value }))}
-                placeholder="Employee ID"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={masterDraft.lastName}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, lastName: event.target.value }))}
-                placeholder="Last name"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={masterDraft.firstName}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, firstName: event.target.value }))}
-                placeholder="First name"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={masterDraft.middleName}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, middleName: event.target.value }))}
-                placeholder="Middle name"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={masterDraft.suffix}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, suffix: event.target.value }))}
-                placeholder="Suffix (e.g. Jr.)"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={masterDraft.email}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, email: event.target.value }))}
-                placeholder="Email"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <select
-                value={masterDraft.department}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, department: event.target.value }))}
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              >
-                <option value="">Department</option>
-                {departmentCatalogOptions.map((departmentOption) => (
-                  <option key={`profile-department-${departmentOption.value}`} value={departmentOption.value}>
-                    {departmentOption.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={masterDraft.jobTitle}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, jobTitle: event.target.value }))}
-                placeholder="Job title"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                type="date"
-                value={masterDraft.hireDate}
-                onChange={(event) => setMasterDraft((current) => ({ ...current, hireDate: event.target.value }))}
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <select
-                value={employmentDraft.employmentStatus}
-                onChange={(event) =>
-                  setEmploymentDraft((current) => ({ ...current, employmentStatus: event.target.value }))
-                }
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              >
-                {EMPLOYMENT_STATUS_OPTIONS.map((statusOption) => (
-                  <option key={statusOption} value={statusOption}>
-                    {statusOption}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={employmentDraft.status}
-                onChange={(event) => setEmploymentDraft((current) => ({ ...current, status: event.target.value }))}
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              >
-                {RECORD_STATUS_OPTIONS.map((statusOption) => (
-                  <option key={statusOption} value={statusOption}>
-                    {statusOption}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={employmentDraft.managerEmail}
-                onChange={(event) =>
-                  setEmploymentDraft((current) => ({ ...current, managerEmail: event.target.value }))
-                }
-                placeholder="Manager email"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-              />
-              <input
-                value={contactDraft.contact}
-                placeholder="Contact"
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                onChange={(event) => setContactDraft((current) => ({ ...current, contact: event.target.value }))}
-              />
-              <input
-                value={contactDraft.address}
-                placeholder="Address"
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))}
-              />
-              <input
-                value={contactDraft.emergencyContact}
-                placeholder="Emergency contact"
-                disabled={!canManageRecords}
-                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                onChange={(event) =>
-                  setContactDraft((current) => ({ ...current, emergencyContact: event.target.value }))
-                }
-              />
-            </div>
+            {canManageRecords ? (
+              <>
+                <div className="grid gap-2 md:grid-cols-3">
+                  <input
+                    value={masterDraft.employeeId}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, employeeId: event.target.value }))}
+                    placeholder="Employee ID"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={masterDraft.lastName}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, lastName: event.target.value }))}
+                    placeholder="Last name"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={masterDraft.firstName}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, firstName: event.target.value }))}
+                    placeholder="First name"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={masterDraft.middleName}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, middleName: event.target.value }))}
+                    placeholder="Middle name"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={masterDraft.suffix}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, suffix: event.target.value }))}
+                    placeholder="Suffix (e.g. Jr.)"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={masterDraft.email}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, email: event.target.value }))}
+                    placeholder="Email"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <select
+                    value={masterDraft.department}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, department: event.target.value }))}
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  >
+                    <option value="">Department</option>
+                    {departmentCatalogOptions.map((departmentOption) => (
+                      <option key={`profile-department-${departmentOption.value}`} value={departmentOption.value}>
+                        {departmentOption.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={masterDraft.jobTitle}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, jobTitle: event.target.value }))}
+                    placeholder="Job title"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    type="date"
+                    value={masterDraft.hireDate}
+                    onChange={(event) => setMasterDraft((current) => ({ ...current, hireDate: event.target.value }))}
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <select
+                    value={employmentDraft.employmentStatus}
+                    onChange={(event) =>
+                      setEmploymentDraft((current) => ({ ...current, employmentStatus: event.target.value }))
+                    }
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  >
+                    {EMPLOYMENT_STATUS_OPTIONS.map((statusOption) => (
+                      <option key={statusOption} value={statusOption}>
+                        {statusOption}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={employmentDraft.status}
+                    onChange={(event) => setEmploymentDraft((current) => ({ ...current, status: event.target.value }))}
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  >
+                    {RECORD_STATUS_OPTIONS.map((statusOption) => (
+                      <option key={statusOption} value={statusOption}>
+                        {statusOption}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={employmentDraft.managerEmail}
+                    onChange={(event) =>
+                      setEmploymentDraft((current) => ({ ...current, managerEmail: event.target.value }))
+                    }
+                    placeholder="Manager email"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  />
+                  <input
+                    value={contactDraft.contact}
+                    placeholder="Contact"
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                    onChange={(event) => setContactDraft((current) => ({ ...current, contact: event.target.value }))}
+                  />
+                  <input
+                    value={contactDraft.address}
+                    placeholder="Address"
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                    onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))}
+                  />
+                  <input
+                    value={contactDraft.emergencyContact}
+                    placeholder="Emergency contact"
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                    onChange={(event) =>
+                      setContactDraft((current) => ({ ...current, emergencyContact: event.target.value }))
+                    }
+                  />
+                </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-slate-500">
-                {canManageRecords
-                  ? "You can update full profile info in one action."
-                  : "You can update your contact details in this profile view."}
-              </p>
-              <button
-                type="button"
-                onClick={saveFullProfile}
-                disabled={isSubmitting}
-                className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-              >
-                {canManageRecords ? "Save Full Profile" : "Save My Profile"}
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Documents</p>
-                {canManageRecords ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => documentInputRef.current?.click()}
-                      disabled={isSubmitting}
-                      className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
-                    >
-                      Upload File
-                    </button>
-                    <input
-                      ref={documentInputRef}
-                      type="file"
-                      className="hidden"
-                      onChange={handleDocumentFileChange}
-                    />
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-slate-500">You can update full profile info in one action.</p>
+                  <button
+                    type="button"
+                    onClick={saveFullProfile}
+                    disabled={isSubmitting}
+                    className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
+                  >
+                    Save Full Profile
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
+                        <th className="w-[38%] px-3 py-2 font-medium">Profile Field</th>
+                        <th className="px-3 py-2 font-medium">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ["Employee ID", valueOrDash(masterDraft.employeeId)],
+                        ["Last Name", valueOrDash(masterDraft.lastName)],
+                        ["First Name", valueOrDash(masterDraft.firstName)],
+                        ["Middle Name", valueOrDash(masterDraft.middleName)],
+                        ["Suffix", valueOrDash(masterDraft.suffix)],
+                        ["Email", valueOrDash(masterDraft.email)],
+                        ["Department", valueOrDash(masterDraft.department)],
+                        ["Role", toLabel(selectedRow.role || "EMPLOYEE_L1")],
+                        ["Job Title", valueOrDash(masterDraft.jobTitle)],
+                        ["Employment Status", valueOrDash(employmentDraft.employmentStatus)],
+                        ["Record Status", valueOrDash(employmentDraft.status)],
+                        ["Start Date", valueOrDash(masterDraft.hireDate)],
+                        ["Emergency Contact", valueOrDash(contactDraft.emergencyContact)],
+                      ].map(([label, value]) => (
+                        <tr key={label} className="border-b border-slate-100 last:border-b-0">
+                          <td className="px-3 py-2 text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">
+                            {label}
+                          </td>
+                          <td className="px-3 py-2 text-slate-800">{value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Editable Contact Details</p>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-medium text-slate-600">Contact Number</span>
+                      <input
+                        value={asInputValue(contactDraft.contact)}
+                        placeholder="Enter contact number"
+                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                        onChange={(event) => setContactDraft((current) => ({ ...current, contact: event.target.value }))}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-medium text-slate-600">Address</span>
+                      <input
+                        value={asInputValue(contactDraft.address)}
+                        placeholder="Enter address"
+                        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                        onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))}
+                      />
+                    </label>
                   </div>
-                ) : null}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-slate-500">
+                    All employment details are shown above. You can update contact details here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={saveFullProfile}
+                    disabled={isSubmitting}
+                    className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
+                  >
+                    Save My Profile
+                  </button>
+                </div>
               </div>
-              <div className="mt-2 space-y-2">
-                {ensureArray(selectedRow.documents).length === 0 ? (
-                  <p className="text-xs text-slate-500">No documents attached.</p>
-                ) : (
-                  ensureArray(selectedRow.documents)
-                    .map((document, index) => (
-                      <div
-                        key={`${document.name || "document"}-${index}`}
-                        className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate font-medium text-slate-800">{valueOrDash(document.name)}</p>
-                            <p className="truncate text-[11px] text-slate-500">
-                              {valueOrDash(document.type)} | {formatFileSize(document.sizeBytes)} | {formatDate(document.uploadedAt)}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {String(document.ref || "").trim() ? (
-                              <a
-                                href={String(document.ref)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
-                              >
-                                Open
-                              </a>
-                            ) : null}
-                            {canManageRecords ? (
-                              <button
-                                type="button"
-                                onClick={() => removeDocument(index)}
-                                disabled={isSubmitting}
-                                className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-70"
-                              >
-                                Remove
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
-            </div>
+            )}
           </div>
+        </div>
+      )}
+    </SurfaceCard>
+  );
+
+  const renderAttachedDocuments = () => (
+    <SurfaceCard
+      title="Employee Attached Documents"
+      subtitle="All documents currently attached to this employee record"
+    >
+      {!selectedRow ? (
+        <EmptyState
+          title="No employee selected"
+          subtitle="Select a record to view attached employee documents."
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Attached Files</p>
+              <p className="mt-1 text-xs text-slate-600">
+                {ensureArray(selectedRow.documents).length} document(s) linked to this employee.
+              </p>
+            </div>
+            {canManageRecords ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => documentInputRef.current?.click()}
+                  disabled={isSubmitting}
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-70"
+                >
+                  Upload File
+                </button>
+                <input
+                  ref={documentInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleDocumentFileChange}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {ensureArray(selectedRow.documents).length === 0 ? (
+            <EmptyState
+              title="No attached documents yet"
+              subtitle="Upload employee files to build this document list."
+            />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
+                    <th className="px-3 py-2 font-medium">Document</th>
+                    <th className="px-3 py-2 font-medium">Type</th>
+                    <th className="px-3 py-2 font-medium">Size</th>
+                    <th className="px-3 py-2 font-medium">Uploaded At</th>
+                    <th className="px-3 py-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ensureArray(selectedRow.documents).map((document, index) => (
+                    <tr key={`${document.name || "document"}-${index}`} className="border-b border-slate-100 last:border-b-0">
+                      <td className="px-3 py-2 text-slate-800">{valueOrDash(document.name)}</td>
+                      <td className="px-3 py-2 text-slate-700">{valueOrDash(document.type)}</td>
+                      <td className="px-3 py-2 text-slate-700">{formatFileSize(document.sizeBytes)}</td>
+                      <td className="px-3 py-2 text-slate-700">{formatDate(document.uploadedAt)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="inline-flex items-center justify-end gap-2">
+                          {String(document.ref || "").trim() ? (
+                            <a
+                              href={String(document.ref)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
+                            >
+                              Open
+                            </a>
+                          ) : null}
+                          {canManageRecords ? (
+                            <button
+                              type="button"
+                              onClick={() => removeDocument(index)}
+                              disabled={isSubmitting}
+                              className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-70"
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </SurfaceCard>
@@ -2042,29 +2231,6 @@ export default function EmployeeRecordsModule({ session }) {
     </SurfaceCard>
   );
 
-  const renderSelectionHint = () =>
-    selectedRow && showDetailsPanel ? (
-      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-        <p className="text-xs font-medium text-slate-700">
-          Active Record:{" "}
-          <span className="font-semibold text-slate-900">
-            {valueOrDash(
-              formatEmployeeName({
-                lastName: selectedRow.lastName,
-                firstName: selectedRow.firstName,
-                middleName: selectedRow.middleName,
-                suffix: selectedRow.suffix,
-                fallback: selectedRow.name,
-                fallbackEmail: selectedRow.email,
-                fallbackLabel: "Employee",
-              }),
-            )}
-          </span>{" "}
-          ({valueOrDash(selectedRow.employeeId)})
-        </p>
-      </div>
-    ) : null;
-
   const renderDetailsSection = () =>
     !selectedRow ? (
       <EmptyState
@@ -2073,10 +2239,14 @@ export default function EmployeeRecordsModule({ session }) {
       />
     ) : (
       <>
-        <SurfaceCard
-          title="Employee Details & Profile"
-          subtitle="Profile, compliance, payroll, and access role controls"
-          action={
+        {!employeeRole ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <ModuleTabs
+              tabs={detailTabs}
+              value={detailTab}
+              onChange={setDetailTab}
+              className="min-w-[220px] flex-1"
+            />
             <button
               type="button"
               onClick={() => setShowDetailsPanel(false)}
@@ -2087,25 +2257,22 @@ export default function EmployeeRecordsModule({ session }) {
               </svg>
               Back
             </button>
-          }
-        >
-          <ModuleTabs tabs={detailTabs} value={detailTab} onChange={setDetailTab} />
-        </SurfaceCard>
+          </div>
+        ) : null}
         {detailTab === "profile" ? renderProfile() : null}
         {!employeeRole && detailTab === "compliance" ? renderCompliance() : null}
         {!employeeRole && detailTab === "payroll" ? renderPayroll() : null}
         {!employeeRole && detailTab === "access" ? renderAccess() : null}
+        {detailTab === "documents" ? renderAttachedDocuments() : null}
         {!employeeRole && detailTab === "activity" ? renderRecentActivitySection() : null}
       </>
     );
 
   return (
     <div className="space-y-4">
-      {renderSelectionHint()}
-
       {showDetailsPanel ? (
         <div id="employee-details" ref={detailsPanelRef} className="min-w-0">
-          <div className="space-y-3 xl:max-h-[calc(100dvh-12rem)] xl:overflow-y-auto xl:pr-1">
+          <div className="space-y-2 xl:max-h-[calc(100dvh-12rem)] xl:overflow-y-auto xl:pr-1">
             {renderDetailsSection()}
           </div>
         </div>

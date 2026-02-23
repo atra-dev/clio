@@ -27,6 +27,13 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function parseBooleanQuery(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 function sanitizeSelfCreatePayload(body, sessionEmail) {
   return {
     email: normalizeEmail(sessionEmail),
@@ -66,6 +73,7 @@ export async function GET(request) {
     const roleFilter = String(request.nextUrl?.searchParams.get("role") || "")
       .trim()
       .toLowerCase();
+    const includeDocuments = parseBooleanQuery(request.nextUrl?.searchParams.get("includeDocuments"));
     const page = request.nextUrl?.searchParams.get("page");
     const pageSize = request.nextUrl?.searchParams.get("pageSize");
     const ownerEmail = getSelfRestrictedOwnerEmail({
@@ -75,6 +83,7 @@ export async function GET(request) {
 
     const rows = await listEmployeeRecordsBackend({
       ownerEmail: ownerEmail || undefined,
+      includeDocuments,
     });
     const filtered = rows.filter((record) => {
       const byStatus = statusFilter

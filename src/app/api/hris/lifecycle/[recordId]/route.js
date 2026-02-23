@@ -114,13 +114,13 @@ export async function PATCH(request, { params }) {
 
     if (workflowPatch) {
       return NextResponse.json(
-        { message: "Direct workflow patch is not allowed. Use workflow actions and approval endpoint." },
+        { message: "Direct workflow patch is not allowed. Use workflow actions from the workflow console." },
         { status: 403 },
       );
     }
 
     if (workflowActionType === "approval-decision" || workflowActionType === "approve" || workflowActionType === "reject") {
-      return NextResponse.json({ message: "Approval flow must use the lifecycle approval endpoint." }, { status: 403 });
+      return NextResponse.json({ message: "Approval chain actions are disabled for lifecycle workflows." }, { status: 403 });
     }
 
     const result = await updateLifecycleRecordBackend(recordId, body, session.email, session.role);

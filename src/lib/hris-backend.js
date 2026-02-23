@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteField,
   deleteDoc,
   doc,
   getDoc,
@@ -12,11 +13,15 @@ import {
 import { getFirestoreDb, isFirestoreEnabled } from "@/lib/firebase";
 import {
   archiveUserAccount,
+  getLoginAccount,
+  inviteUserAccount,
   listUserAccounts,
   purgeDueArchivedUserAccounts,
+  revokeInviteById,
   updateUserAccountRole,
   updateUserAccountStatus,
 } from "@/lib/user-accounts";
+import { deliverInviteEmail } from "@/lib/invite-delivery";
 import { formatEmployeeName } from "@/lib/name-utils";
 
 const MAX_AUDIT_TRAIL_ITEMS = 80;
@@ -110,10 +115,41 @@ const LIFECYCLE_WORKFLOW_TEMPLATES = {
 
 const LIFECYCLE_PRIVILEGED_TARGET_ROLES = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
 const LIFECYCLE_ASSIGNABLE_BY_PRIVILEGED = new Set(["EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
+const LIFECYCLE_ASSIGNABLE_BY_GRC = new Set(["GRC", "HR", "EA", "EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
 
 function env(name, fallback) {
   const value = String(process.env[name] || "").trim();
   return value || fallback;
+}
+
+function parseBooleanEnv(name, fallbackValue = false) {
+  const raw = String(process.env[name] || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) {
+    return fallbackValue;
+  }
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+
+function isInviteDeliveryRequired() {
+  const defaultRequired = process.env.NODE_ENV === "production";
+  return parseBooleanEnv("CLIO_REQUIRE_EMAIL_DELIVERY", defaultRequired);
+}
+
+function extractDeliveryErrorInfo(reason) {
+  const normalized = String(reason || "").trim();
+  if (normalized.startsWith("email_delivery_failed:")) {
+    return {
+      code: "email_delivery_failed",
+      providerMessage: normalized.slice("email_delivery_failed:".length).trim(),
+    };
+  }
+
+  return {
+    code: normalized || "email_delivery_failed",
+    providerMessage: "",
+  };
 }
 
 function nowIso() {
@@ -254,6 +290,339 @@ function asObject(value, fallback = {}) {
   return fallback;
 }
 
+function normalizeEmployeeDocumentsPayload(documents, { actorEmail, now } = {}) {
+  const fallbackActor = normalizeEmail(actorEmail) || "system@gmail.com";
+  const fallbackAt = asString(now, nowIso());
+  return asArray(documents)
+    .map((entry, index) => {
+      const source = asObject(entry, {});
+      const uploadedAt = asString(source.uploadedAt, fallbackAt);
+      const uploadedBy = normalizeEmail(source.uploadedBy || fallbackActor) || fallbackActor;
+      const sizeRaw = Number(source.sizeBytes);
+      return {
+        id: asString(source.id),
+        name: asString(source.name, "Employee Document"),
+        type: asString(source.type, "General"),
+        ref: asString(source.ref),
+        storagePath: asString(source.storagePath),
+        contentType: asString(source.contentType),
+        sizeBytes: Number.isFinite(sizeRaw) && sizeRaw >= 0 ? sizeRaw : 0,
+        uploadedAt,
+        uploadedBy,
+        order: Number.isFinite(Number(source.order)) ? Number(source.order) : index,
+      };
+    })
+    .filter((entry) => entry.ref || entry.name);
+}
+
+async function listEmployeeDocumentSubcollectionById(recordId, { db } = {}) {
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    return [];
+  }
+
+  const database = db || getDbOrThrow();
+  const employeesCollection = getCollectionName("employees");
+  const subcollectionName = getEmployeeDocumentsSubcollectionName();
+  const snapshot = await getDocs(collection(database, employeesCollection, normalizedId, subcollectionName));
+  return snapshot.docs
+    .map((item, index) => {
+      const payload = normalizeEmployeeDocumentsPayload([item.data()], {
+        now: nowIso(),
+      })[0];
+      if (!payload) {
+        return null;
+      }
+      return {
+        ...payload,
+        id: item.id,
+        recordId: item.id,
+        order: Number.isFinite(Number(payload.order)) ? Number(payload.order) : index,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftTime = new Date(left.uploadedAt || 0).getTime();
+      const rightTime = new Date(right.uploadedAt || 0).getTime();
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && rightTime !== leftTime) {
+        return rightTime - leftTime;
+      }
+      return Number(left.order || 0) - Number(right.order || 0);
+    });
+}
+
+async function deleteEmployeeDocumentSubcollectionById(recordId, { db } = {}) {
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    return 0;
+  }
+
+  const database = db || getDbOrThrow();
+  const employeesCollection = getCollectionName("employees");
+  const subcollectionName = getEmployeeDocumentsSubcollectionName();
+  const snapshot = await getDocs(collection(database, employeesCollection, normalizedId, subcollectionName));
+  let removed = 0;
+  for (const item of snapshot.docs) {
+    await deleteDoc(item.ref);
+    removed += 1;
+  }
+  return removed;
+}
+
+async function replaceEmployeeDocumentSubcollectionById(recordId, documents, { actorEmail, db } = {}) {
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    throw new Error("invalid_record_id");
+  }
+
+  const database = db || getDbOrThrow();
+  const employeesCollection = getCollectionName("employees");
+  const subcollectionName = getEmployeeDocumentsSubcollectionName();
+  const collectionRef = collection(database, employeesCollection, normalizedId, subcollectionName);
+  const normalizedDocuments = normalizeEmployeeDocumentsPayload(documents, {
+    actorEmail,
+    now: nowIso(),
+  });
+
+  await deleteEmployeeDocumentSubcollectionById(normalizedId, { db: database });
+  const created = [];
+  for (const item of normalizedDocuments) {
+    const payload = {
+      name: item.name,
+      type: item.type,
+      ref: item.ref,
+      storagePath: item.storagePath,
+      contentType: item.contentType,
+      sizeBytes: item.sizeBytes,
+      uploadedAt: item.uploadedAt,
+      uploadedBy: item.uploadedBy,
+      order: item.order,
+    };
+    const createdRef = await addDoc(collectionRef, payload);
+    created.push({
+      ...payload,
+      id: createdRef.id,
+      recordId: createdRef.id,
+    });
+  }
+
+  return created
+    .sort((left, right) => new Date(right.uploadedAt || 0).getTime() - new Date(left.uploadedAt || 0).getTime())
+    .map((item, index) => ({
+      ...item,
+      order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
+    }));
+}
+
+function resolveEmployeeDocumentsForResponse(record, subcollectionDocs = []) {
+  if (Array.isArray(subcollectionDocs) && subcollectionDocs.length > 0) {
+    return subcollectionDocs;
+  }
+  return normalizeEmployeeDocumentsPayload(record?.documents, {
+    actorEmail: record?.updatedBy || record?.createdBy,
+    now: record?.updatedAt || record?.createdAt || nowIso(),
+  });
+}
+
+function withEmployeeDocuments(record, documents = []) {
+  const normalized = Array.isArray(documents) ? documents : [];
+  return {
+    ...record,
+    documents: normalized,
+    documentsCount: normalized.length,
+  };
+}
+
+async function resolveAndMigrateEmployeeDocuments(record, { db } = {}) {
+  if (!record?.id) {
+    return [];
+  }
+
+  const documentsFromSubcollection = await listEmployeeDocumentSubcollectionById(record.id, { db });
+  if (documentsFromSubcollection.length > 0) {
+    return documentsFromSubcollection;
+  }
+
+  const legacyDocuments = resolveEmployeeDocumentsForResponse(record, []);
+  if (legacyDocuments.length === 0) {
+    return [];
+  }
+
+  const migrated = await replaceEmployeeDocumentSubcollectionById(record.id, legacyDocuments, {
+    actorEmail: record.updatedBy || record.createdBy,
+    db,
+  });
+  await clearLegacyEmployeeDocumentsField(record.id, {
+    documentsCount: migrated.length,
+    db,
+  });
+  return migrated;
+}
+
+async function clearLegacyEmployeeDocumentsField(recordId, { documentsCount, db } = {}) {
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    return;
+  }
+
+  const database = db || getDbOrThrow();
+  const patch = {
+    documents: deleteField(),
+  };
+  if (Number.isFinite(Number(documentsCount))) {
+    patch.documentsCount = Math.max(0, Number(documentsCount));
+  }
+  await updateDoc(doc(database, getCollectionName("employees"), normalizedId), patch);
+}
+
+function toEmployeeDocumentMergeKey(document) {
+  const storagePath = asString(document?.storagePath);
+  if (storagePath) {
+    return `path:${storagePath}`;
+  }
+  const ref = asString(document?.ref);
+  if (ref) {
+    return `ref:${ref}`;
+  }
+  return `fallback:${asString(document?.name)}|${Number.isFinite(Number(document?.sizeBytes)) ? Number(document.sizeBytes) : 0}|${asString(
+    document?.uploadedAt,
+  )}`;
+}
+
+function mergeEmployeeDocuments(existingDocuments, incomingDocuments) {
+  const merged = [];
+  const seen = new Set();
+  let addedCount = 0;
+
+  const pushUnique = (entry, trackAdded = false) => {
+    const normalized = normalizeEmployeeDocumentsPayload([entry], {
+      actorEmail: entry?.uploadedBy,
+      now: entry?.uploadedAt,
+    })[0];
+    if (!normalized) {
+      return;
+    }
+    const key = toEmployeeDocumentMergeKey(normalized);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push(normalized);
+    if (trackAdded) {
+      addedCount += 1;
+    }
+  };
+
+  asArray(existingDocuments).forEach((entry) => pushUnique(entry, false));
+  asArray(incomingDocuments).forEach((entry) => pushUnique(entry, true));
+
+  return {
+    merged,
+    addedCount,
+  };
+}
+
+function toOnboardingEvidenceDocuments(evidence, actorEmail) {
+  const now = nowIso();
+  const mapped = asArray(evidence).map((item) => {
+    const source = asObject(item, {});
+    return {
+      id: asString(source.id),
+      name: asString(source.name, "Onboarding Document"),
+      type: asString(source.type, "Onboarding"),
+      ref: asString(source.ref),
+      storagePath: asString(source.storagePath),
+      contentType: asString(source.contentType),
+      sizeBytes: Number.isFinite(Number(source.sizeBytes)) ? Number(source.sizeBytes) : 0,
+      uploadedAt: asString(source.uploadedAt, now),
+      uploadedBy: asString(source.uploadedBy, actorEmail),
+    };
+  });
+  return normalizeEmployeeDocumentsPayload(mapped, {
+    actorEmail,
+    now,
+  });
+}
+
+async function syncOnboardingEvidenceToEmployeeDocuments(record, actorEmail) {
+  const category = asString(record?.category).toLowerCase();
+  if (!category.includes("onboarding")) {
+    return {
+      synced: false,
+      addedCount: 0,
+    };
+  }
+
+  const employeeEmail = normalizeEmail(record?.employeeEmail);
+  if (!employeeEmail) {
+    return {
+      synced: false,
+      addedCount: 0,
+    };
+  }
+
+  const onboardingDocuments = toOnboardingEvidenceDocuments(record?.evidence, actorEmail);
+  if (onboardingDocuments.length === 0) {
+    return {
+      synced: false,
+      addedCount: 0,
+    };
+  }
+
+  const employeeRows = await listCollectionRecords(getCollectionName("employees"), {
+    filterField: "email",
+    filterValue: employeeEmail,
+  });
+  const employeeRecord = employeeRows[0];
+  if (!employeeRecord?.id) {
+    return {
+      synced: false,
+      addedCount: 0,
+    };
+  }
+
+  const existingDocuments = await resolveAndMigrateEmployeeDocuments(employeeRecord);
+  const { merged, addedCount } = mergeEmployeeDocuments(existingDocuments, onboardingDocuments);
+  if (addedCount <= 0) {
+    return {
+      synced: false,
+      addedCount: 0,
+    };
+  }
+
+  const syncedDocuments = await replaceEmployeeDocumentSubcollectionById(employeeRecord.id, merged, {
+    actorEmail,
+  });
+  await clearLegacyEmployeeDocumentsField(employeeRecord.id, {
+    documentsCount: syncedDocuments.length,
+  });
+
+  return {
+    synced: true,
+    addedCount,
+    documentsCount: syncedDocuments.length,
+    employeeRecordId: employeeRecord.id,
+  };
+}
+
+async function collectOnboardingEvidenceDocumentsByEmployeeEmail(employeeEmail, actorEmail) {
+  const normalizedEmail = normalizeEmail(employeeEmail);
+  if (!normalizedEmail) {
+    return [];
+  }
+
+  const lifecycleRows = await listCollectionRecords(getCollectionName("lifecycle"), {
+    filterField: "employeeEmail",
+    filterValue: normalizedEmail,
+  });
+
+  const onboardingEvidenceDocuments = lifecycleRows
+    .filter((row) => asString(row?.category).toLowerCase().includes("onboarding"))
+    .flatMap((row) => toOnboardingEvidenceDocuments(row?.evidence, actorEmail));
+
+  return mergeEmployeeDocuments([], onboardingEvidenceDocuments).merged;
+}
+
 function composeEmployeeName({ firstName, middleName, lastName, suffix, fallback }) {
   return formatEmployeeName({
     firstName: asString(firstName),
@@ -388,6 +757,9 @@ function buildApprovalChain(requiredRoles, existingChain) {
 
 function resolveApprovalState(approvalChain) {
   const chain = asArray(approvalChain);
+  if (chain.length === 0) {
+    return "Not Required";
+  }
   if (chain.some((step) => normalizeText(step?.status) === "rejected")) {
     return "Rejected";
   }
@@ -416,18 +788,8 @@ function sanitizeWorkflowStageIndex(stageIndex, stagesLength) {
   return Math.max(0, Math.min(parsed, Math.max(0, stagesLength - 1)));
 }
 
-function resolveRequiredApproverRoles(template, details) {
-  const baseRoles = asArray(template?.approverRoles).map(normalizeRoleId).filter(Boolean);
-  const targetRole = normalizeRoleKey(asString(details?.roleTo));
-  const resolvedTargetRole = LIFECYCLE_ROLE_ALIAS.get(targetRole) || "";
-
-  if (template?.type === "role-change" && LIFECYCLE_PRIVILEGED_TARGET_ROLES.has(resolvedTargetRole)) {
-    if (!baseRoles.includes("SUPER_ADMIN")) {
-      baseRoles.push("SUPER_ADMIN");
-    }
-  }
-
-  return [...new Set(baseRoles)];
+function resolveRequiredApproverRoles() {
+  return [];
 }
 
 function validateLifecycleTargetRolePermission({ actorRole, targetRole }) {
@@ -439,6 +801,23 @@ function validateLifecycleTargetRolePermission({ actorRole, targetRole }) {
   const normalizedTargetRole = normalizeRoleId(targetRole);
 
   if (normalizedActorRole === "SUPER_ADMIN") {
+    return;
+  }
+
+  if (normalizedActorRole === "GRC") {
+    if (normalizedTargetRole === "SUPER_ADMIN") {
+      throw new Error("forbidden_target_role");
+    }
+    if (!LIFECYCLE_ASSIGNABLE_BY_GRC.has(normalizedTargetRole)) {
+      throw new Error("invalid_target_role");
+    }
+    return;
+  }
+
+  if (normalizedActorRole === "HR" || normalizedActorRole === "EA") {
+    if (!LIFECYCLE_ASSIGNABLE_BY_PRIVILEGED.has(normalizedTargetRole)) {
+      throw new Error("forbidden_target_role");
+    }
     return;
   }
 
@@ -671,6 +1050,10 @@ function getCollectionName(key) {
     settingsReference: env("CLIO_FIRESTORE_SETTINGS_REFERENCE_COLLECTION", "settings_reference_data"),
   };
   return map[key] || key;
+}
+
+function getEmployeeDocumentsSubcollectionName() {
+  return env("CLIO_FIRESTORE_EMPLOYEE_DOCUMENTS_SUBCOLLECTION", "documents");
 }
 
 function getDbOrThrow() {
@@ -975,6 +1358,14 @@ function normalizeEmployeeWritePayload(payload, actorEmail, { base } = {}) {
     governmentIds.primaryId = govId;
   }
 
+  const payloadHasDocuments = Object.prototype.hasOwnProperty.call(asObject(payload, {}), "documents");
+  const payloadDocuments = payloadHasDocuments ? asArray(payload?.documents) : null;
+  const baseDocumentsCountRaw = Number(base?.documentsCount);
+  const baseDocumentsCount = Number.isFinite(baseDocumentsCountRaw)
+    ? Math.max(0, baseDocumentsCountRaw)
+    : asArray(base?.documents).length;
+  const documentsCount = payloadDocuments ? payloadDocuments.length : baseDocumentsCount;
+
   return {
     employeeId: asString(payload?.employeeId, asString(base?.employeeId, `CL-${Date.now().toString().slice(-6)}`)),
     name: composedName,
@@ -1002,7 +1393,7 @@ function normalizeEmployeeWritePayload(payload, actorEmail, { base } = {}) {
     },
     payrollInformation,
     payrollGroup: asString(payload?.payrollGroup, asString(base?.payrollGroup, "-")),
-    documents: asArray(payload?.documents ?? base?.documents),
+    documentsCount,
     classification: "Restricted PII",
     createdAt: asString(base?.createdAt, timestamp),
     createdBy: asString(base?.createdBy, actorEmail),
@@ -1016,32 +1407,94 @@ function normalizeEmployeeWritePayload(payload, actorEmail, { base } = {}) {
   };
 }
 
-export async function listEmployeeRecordsBackend({ ownerEmail } = {}) {
-  return await listCollectionRecords(getCollectionName("employees"), {
+export async function listEmployeeRecordsBackend({ ownerEmail, includeDocuments = false } = {}) {
+  const rows = await listCollectionRecords(getCollectionName("employees"), {
     filterField: ownerEmail ? "email" : undefined,
     filterValue: ownerEmail ? normalizeEmail(ownerEmail) : undefined,
   });
+  if (!includeDocuments) {
+    return rows;
+  }
+
+  const enriched = await Promise.all(
+    rows.map(async (record) => {
+      const documents = await resolveAndMigrateEmployeeDocuments(record);
+      return withEmployeeDocuments(record, documents);
+    }),
+  );
+  return enriched;
 }
 
-export async function getEmployeeRecordBackend(recordId) {
-  return await getCollectionRecordById(getCollectionName("employees"), recordId);
+export async function getEmployeeRecordBackend(recordId, { includeDocuments = true } = {}) {
+  const record = await getCollectionRecordById(getCollectionName("employees"), recordId);
+  if (!record || !includeDocuments) {
+    return record;
+  }
+
+  let documents = await resolveAndMigrateEmployeeDocuments(record);
+  if (documents.length === 0) {
+    const backfilledDocuments = await collectOnboardingEvidenceDocumentsByEmployeeEmail(
+      record.email,
+      record.updatedBy || record.createdBy,
+    );
+    if (backfilledDocuments.length > 0) {
+      documents = await replaceEmployeeDocumentSubcollectionById(record.id, backfilledDocuments, {
+        actorEmail: record.updatedBy || record.createdBy,
+      });
+      await clearLegacyEmployeeDocumentsField(record.id, {
+        documentsCount: documents.length,
+      });
+    }
+  }
+  return withEmployeeDocuments(record, documents);
 }
 
 export async function createEmployeeRecordBackend(payload, actorEmail) {
   const normalized = normalizeEmployeeWritePayload(payload, actorEmail);
-  return await createCollectionRecord(getCollectionName("employees"), normalized);
+  const created = await createCollectionRecord(getCollectionName("employees"), normalized);
+  const payloadDocuments = asArray(payload?.documents);
+  if (payloadDocuments.length === 0) {
+    return withEmployeeDocuments(created, []);
+  }
+
+  const syncedDocuments = await replaceEmployeeDocumentSubcollectionById(created.id, payloadDocuments, {
+    actorEmail,
+  });
+  await clearLegacyEmployeeDocumentsField(created.id, {
+    documentsCount: syncedDocuments.length,
+  });
+  return withEmployeeDocuments(created, syncedDocuments);
 }
 
 export async function updateEmployeeRecordBackend(recordId, payload, actorEmail) {
-  const current = await getEmployeeRecordBackend(recordId);
+  const current = await getEmployeeRecordBackend(recordId, { includeDocuments: true });
   if (!current) {
     return null;
   }
+  const payloadHasDocuments = Object.prototype.hasOwnProperty.call(asObject(payload, {}), "documents");
+  const payloadDocuments = payloadHasDocuments ? asArray(payload?.documents) : null;
   const normalized = normalizeEmployeeWritePayload(payload, actorEmail, { base: current });
-  return await updateCollectionRecord(getCollectionName("employees"), recordId, normalized);
+  const updated = await updateCollectionRecord(getCollectionName("employees"), recordId, normalized);
+  if (!updated) {
+    return null;
+  }
+
+  if (payloadDocuments) {
+    const syncedDocuments = await replaceEmployeeDocumentSubcollectionById(recordId, payloadDocuments, {
+      actorEmail,
+    });
+    await clearLegacyEmployeeDocumentsField(recordId, {
+      documentsCount: syncedDocuments.length,
+    });
+    return withEmployeeDocuments(updated, syncedDocuments);
+  }
+
+  const documents = await resolveAndMigrateEmployeeDocuments(updated);
+  return withEmployeeDocuments(updated, documents);
 }
 
 export async function deleteEmployeeRecordBackend(recordId) {
+  await deleteEmployeeDocumentSubcollectionById(recordId);
   return await deleteCollectionRecord(getCollectionName("employees"), recordId);
 }
 
@@ -1096,13 +1549,6 @@ function normalizeLifecyclePayload(payload, actorEmail, actorRole, { base } = {}
 
   const requestedStatus = asString(payload?.status, asString(base?.status, "In Progress"));
   const status = requestedStatus;
-  if (
-    (normalizeText(status) === "approved" || normalizeText(status) === "completed") &&
-    withAction.workflow.approvalState !== "Approved" &&
-    withAction.workflow.approvalChain.length > 0
-  ) {
-    throw new Error("approval_required");
-  }
 
   return {
     employeeEmail,
@@ -1167,6 +1613,92 @@ function shouldApplyOnboardingActivation(record) {
   const isOnboarding = category.includes("onboarding");
   const isFinalized = status.includes("approved") || status.includes("completed");
   return isOnboarding && isFinalized;
+}
+
+function shouldTriggerOnboardingInvite(record) {
+  const category = asString(record?.category).toLowerCase();
+  return category.includes("onboarding");
+}
+
+function resolveLifecycleInviteRole(record) {
+  const details = asObject(record?.details, {});
+  const roleRaw = asString(details?.roleTo || details?.role || details?.roleFrom);
+  if (!roleRaw) {
+    return "EMPLOYEE_L1";
+  }
+  const normalized = normalizeRoleKey(roleRaw);
+  if (!normalized) {
+    return "EMPLOYEE_L1";
+  }
+  return LIFECYCLE_ROLE_ALIAS.get(normalized) || normalized || "EMPLOYEE_L1";
+}
+
+async function triggerOnboardingInvite(record, actorEmail, actorRole) {
+  const normalizedEmail = normalizeEmail(record?.employeeEmail);
+  if (!normalizedEmail) {
+    throw new Error("invalid_employee_email");
+  }
+
+  const existingAccount = await getLoginAccount(normalizedEmail).catch(() => null);
+  const existingStatus = asString(existingAccount?.status).toLowerCase();
+  if (existingStatus === "active") {
+    return {
+      type: "onboarding-invite-skipped",
+      message: "User account is already active. Invite was not reissued.",
+      accountStatus: "active",
+    };
+  }
+
+  const inviteRole = resolveLifecycleInviteRole(record);
+  validateLifecycleTargetRolePermission({
+    actorRole,
+    targetRole: inviteRole,
+  });
+  const result = await inviteUserAccount({
+    email: normalizedEmail,
+    role: inviteRole,
+    invitedBy: actorEmail,
+  });
+
+  const enforceDelivery = isInviteDeliveryRequired();
+  let delivery = null;
+  try {
+    delivery = await deliverInviteEmail({
+      toEmail: result.user.email,
+      role: result.user.role,
+      invitedBy: actorEmail,
+      expiresAt: result.invite.expiresAt,
+      inviteToken: result.invite.token,
+    });
+  } catch (deliveryError) {
+    const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";
+    const deliveryErrorInfo = extractDeliveryErrorInfo(rawReason);
+    if (enforceDelivery) {
+      await revokeInviteById(result.invite.id).catch(() => null);
+      throw new Error(deliveryErrorInfo.code || "email_delivery_failed");
+    }
+
+    delivery = {
+      provider: "unavailable",
+      status: "failed",
+      messageId: null,
+      reason: deliveryErrorInfo.code || "email_delivery_failed",
+      providerMessage: deliveryErrorInfo.providerMessage || null,
+    };
+  }
+
+  return {
+    type: "onboarding-invite",
+    message:
+      delivery?.status === "failed"
+        ? "Onboarding invite was created. Email delivery failed in test mode."
+        : "Onboarding invite sent. User can verify email and activate access.",
+    inviteId: result.invite.id,
+    inviteStatus: result.invite.status,
+    role: result.user.role,
+    deliveryProvider: delivery?.provider || "unknown",
+    deliveryStatus: delivery?.status || "unknown",
+  };
 }
 
 function resolveLifecycleRoleTarget(record) {
@@ -1327,26 +1859,98 @@ async function activateUserAccessByEmail(email) {
   return updated;
 }
 
-async function activateEmployeeRecordByEmail(email, actorEmail) {
-  const normalizedEmail = normalizeEmail(email);
+async function activateEmployeeRecordByEmail(record, actorEmail) {
+  const normalizedEmail = normalizeEmail(record?.employeeEmail);
   if (!normalizedEmail) {
     throw new Error("invalid_employee_email");
   }
 
+  const details = asObject(record?.details, {});
+  const employeeId = asString(details?.employeeId || details?.employeeNumber);
+  const firstName = asString(details?.firstName);
+  const middleName = asString(details?.middleName);
+  const lastName = asString(details?.lastName);
+  const suffix = asString(details?.suffix);
+  const startDate = asString(details?.startDate);
+  const roleRaw = asString(details?.roleTo || details?.role || details?.roleFrom);
+  const roleNormalized = normalizeRoleKey(roleRaw);
+  const roleValue = LIFECYCLE_ROLE_ALIAS.get(roleNormalized) || roleNormalized || "EMPLOYEE_L1";
+  const departmentValue = asString(details?.departmentTo || details?.department);
+  const displayName = composeEmployeeName({
+    firstName,
+    middleName,
+    lastName,
+    suffix,
+    fallback: asString(record?.employee, normalizedEmail),
+  });
   const updatedAt = nowIso();
-  return await updateCollectionRecordsByField(getCollectionName("employees"), "email", normalizedEmail, (current) => ({
-    status: "Active",
-    employmentStatus: "Active Employee",
-    isArchived: false,
-    updatedAt,
-    updatedBy: actorEmail,
-    activityHistory: appendTrail(current?.activityHistory, {
-      at: updatedAt,
-      by: actorEmail,
-      action: "lifecycle-onboarding-sync",
+  const updatedCount = await updateCollectionRecordsByField(getCollectionName("employees"), "email", normalizedEmail, (current) => {
+    const patch = {
       status: "Active",
-    }),
-  }));
+      employmentStatus: "Active Employee",
+      isArchived: false,
+      updatedAt,
+      updatedBy: actorEmail,
+      activityHistory: appendTrail(current?.activityHistory, {
+        at: updatedAt,
+        by: actorEmail,
+        action: "lifecycle-onboarding-sync",
+        status: "Active",
+      }),
+    };
+    if (employeeId) {
+      patch.employeeId = employeeId;
+    }
+    if (firstName) {
+      patch.firstName = firstName;
+    }
+    if (middleName) {
+      patch.middleName = middleName;
+    }
+    if (lastName) {
+      patch.lastName = lastName;
+    }
+    if (suffix) {
+      patch.suffix = suffix;
+    }
+    if (displayName) {
+      patch.name = displayName;
+    }
+    if (departmentValue) {
+      patch.department = departmentValue;
+    }
+    if (roleValue) {
+      patch.role = roleValue;
+    }
+    if (startDate) {
+      patch.hireDate = startDate;
+    }
+    return patch;
+  });
+
+  if (updatedCount > 0) {
+    return updatedCount;
+  }
+
+  const createdPayload = normalizeEmployeeWritePayload(
+    {
+      employeeId,
+      email: normalizedEmail,
+      name: displayName,
+      firstName,
+      middleName,
+      lastName,
+      suffix,
+      role: roleValue || "EMPLOYEE_L1",
+      department: departmentValue || "-",
+      hireDate: startDate || "",
+      status: "Active",
+      employmentStatus: "Active Employee",
+    },
+    actorEmail,
+  );
+  await createCollectionRecord(getCollectionName("employees"), createdPayload);
+  return 1;
 }
 
 async function archiveEmployeeDataByEmail(record, actorEmail) {
@@ -1453,7 +2057,7 @@ async function applyLifecycleAutomations(record, actorEmail, actorRole) {
   const effects = [];
   if (shouldApplyOnboardingActivation(record)) {
     const activatedAccount = await activateUserAccessByEmail(record.employeeEmail);
-    const activatedEmployeeRecords = await activateEmployeeRecordByEmail(record.employeeEmail, actorEmail);
+    const activatedEmployeeRecords = await activateEmployeeRecordByEmail(record, actorEmail);
     effects.push({
       type: "onboarding-activation",
       message: "User account and employee profile activated.",
@@ -1502,7 +2106,15 @@ export async function getLifecycleRecordBackend(recordId) {
 
 export async function createLifecycleRecordBackend(payload, actorEmail, actorRole = "") {
   const normalized = normalizeLifecyclePayload(payload, actorEmail, actorRole);
-  const effects = await applyLifecycleAutomations(normalized, actorEmail, actorRole);
+  const effects = [];
+  if (shouldTriggerOnboardingInvite(normalized)) {
+    const inviteEffect = await triggerOnboardingInvite(normalized, actorEmail, actorRole);
+    if (inviteEffect) {
+      effects.push(inviteEffect);
+    }
+  }
+  const automationEffects = await applyLifecycleAutomations(normalized, actorEmail, actorRole);
+  effects.push(...automationEffects);
 
   const created = await createCollectionRecord(getCollectionName("lifecycle"), {
     ...normalized,
@@ -1510,6 +2122,9 @@ export async function createLifecycleRecordBackend(payload, actorEmail, actorRol
     lastAutomationAt: nowIso(),
     lastAutomationBy: actorEmail,
   });
+
+  await syncOnboardingEvidenceToEmployeeDocuments(created, actorEmail).catch(() => null);
+
   return {
     record: created,
     effects,
@@ -1530,6 +2145,9 @@ export async function updateLifecycleRecordBackend(recordId, payload, actorEmail
     lastAutomationAt: nowIso(),
     lastAutomationBy: actorEmail,
   });
+
+  await syncOnboardingEvidenceToEmployeeDocuments(updated, actorEmail).catch(() => null);
+
   return {
     record: updated,
     effects,
@@ -1590,6 +2208,8 @@ export async function approveLifecycleRecordBackend(
     lastAutomationAt: nowIso(),
     lastAutomationBy: actorEmail,
   });
+
+  await syncOnboardingEvidenceToEmployeeDocuments(updated, actorEmail).catch(() => null);
 
   return {
     record: updated,
@@ -1967,10 +2587,26 @@ async function purgeCollectionByRetention(collectionName, cutoff) {
   return deleted;
 }
 
+async function purgeEmployeeCollectionByRetention(cutoff) {
+  const db = getDbOrThrow();
+  const employeesCollection = getCollectionName("employees");
+  const snapshot = await getDocs(
+    query(collection(db, employeesCollection), where("retentionDeleteAt", "<=", cutoff)),
+  );
+
+  let deleted = 0;
+  for (const recordSnapshot of snapshot.docs) {
+    await deleteEmployeeDocumentSubcollectionById(recordSnapshot.id, { db });
+    await deleteDoc(doc(db, employeesCollection, recordSnapshot.id));
+    deleted += 1;
+  }
+  return deleted;
+}
+
 export async function purgeArchivedEmployeeDataBackend({ now } = {}) {
   const cutoff = asString(now, nowIso());
   const deletedByCollection = {
-    employees: await purgeCollectionByRetention(getCollectionName("employees"), cutoff),
+    employees: await purgeEmployeeCollectionByRetention(cutoff),
     lifecycle: await purgeCollectionByRetention(getCollectionName("lifecycle"), cutoff),
     attendance: await purgeCollectionByRetention(getCollectionName("attendance"), cutoff),
     leave: await purgeCollectionByRetention(getCollectionName("leave"), cutoff),

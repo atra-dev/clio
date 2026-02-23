@@ -94,6 +94,14 @@ service cloud.firestore {
       allow create: if isPrivilegedRole();
       allow update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(resource.data.email) && employeeEditableSelfFieldsOnly());
       allow delete: if isSuperAdmin() || isHR() || isGRC();
+
+      // Per-employee document subcollection (employees/{employeeId}/documents/{documentId})
+      match /documents/{documentId} {
+        allow read: if isPrivilegedRole() ||
+          (isEmployeeRole() &&
+            isOwnerEmail(get(/databases/$(database)/documents/employees/$(employeeId)).data.email));
+        allow create, update, delete: if isPrivilegedRole();
+      }
     }
 
     // Employment Lifecycle

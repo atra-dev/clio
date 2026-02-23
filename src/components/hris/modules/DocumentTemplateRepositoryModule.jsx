@@ -96,7 +96,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
     try {
       const [templatePayload, employeePayload] = await Promise.all([
         hrisApi.templates.list(),
-        hrisApi.employees.list({ page: 1, pageSize: 200 }),
+        hrisApi.employees.list({ page: 1, pageSize: 200, includeDocuments: true }),
       ]);
       const templateRows = Array.isArray(templatePayload.records) ? templatePayload.records : [];
       setTemplates(templateRows);

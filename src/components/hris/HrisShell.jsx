@@ -37,7 +37,6 @@ function getModuleLabelForRole(moduleId, defaultLabel, role) {
     attendance: "My Attendance",
     performance: "My Performance",
     documents: "My Documents",
-    requests: "Requests",
   };
 
   return employeeLabels[moduleId] || defaultLabel;
@@ -57,6 +56,20 @@ function formatRoleLabel(roleValue) {
   return map[role] || "Employee";
 }
 
+function formatEmployeeRoleLabel(roleValue) {
+  const role = String(roleValue || "").trim().toUpperCase();
+  const employeeMap = {
+    EMPLOYEE: "Employee",
+    EMPLOYEE_L1: "Employee (L1)",
+    EMPLOYEE_L2: "Employee (L2)",
+    EMPLOYEE_L3: "Employee (L3)",
+  };
+  if (employeeMap[role]) {
+    return employeeMap[role];
+  }
+  return formatRoleLabel(role);
+}
+
 function formatDateTime(value) {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) {
@@ -68,6 +81,18 @@ function formatDateTime(value) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  }).format(date);
+}
+
+function formatDate(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
   }).format(date);
 }
 
@@ -246,10 +271,16 @@ export default function HrisShell({ children, session }) {
   const [isRevokingSessions, setIsRevokingSessions] = useState(false);
   const [profileInsights, setProfileInsights] = useState({
     role: String(session?.role || ""),
+    employmentRole: String(session?.role || ""),
     employeeId: "-",
     employeeName: "-",
+    employeeEmail: userEmail,
     department: "-",
     jobTitle: "-",
+    employmentStatus: "-",
+    recordStatus: "-",
+    managerEmail: "-",
+    hireDate: "-",
     lastLoginAt: null,
     lastActiveIp: "unknown",
     lastActiveDevice: "Unknown device",
@@ -360,6 +391,7 @@ export default function HrisShell({ children, session }) {
   const modules = useMemo(() => getModulesForRole(role), [role]);
   const currentDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date());
   const accountRoleLabel = formatRoleLabel(profileInsights.role || role);
+  const employmentRoleLabel = formatEmployeeRoleLabel(profileInsights.employmentRole || profileInsights.role || role);
   const recentAccountActivity = Array.isArray(profileInsights.recentActivity)
     ? profileInsights.recentActivity.slice(0, 5)
     : [];
@@ -419,10 +451,18 @@ export default function HrisShell({ children, session }) {
       setProfileInsights((current) => ({
         ...current,
         role: String(payload?.role || current.role || session?.role || ""),
+        employmentRole: String(
+          payload?.employmentRole || current.employmentRole || payload?.role || current.role || session?.role || "",
+        ),
         employeeId: String(payload?.employeeId || "-"),
         employeeName: String(payload?.employeeName || "-"),
+        employeeEmail: String(payload?.employeeEmail || userEmail),
         department: String(payload?.department || "-"),
         jobTitle: String(payload?.jobTitle || "-"),
+        employmentStatus: String(payload?.employmentStatus || "-"),
+        recordStatus: String(payload?.recordStatus || "-"),
+        managerEmail: String(payload?.managerEmail || "-"),
+        hireDate: String(payload?.hireDate || "-"),
         lastLoginAt: payload?.lastLoginAt || null,
         lastActiveIp: String(payload?.lastActiveIp || "unknown"),
         lastActiveDevice: String(payload?.lastActiveDevice || "Unknown device"),
@@ -655,6 +695,7 @@ export default function HrisShell({ children, session }) {
                       <ModuleSubTabAnchors
                         moduleId={module.id}
                         moduleHref={module.href}
+                        role={role}
                         visible={!isSidebarCollapsed}
                       />
                     </div>
@@ -711,7 +752,7 @@ export default function HrisShell({ children, session }) {
                 aria-label="Account profile"
                 aria-hidden={!isProfileModalOpen}
                 className={cn(
-                  "absolute right-0 top-[calc(100%+0.6rem)] z-50 w-[min(94vw,42rem)] origin-top-right rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_22px_60px_-28px_rgba(15,23,42,0.45)] transition-all duration-200 sm:p-5",
+                  "absolute right-0 top-[calc(100%+0.6rem)] z-50 w-[min(94vw,42rem)] max-h-[calc(100dvh-7rem)] origin-top-right overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_22px_60px_-28px_rgba(15,23,42,0.45)] transition-all duration-200 sm:p-5",
                   isProfileModalOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0",
                 )}
               >
@@ -802,12 +843,24 @@ export default function HrisShell({ children, session }) {
                   <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                     <div className="grid gap-2 sm:grid-cols-2">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Role</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Account Role</p>
                         <p className="text-sm font-medium text-slate-900">{accountRoleLabel}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employment Role</p>
+                        <p className="text-sm font-medium text-slate-900">{employmentRoleLabel}</p>
                       </div>
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee ID</p>
                         <p className="text-sm font-medium text-slate-900">{profileInsights.employeeId || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee Name</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.employeeName || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee Email</p>
+                        <p className="truncate text-sm font-medium text-slate-900">{profileInsights.employeeEmail || userEmail}</p>
                       </div>
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Department</p>
@@ -816,6 +869,22 @@ export default function HrisShell({ children, session }) {
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Position</p>
                         <p className="text-sm font-medium text-slate-900">{profileInsights.jobTitle || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employment Status</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.employmentStatus || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Record Status</p>
+                        <p className="text-sm font-medium text-slate-900">{profileInsights.recordStatus || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employment Start Date</p>
+                        <p className="text-sm font-medium text-slate-900">{formatDate(profileInsights.hireDate)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Manager</p>
+                        <p className="truncate text-sm font-medium text-slate-900">{profileInsights.managerEmail || "-"}</p>
                       </div>
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Login</p>
@@ -852,7 +921,7 @@ export default function HrisShell({ children, session }) {
                           <li key={item.id || `${item.activityName}-${item.loggedAt}`} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
                             <p className="text-xs font-medium text-slate-800">{item.activityName}</p>
                             <p className="mt-0.5 text-[11px] text-slate-500">
-                              {item.module} • {item.status} • {item.relativeTime || item.loggedAt}
+                              {item.module} | {item.status} | {item.relativeTime || item.loggedAt}
                             </p>
                           </li>
                         ))}

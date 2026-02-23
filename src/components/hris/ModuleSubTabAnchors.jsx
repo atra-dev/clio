@@ -6,6 +6,14 @@ import { toSubTabAnchor } from "@/lib/subtab-anchor";
 import { cn } from "@/lib/utils";
 
 const MODULE_SUBTABS = {
+  employees: [
+    { id: "profile", label: "Employee Profile" },
+    { id: "compliance", label: "Government & Compliance IDs" },
+    { id: "payroll", label: "Payroll Information" },
+    { id: "access", label: "Access & Role Assignment" },
+    { id: "documents", label: "Employee Attached Documents" },
+    { id: "activity", label: "Recent Activity" },
+  ],
   "employment-lifecycle": [
     { id: "workflow-status-tracking", label: "Workflow Status Tracking" },
     { id: "onboarding", label: "Onboarding" },
@@ -15,11 +23,27 @@ const MODULE_SUBTABS = {
   ],
 };
 
-export default function ModuleSubTabAnchors({ moduleId, moduleHref, visible = true }) {
+const EMPLOYEE_VISIBLE_SUBTABS = new Set(["profile", "documents"]);
+
+function isEmployeeRole(role) {
+  const normalized = String(role || "").trim().toUpperCase();
+  return normalized === "EMPLOYEE" || normalized.startsWith("EMPLOYEE_");
+}
+
+export default function ModuleSubTabAnchors({ moduleId, moduleHref, role, visible = true }) {
   const pathname = usePathname();
   const [hash, setHash] = useState("");
 
-  const subTabs = useMemo(() => MODULE_SUBTABS[moduleId] || [], [moduleId]);
+  const subTabs = useMemo(() => {
+    const tabs = MODULE_SUBTABS[moduleId] || [];
+    if (moduleId !== "employees") {
+      return tabs;
+    }
+    if (!isEmployeeRole(role)) {
+      return tabs;
+    }
+    return tabs.filter((tab) => EMPLOYEE_VISIBLE_SUBTABS.has(tab.id));
+  }, [moduleId, role]);
 
   useEffect(() => {
     const syncHash = () => {

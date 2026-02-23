@@ -259,6 +259,36 @@ export function mapBackendError(reason, fallbackMessage) {
         status: 409,
         message: "Account activation could not be confirmed for this employee account.",
       };
+    case "email_provider_not_configured":
+      return {
+        status: 502,
+        message: "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and NEXT_PUBLIC_FIREBASE_API_KEY.",
+      };
+    case "firebase_api_key_not_configured":
+      return {
+        status: 502,
+        message: "Firebase API key is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY.",
+      };
+    case "firebase_email_provider_not_enabled":
+      return {
+        status: 502,
+        message: "Firebase email-link provider is not enabled. Enable Email link (passwordless sign-in) in Firebase Authentication.",
+      };
+    case "firebase_continue_url_invalid":
+      return {
+        status: 502,
+        message: "Firebase continue URL is invalid. Check CLIO_APP_BASE_URL / CLIO_INVITE_VERIFY_PATH and authorize the domain in Firebase Authentication.",
+      };
+    case "unsupported_email_provider":
+      return {
+        status: 502,
+        message: "Unsupported email provider configuration.",
+      };
+    case "email_delivery_failed":
+      return {
+        status: 502,
+        message: "Unable to deliver invite email.",
+      };
     case "firestore_not_configured":
       return {
         status: 503,
