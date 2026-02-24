@@ -1,0 +1,3 @@
+{
+  "/api/hris/lifecycle/[recordId]/approve/route": "app/api/hris/lifecycle/[recordId]/approve/route.js"
+}

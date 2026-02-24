@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import BrandMark from "@/components/ui/BrandMark";
 
@@ -24,7 +24,7 @@ function formatDate(value) {
   }).format(date);
 }
 
-export default function InviteVerificationPage() {
+function InviteVerificationContent() {
   const searchParams = useSearchParams();
   const token = useMemo(() => String(searchParams.get("token") || "").trim(), [searchParams]);
   const [invite, setInvite] = useState(null);
@@ -174,5 +174,28 @@ export default function InviteVerificationPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function InviteVerificationFallback() {
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-4xl items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
+      <section className="w-full rounded-3xl border border-[#d7e5f5] bg-white p-8 shadow-[0_20px_45px_-32px_rgba(15,23,42,0.55)] sm:p-10">
+        <BrandMark compact />
+        <div className="mt-6 space-y-3">
+          <div className="h-4 w-44 rounded-md bg-slate-200" />
+          <div className="h-8 w-80 rounded-md bg-slate-200" />
+          <div className="h-4 w-full max-w-[32rem] rounded-md bg-slate-200" />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default function InviteVerificationPage() {
+  return (
+    <Suspense fallback={<InviteVerificationFallback />}>
+      <InviteVerificationContent />
+    </Suspense>
   );
 }

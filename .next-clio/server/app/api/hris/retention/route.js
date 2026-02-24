@@ -1,0 +1,11 @@
+var R=require("../../../../chunks/[turbopack]_runtime.js")("server/app/api/hris/retention/route.js")
+R.c("server/chunks/src_lib_security-detection_bf9635da.js")
+R.c("server/chunks/src_lib_hris-backend_4dbd0cdd.js")
+R.c("server/chunks/node_modules_next_dist_esm_build_templates_app-route_b0a0a4ac.js")
+R.c("server/chunks/_50ac50e3._.js")
+R.c("server/chunks/[root-of-the-server]__f408c708._.js")
+R.c("server/chunks/_aa6e99b0._.js")
+R.c("server/chunks/[root-of-the-server]__3476a93a._.js")
+R.c("server/chunks/_next-internal_server_app_api_hris_retention_route_actions_7d1bd838.js")
+R.m(86540)
+module.exports=R.m(86540).exports

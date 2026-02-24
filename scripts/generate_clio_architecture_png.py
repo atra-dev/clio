@@ -61,8 +61,8 @@ def main():
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-    fig.patch.set_facecolor("#f4f8fc")
-    ax.set_facecolor("#f4f8fc")
+    fig.patch.set_facecolor("#f3f7fc")
+    ax.set_facecolor("#f3f7fc")
 
     ax.text(
         0.03,
@@ -77,127 +77,128 @@ def main():
     ax.text(
         0.03,
         0.935,
-        "Next.js (App Router) + Firebase Auth + Firestore (databaseId: cliohris) + RBAC + Audit Logging",
+        "Next.js + Firebase Auth + Firestore (databaseId: cliohris) + Firebase Storage + RBAC + IDS + Incident Response",
         fontsize=11,
         color="#2f4a63",
         ha="left",
         va="top",
     )
 
-    # Row 1: Actors
+    # Row 1: Actors + Client + Identity
     draw_box(
         ax,
-        0.04,
-        0.79,
-        0.22,
-        0.12,
-        "Actors / Clients",
+        0.03,
+        0.76,
+        0.24,
+        0.16,
+        "Actors / Access Roles",
         [
             "Super Admin",
-            "HR, GRC, EA, Employees (L1/L2/L3)",
-            "Invited users via email verification link",
+            "GRC, HR, EA, Employee",
+            "Invite-first onboarding + verified user activation",
+            "Role-specific dashboard and module access",
         ],
         face="#ffffff",
     )
 
-    # Row 2: Frontend
     draw_box(
         ax,
-        0.32,
-        0.74,
+        0.31,
+        0.72,
         0.30,
-        0.20,
-        "Next.js Frontend (src/app + src/components)",
+        0.22,
+        "Client Layer - Next.js Frontend",
         [
-            "Public pages: /login, /verify-invite, /unauthorized",
-            "Protected HRIS pages: dashboard, employees, attendance,",
-            "performance, documents, exports, settings, user-management",
-            "Client auth: Google popup + MFA resolver (TOTP path active)",
+            "Public: login, invite verify, unauthorized",
+            "Workspace: dashboard + role-based module navigation",
+            "Core modules: employee records, lifecycle, attendance,",
+            "performance, document repo, audit logs, reports/exports,",
+            "access management, retention/archive, incident management",
         ],
         face="#fdfefe",
     )
 
     draw_box(
         ax,
-        0.68,
-        0.74,
-        0.27,
-        0.20,
-        "Firebase Authentication (External Service)",
+        0.66,
+        0.72,
+        0.31,
+        0.22,
+        "Identity Layer - Firebase Authentication",
         [
             "Google provider for sign-in",
-            "Invite email delivery via sendOobCode (EMAIL_SIGNIN)",
-            "ID token identity lookup",
-            "MFA policy configured in Firebase project",
+            "Invite verification gate before account usage",
+            "ID token verification + session creation path",
+            "Optional MFA policy at Firebase project level",
         ],
         face="#eef6ff",
         edge="#8fb2d8",
     )
 
-    # Row 3: Edge/Auth controls
+    # Row 2: Security + API + Domain Services
     draw_box(
         ax,
-        0.04,
+        0.03,
         0.52,
-        0.28,
-        0.18,
-        "Edge + Session Controls",
+        0.24,
+        0.20,
+        "Security Gateway",
         [
-            "middleware.ts: route guarding + strips role query param",
-            "auth-session.ts: signed cookie (clio_session)",
-            "server-authorization.ts + api-authorization.ts",
-            "RBAC + ownership validation on API/module access",
+            "Middleware route guarding + role route isolation",
+            "Signed session cookie + stale session checks",
+            "API authorization: RBAC + ownership validation",
+            "Rate limiting on sensitive incident endpoints",
         ],
         face="#ffffff",
     )
 
     draw_box(
         ax,
-        0.36,
+        0.31,
         0.50,
-        0.28,
+        0.30,
         0.22,
-        "Next.js API Layer (src/app/api)",
+        "Application API Layer (src/app/api)",
         [
-            "Auth APIs: /api/auth/login, logout, profile, role",
-            "User Mgmt APIs: /api/admin/users, /status",
-            "Invite Verification: /api/invite/verify",
-            "Audit endpoint: /api/audit/page-view",
+            "Auth APIs, invite/verify, user/account management",
+            "Module APIs: employees, lifecycle, attendance,",
+            "performance, templates, exports, retention, incidents",
+            "Notification APIs and role-protected data endpoints",
         ],
         face="#ffffff",
     )
 
     draw_box(
         ax,
-        0.68,
+        0.66,
         0.50,
-        0.27,
+        0.31,
         0.22,
-        "Service / Domain Layer (src/lib)",
+        "Service / Domain Layer (src/lib + src/services)",
         [
-            "user-accounts.ts: invites, account status, login account lookup",
-            "invite-delivery.ts: provider abstraction (firebase/resend/console)",
-            "firebase-auth-identity.ts: verify Firebase id token",
-            "audit-log.ts: write/read audit events",
-            "rbac.ts + hris.ts: permissions and module matrix",
+            "RBAC matrix + permission middleware helpers",
+            "HRIS backend services for module workflows",
+            "Audit log writer + field-level trace metadata",
+            "Incident detection (IDS), queue retry, dead-letter",
+            "Security notification and alert dispatch services",
         ],
         face="#fdfefe",
     )
 
-    # Row 4: Data
+    # Row 3: Data + Security Ops
     draw_box(
         ax,
-        0.36,
-        0.24,
-        0.28,
-        0.20,
-        "Firestore (cliohris database)",
+        0.31,
+        0.23,
+        0.30,
+        0.21,
+        "Data Layer - Firestore + Storage",
         [
-            "Collections:",
-            "- clio_users",
-            "- clio_user_invites",
-            "- clio_audit_logs",
-            "Primary persistence for CLIO project data",
+            "Firestore (databaseId: cliohris):",
+            "clio_users, employees, attendance, performance,",
+            "employment_lifecycle, clio_audit_logs, incidents,",
+            "notifications, retention/archive collections",
+            "Storage bucket: gs://atracaas-platform-clio",
         ],
         face="#eef6ff",
         edge="#8fb2d8",
@@ -205,50 +206,55 @@ def main():
 
     draw_box(
         ax,
-        0.68,
-        0.24,
-        0.27,
-        0.20,
-        "Local Fallback Store (Dev/Failover)",
+        0.66,
+        0.23,
+        0.31,
+        0.21,
+        "Security Operations Layer",
         [
-            "data/user-accounts.json",
-            "data/audit-log.ndjson",
-            "Used when Firestore is unavailable/erroring",
+            "Tamper-evident audit trails across CRUD/view/export",
+            "Incident management: escalation, 72-hour response,",
+            "forensic logging (access, export, admin, delete)",
+            "IDS anomaly detection -> auto incident + alerts",
+            "Retry queue and dead-letter for failed detections",
         ],
-        face="#ffffff",
+        face="#f8fcff",
+        edge="#8fb2d8",
     )
 
     draw_box(
         ax,
-        0.04,
+        0.03,
         0.24,
-        0.28,
-        0.20,
-        "Security + Compliance Controls",
+        0.24,
+        0.21,
+        "Compliance + Protection Controls",
         [
-            "RBAC enforced server-side (not UI hide only)",
-            "Invite-first onboarding and verification gate",
-            "Sensitive action audit events",
-            "Session cookie + authorization checks per API request",
+            "Least privilege and segregation of duties",
+            "Restricted PII masking + controlled access",
+            "Retention/archive policy + delayed purge workflow",
+            "Security headers, CSP, HSTS (prod), provider fail-fast",
         ],
         face="#ffffff",
     )
 
     # Arrows
-    arrow(ax, (0.26, 0.85), (0.32, 0.84))  # actors -> frontend
-    arrow(ax, (0.62, 0.84), (0.68, 0.84))  # frontend -> firebase auth
-    arrow(ax, (0.46, 0.74), (0.50, 0.72))  # frontend -> api
-    arrow(ax, (0.20, 0.70), (0.20, 0.52))  # frontend/mw relation
-    arrow(ax, (0.32, 0.60), (0.36, 0.60))  # controls -> api
-    arrow(ax, (0.64, 0.61), (0.68, 0.61))  # api -> services
-    arrow(ax, (0.79, 0.50), (0.79, 0.44))  # services -> firebase auth/email
-    arrow(ax, (0.50, 0.50), (0.50, 0.44))  # api/services -> firestore
-    arrow(ax, (0.82, 0.50), (0.82, 0.44), curve=-0.25)  # services -> local fallback
-    arrow(ax, (0.46, 0.50), (0.22, 0.44), curve=0.08)  # api -> security controls
-    arrow(ax, (0.79, 0.74), (0.58, 0.66), curve=0.05)  # firebase auth -> api validation path
+    arrow(ax, (0.27, 0.84), (0.31, 0.83))  # actors -> frontend
+    arrow(ax, (0.61, 0.83), (0.66, 0.83))  # frontend -> identity
+    arrow(ax, (0.46, 0.72), (0.46, 0.64))  # frontend -> api
+    arrow(ax, (0.20, 0.76), (0.16, 0.62))  # actors -> gateway
+    arrow(ax, (0.27, 0.62), (0.31, 0.62))  # gateway -> api
+    arrow(ax, (0.61, 0.62), (0.66, 0.62))  # api -> services
+    arrow(ax, (0.46, 0.50), (0.46, 0.44))  # api -> data
+    arrow(ax, (0.82, 0.50), (0.82, 0.44))  # services -> security ops
+    arrow(ax, (0.66, 0.82), (0.55, 0.64), curve=0.05)  # identity -> api
+    arrow(ax, (0.82, 0.72), (0.82, 0.64), curve=0.0)  # identity -> services
+    arrow(ax, (0.61, 0.33), (0.66, 0.33))  # data -> sec ops
+    arrow(ax, (0.31, 0.33), (0.27, 0.33))  # data -> compliance
+    arrow(ax, (0.82, 0.23), (0.55, 0.18), curve=-0.05)  # sec ops -> flows
 
     # Flow legend
-    legend_x, legend_y, legend_w, legend_h = 0.04, 0.05, 0.91, 0.13
+    legend_x, legend_y, legend_w, legend_h = 0.03, 0.04, 0.94, 0.14
     draw_box(
         ax,
         legend_x,
@@ -257,9 +263,10 @@ def main():
         legend_h,
         "Key Runtime Flows",
         [
-            "1) Super Admin invites user -> API creates invite/user record -> Firebase sends email link -> user verifies via /verify-invite.",
-            "2) User signs in with Google -> API verifies Firebase ID token + RBAC/user state + invite verification -> session cookie issued.",
-            "3) Protected pages call APIs -> authorization middleware + ownership checks -> Firestore writes + audit logging.",
+            "1) Onboarding/invite flow: authorized role creates user/account context -> invite verification -> Google sign-in enabled.",
+            "2) Secure request flow: frontend -> API authz (session, RBAC, ownership, rate-limit) -> domain service -> Firestore/Storage.",
+            "3) Security flow: audit event stream -> IDS anomaly detection -> auto incident + in-app alerts + forensic traceability.",
+            "4) Data governance flow: offboarding/retention rules move records to archive and enforce controlled post-retention deletion.",
         ],
         face="#ffffff",
     )

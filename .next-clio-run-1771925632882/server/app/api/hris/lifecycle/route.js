@@ -1,0 +1,10 @@
+var R=require("../../../../chunks/[turbopack]_runtime.js")("server/app/api/hris/lifecycle/route.js")
+R.c("server/chunks/_fc4a2955._.js")
+R.c("server/chunks/_aa6e99b0._.js")
+R.c("server/chunks/[root-of-the-server]__3476a93a._.js")
+R.c("server/chunks/_50ac50e3._.js")
+R.c("server/chunks/src_lib_hris-backend_4dbd0cdd.js")
+R.c("server/chunks/[root-of-the-server]__f408c708._.js")
+R.c("server/chunks/_next-internal_server_app_api_hris_lifecycle_route_actions_66e46d28.js")
+R.m(40831)
+module.exports=R.m(40831).exports
