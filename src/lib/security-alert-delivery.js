@@ -65,6 +65,9 @@ function resolveAlertEmailProvider() {
   if (configured) {
     return configured;
   }
+  if (process.env.NODE_ENV === "production") {
+    return "none";
+  }
   const hasResend = asString(process.env.RESEND_API_KEY).startsWith("re_") && asString(process.env.CLIO_EMAIL_FROM);
   return hasResend ? "resend" : "console";
 }

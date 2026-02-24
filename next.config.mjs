@@ -9,6 +9,7 @@ function normalizeProvider(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return "";
   if (normalized.includes("resend")) return "resend";
+  if (normalized.includes("firebase")) return "firebase";
   if (normalized.includes("twilio")) return "twilio";
   if (normalized.includes("console")) return "console";
   if (normalized === "none" || normalized === "off") return "none";
@@ -20,19 +21,24 @@ function assertProductionAlertProviders() {
     return;
   }
 
-  const emailProvider = normalizeProvider(env("CLIO_ALERT_EMAIL_PROVIDER"));
-  if (emailProvider !== "resend") {
+  const emailProvider = normalizeProvider(env("CLIO_ALERT_EMAIL_PROVIDER")) || "none";
+  if (emailProvider === "console") {
     throw new Error(
-      "[CLIO Security] Production requires CLIO_ALERT_EMAIL_PROVIDER=resend for incident alert delivery.",
+      "[CLIO Security] CLIO_ALERT_EMAIL_PROVIDER=console is not allowed in production.",
     );
   }
-  if (!env("RESEND_API_KEY") || !env("CLIO_EMAIL_FROM")) {
+  if (emailProvider === "resend" && (!env("RESEND_API_KEY") || !env("CLIO_EMAIL_FROM"))) {
     throw new Error(
       "[CLIO Security] RESEND_API_KEY and CLIO_EMAIL_FROM are required when CLIO_ALERT_EMAIL_PROVIDER=resend.",
     );
   }
+  if (!["none", "resend", "firebase"].includes(emailProvider)) {
+    throw new Error(
+      "[CLIO Security] Unsupported CLIO_ALERT_EMAIL_PROVIDER. Allowed values: none, firebase, resend.",
+    );
+  }
 
-  const smsProvider = normalizeProvider(env("CLIO_ALERT_SMS_PROVIDER"));
+  const smsProvider = normalizeProvider(env("CLIO_ALERT_SMS_PROVIDER")) || "none";
   if (smsProvider === "console") {
     throw new Error(
       "[CLIO Security] CLIO_ALERT_SMS_PROVIDER=console is not allowed in production.",

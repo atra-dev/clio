@@ -21,6 +21,21 @@ function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   return applyRateLimitHeaders(response, rateLimit);
 }
 
+function parseBooleanEnv(name, fallbackValue = false) {
+  const raw = String(process.env[name] || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) {
+    return fallbackValue;
+  }
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+
+function isClaimsSyncStrictMode() {
+  const defaultRequired = process.env.NODE_ENV === "production";
+  return parseBooleanEnv("CLIO_REQUIRE_FIREBASE_CUSTOM_CLAIMS", defaultRequired);
+}
+
 function mapClaimsSyncFailureMessage(reason) {
   const normalized = String(reason || "").trim();
   if (normalized === "firebase_custom_claims_not_configured") {
@@ -43,6 +58,7 @@ function mapClaimsSyncFailureMessage(reason) {
 
 export async function POST(request) {
   const isProduction = process.env.NODE_ENV === "production";
+  const claimsSyncStrict = isClaimsSyncStrictMode();
   let activeRateLimit = enforceRateLimitByRequest({
     request,
     scope: "auth-login-ip",
@@ -248,12 +264,13 @@ export async function POST(request) {
         status: account.status,
         sessionVersion: account.sessionVersion,
         allowMissingUser: false,
-        strict: isProduction,
+        strict: claimsSyncStrict,
       });
     } catch (error) {
       const syncReason = error instanceof Error ? error.message : "firebase_claims_sync_failed";
+      const canBypassClaimsSync = !claimsSyncStrict;
 
-      if (!isProduction && syncReason === "firebase_custom_claims_not_configured") {
+      if (canBypassClaimsSync) {
         claimsSyncResult = {
           ok: false,
           reason: syncReason,
@@ -261,7 +278,7 @@ export async function POST(request) {
         };
 
         await recordAuditEvent({
-          activityName: "Login warning: custom claims sync skipped in development",
+          activityName: "Login warning: custom claims sync skipped",
           status: "Completed",
           module: "Authentication",
           performedBy: normalizedEmail,
@@ -270,7 +287,7 @@ export async function POST(request) {
             reason: syncReason,
             authProvider: "google",
             firebaseUid: firebaseIdentity.uid,
-            mode: "development_bypass",
+            mode: "claims_sync_optional_bypass",
           },
           request,
         });
@@ -300,8 +317,7 @@ export async function POST(request) {
     }
 
     if (!claimsSyncResult?.ok) {
-      const canBypassClaimsSync =
-        !isProduction && claimsSyncResult?.reason === "firebase_custom_claims_not_configured";
+      const canBypassClaimsSync = !claimsSyncStrict;
       if (!canBypassClaimsSync) {
       await recordAuditEvent({
         activityName: "Login attempt rejected: custom claims not synchronized",
