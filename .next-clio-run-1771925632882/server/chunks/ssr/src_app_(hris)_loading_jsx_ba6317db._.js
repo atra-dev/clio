@@ -1,3 +1,0 @@
-module.exports=[87249,a=>{"use strict";var b=a.i(7997);function c(){return(0,b.jsx)("div",{className:"fixed inset-0 z-50 flex items-center justify-center",children:(0,b.jsx)("div",{className:"inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-3 shadow-sm",children:(0,b.jsxs)("svg",{className:"h-5 w-5 animate-spin text-sky-600",viewBox:"0 0 24 24",fill:"none","aria-hidden":"true",children:[(0,b.jsx)("circle",{cx:"12",cy:"12",r:"9",stroke:"currentColor",strokeOpacity:"0.2",strokeWidth:"2.5"}),(0,b.jsx)("path",{d:"M21 12a9 9 0 0 0-9-9",stroke:"currentColor",strokeWidth:"2.5",strokeLinecap:"round"})]})})})}a.s(["default",()=>c])}];
-
-//# sourceMappingURL=src_app_%28hris%29_loading_jsx_ba6317db._.js.map

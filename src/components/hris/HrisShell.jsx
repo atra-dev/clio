@@ -113,7 +113,7 @@ function formatSourceIp(value) {
 
   const localIpSet = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);
   if (localIpSet.has(ip.toLowerCase())) {
-    return `Localhost (${ip})`;
+    return `Loopback (${ip})`;
   }
 
   return ip;
@@ -165,7 +165,7 @@ function resolveActionPathname(actionUrl) {
   }
 
   try {
-    const base = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+    const base = typeof window === "undefined" ? "https://clio.invalid" : window.location.origin;
     return String(new URL(raw, base).pathname || "").trim().toLowerCase();
   } catch {
     return raw.split("?")[0].split("#")[0].trim().toLowerCase();
