@@ -1,6 +1,6 @@
 import { MODULE_ACCESS, MODULES, ROLES } from "@/features/hris/constants";
 
-const DEFAULT_ROLE = "HR";
+const DEFAULT_ROLE = "EMPLOYEE_L1";
 const roleIds = new Set(ROLES.map((role) => role.id));
 
 export function normalizeRole(value) {

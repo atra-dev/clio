@@ -3,6 +3,7 @@ import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth-session";
 import { normalizeRole } from "@/lib/hris";
 import { canAccessResource, hasPermission } from "@/lib/rbac";
 import { recordAuditEvent } from "@/lib/audit-log";
+import { getLoginAccount } from "@/lib/user-accounts";
 
 function deny(status, message) {
   return { error: NextResponse.json({ message }, { status }) };
@@ -27,7 +28,7 @@ export async function authorizeApiRequest(
       activityName: `${auditAction} denied (no active session)`,
       status: "Failed",
       module: auditModule,
-      performedBy: "anonymous@clio.local",
+      performedBy: "anonymous@gmail.com",
       sensitivity: "Sensitive",
       metadata: {
         reason: "unauthorized",
@@ -42,6 +43,65 @@ export async function authorizeApiRequest(
     ...rawSession,
     role: normalizeRole(rawSession.role),
   };
+
+  const account = await getLoginAccount(session.email).catch(() => null);
+  if (!account) {
+    await recordAuditEvent({
+      activityName: `${auditAction} denied (account not found)`,
+      status: "Failed",
+      module: auditModule,
+      performedBy: session.email,
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "account_not_found",
+      },
+      request,
+    });
+
+    return deny(401, "Session is no longer valid. Please sign in again.");
+  }
+
+  if (account.status !== "active") {
+    await recordAuditEvent({
+      activityName: `${auditAction} blocked by account status`,
+      status: "Rejected",
+      module: auditModule,
+      performedBy: session.email,
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: "account_not_active",
+        accountStatus: account.status,
+      },
+      request,
+    });
+
+    return deny(403, "Account is not active.");
+  }
+
+  const accountRole = normalizeRole(account.role);
+  const accountSessionVersion = Number.parseInt(String(account.sessionVersion ?? ""), 10) || 1;
+  const allowsRoleContextSwitch = accountRole === "SUPER_ADMIN";
+  const roleMismatch = session.role !== accountRole;
+  const staleSessionVersion = session.sessionVersion !== accountSessionVersion;
+  if (staleSessionVersion || (roleMismatch && !allowsRoleContextSwitch)) {
+    await recordAuditEvent({
+      activityName: `${auditAction} denied (stale session)`,
+      status: "Rejected",
+      module: auditModule,
+      performedBy: session.email,
+      sensitivity: "Sensitive",
+      metadata: {
+        reason: staleSessionVersion ? "session_version_mismatch" : "session_role_mismatch",
+        tokenRole: session.role,
+        accountRole,
+        tokenSessionVersion: session.sessionVersion,
+        accountSessionVersion,
+      },
+      request,
+    });
+
+    return deny(401, "Session expired. Please sign in again.");
+  }
 
   if (Array.isArray(allowedRoles) && allowedRoles.length > 0 && !allowedRoles.includes(session.role)) {
     await recordAuditEvent({
@@ -117,3 +177,4 @@ export async function authorizeApiRequest(
 
   return { session };
 }
+

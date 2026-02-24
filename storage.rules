@@ -1,0 +1,87 @@
+rules_version = "2";
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function tokenRole() {
+      if (!isSignedIn()) {
+        return null;
+      }
+      if (request.auth.token.role is string) {
+        return request.auth.token.role;
+      }
+      if (request.auth.token.clioRole is string) {
+        return request.auth.token.clioRole;
+      }
+      return null;
+    }
+
+    function tokenEmail() {
+      if (!isSignedIn()) {
+        return null;
+      }
+      if (request.auth.token.email is string) {
+        return request.auth.token.email;
+      }
+      if (request.auth.token.clioEmail is string) {
+        return request.auth.token.clioEmail;
+      }
+      return null;
+    }
+
+    function isPrivilegedRole() {
+      return tokenRole() in ["SUPER_ADMIN", "GRC", "HR", "EA"];
+    }
+
+    function isEmployeeRole() {
+      return tokenRole() in ["EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"];
+    }
+
+    function isIncidentResponderRole() {
+      return tokenRole() in ["SUPER_ADMIN", "GRC"];
+    }
+
+    // Profile photos: users can only write inside their own UID folder.
+    match /clio/profiles/{uid}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isPrivilegedRole());
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Employee documents: privileged roles can create/update/delete.
+    // Employees can read only their own documents based on ownerEmail metadata.
+    match /clio/employee-documents/{employeeScope}/{allPaths=**} {
+      allow read: if isSignedIn() && (
+        isPrivilegedRole() ||
+        (
+          isEmployeeRole() &&
+          resource.metadata.ownerEmail is string &&
+          tokenEmail() is string &&
+          resource.metadata.ownerEmail == tokenEmail()
+        )
+      );
+      allow create, update: if isSignedIn() &&
+        isPrivilegedRole() &&
+        request.resource.metadata.ownerEmail is string &&
+        request.resource.metadata.ownerEmail.size() > 3 &&
+        request.resource.metadata.ownerEmail.size() <= 254;
+      allow delete: if isSignedIn() && isPrivilegedRole();
+    }
+
+    // Lifecycle evidence: privileged roles only.
+    match /clio/lifecycle-evidence/{workflowScope}/{allPaths=**} {
+      allow read, write: if isSignedIn() && isPrivilegedRole();
+    }
+
+    // Incident evidence: restricted to incident responder roles.
+    match /clio/incident-evidence/{incidentScope}/{allPaths=**} {
+      allow read, write: if isSignedIn() && isIncidentResponderRole();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,4 +1,4 @@
-rules_version = '2';
+rules_version = "2";
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -7,79 +7,191 @@ service cloud.firestore {
     }
 
     function role() {
-      return isAuthenticated() ? request.auth.token.role : null;
+      if (!isAuthenticated()) {
+        return null;
+      }
+      return request.auth.token.role is string
+        ? request.auth.token.role
+        : (request.auth.token.clioRole is string ? request.auth.token.clioRole : null);
+    }
+
+    function actorEmail() {
+      if (!isAuthenticated()) {
+        return null;
+      }
+      return request.auth.token.email is string
+        ? request.auth.token.email
+        : (request.auth.token.clioEmail is string ? request.auth.token.clioEmail : null);
     }
 
     function isSuperAdmin() {
       return role() == "SUPER_ADMIN";
     }
 
-    function isHR() {
-      return role() == "HR";
-    }
-
     function isGRC() {
       return role() == "GRC";
+    }
+
+    function isHR() {
+      return role() == "HR";
     }
 
     function isEA() {
       return role() == "EA";
     }
 
-    function isOwner(uid) {
-      return isAuthenticated() && request.auth.uid == uid;
+    function isPrivilegedRole() {
+      return isSuperAdmin() || isGRC() || isHR() || isEA();
     }
 
-    function nonRoleFieldsOnly() {
-      return !("role" in request.resource.data) || request.resource.data.role == resource.data.role;
+    function isEmployeeRole() {
+      return role() in ["EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"];
     }
 
-    // Identity and profile ownership
-    match /users/{userId} {
-      allow read: if isSuperAdmin() || isHR() || isOwner(userId);
-      allow create: if isSuperAdmin();
-      allow update: if isSuperAdmin() || (isOwner(userId) && nonRoleFieldsOnly());
-      allow delete: if isSuperAdmin();
+    function isOwnerEmail(emailValue) {
+      return isAuthenticated() && emailValue is string && emailValue == actorEmail();
     }
 
-    // Invitation-only account provisioning
-    match /userInvites/{inviteId} {
+    function employeeEditableSelfFieldsOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "contact",
+        "address",
+        "updatedAt",
+        "updatedBy",
+        "activityHistory"
+      ]);
+    }
+
+    function leaveRequestEditableSelfFieldsOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "leaveType",
+        "startDate",
+        "endDate",
+        "reason",
+        "updatedAt",
+        "updatedBy",
+        "modificationTrail"
+      ]);
+    }
+
+    function exportRequestEditableSelfFieldsOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "dataset",
+        "format",
+        "scope",
+        "estimateVolume",
+        "justification",
+        "updatedAt",
+        "updatedBy",
+        "history"
+      ]);
+    }
+
+    // Account directory and role assignment
+    match /clio_users/{userId} {
+      allow read: if isSuperAdmin() || isPrivilegedRole() || isOwnerEmail(resource.data.email);
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // Invitation-only onboarding
+    match /clio_user_invites/{inviteId} {
       allow read, create, update, delete: if isSuperAdmin();
     }
 
-    // HR-owned employee records
+    // Employee Records
     match /employees/{employeeId} {
-      allow read: if isSuperAdmin() || isHR() || isGRC();
-      allow create, update, delete: if isSuperAdmin() || isHR();
+      allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.email);
+      allow create: if isPrivilegedRole();
+      allow update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(resource.data.email) && employeeEditableSelfFieldsOnly());
+      allow delete: if isSuperAdmin() || isHR() || isGRC();
+
+      // Per-employee document subcollection (employees/{employeeId}/documents/{documentId})
+      match /documents/{documentId} {
+        allow read: if isPrivilegedRole() ||
+          (isEmployeeRole() &&
+            isOwnerEmail(get(/databases/$(database)/documents/employees/$(employeeId)).data.email));
+        allow create, update, delete: if isPrivilegedRole();
+      }
     }
 
-    // Attendance lifecycle
-    match /attendance/{entryId} {
-      allow read: if isSuperAdmin() || isHR() || isGRC();
-      allow create, update, delete: if isSuperAdmin() || isHR();
+    // Employment Lifecycle
+    match /employment_lifecycle/{recordId} {
+      allow read: if isPrivilegedRole();
+      allow create, update: if isPrivilegedRole();
+      allow delete: if isSuperAdmin() || isGRC();
     }
 
-    // Sheets / PDF artifacts
-    match /documents/{docId} {
-      allow read: if isSuperAdmin() || isHR() || isEA() || isOwner(resource.data.ownerUid);
-      allow create: if isSuperAdmin() || isHR() || isEA();
-      allow update, delete: if isSuperAdmin() || isHR() || isOwner(resource.data.ownerUid);
+    // Attendance Logs
+    match /attendance/{recordId} {
+      allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.employeeEmail);
+      allow create, update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(request.resource.data.employeeEmail));
+      allow delete: if isSuperAdmin() || isHR() || isGRC();
     }
 
-    // Export controls and batches
-    match /exports/{exportId} {
+    // Leave Requests and Approvals
+    match /leave_requests/{recordId} {
+      allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.employeeEmail);
+      allow create: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(request.resource.data.employeeEmail));
+      allow update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(resource.data.employeeEmail) && leaveRequestEditableSelfFieldsOnly());
+      allow delete: if isSuperAdmin() || isHR() || isGRC();
+    }
+
+    // Performance
+    match /performance_records/{recordId} {
+      allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.employeeEmail);
+      allow create, update: if isPrivilegedRole();
+      allow delete: if isSuperAdmin() || isHR() || isGRC();
+    }
+
+    // Document Template Repository
+    match /document_templates/{recordId} {
+      allow read: if isPrivilegedRole() || isEmployeeRole();
+      allow create, update: if isPrivilegedRole();
+      allow delete: if isSuperAdmin() || isHR() || isGRC();
+    }
+
+    // Export Control
+    match /export_requests/{recordId} {
+      allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.requestedBy);
+      allow create: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(request.resource.data.requestedBy));
+      allow update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(resource.data.requestedBy) && exportRequestEditableSelfFieldsOnly());
+      allow delete: if isSuperAdmin() || isGRC();
+    }
+
+    // Incident Management (Breach and Response)
+    match /security_incidents/{recordId} {
       allow read: if isSuperAdmin() || isGRC();
-      allow create, update, delete: if isSuperAdmin() || isGRC();
+      allow create, update: if isSuperAdmin() || isGRC();
+      allow delete: if isSuperAdmin();
     }
 
-    // Immutable audit trail
-    match /auditLogs/{logId} {
+    // In-app notifications (security alerts and workflow notices)
+    match /clio_notifications/{notificationId} {
+      allow read: if isSuperAdmin() ||
+        (isAuthenticated() && (
+          resource.data.broadcast == true ||
+          isOwnerEmail(resource.data.recipientEmail)
+        ));
+      allow create: if isSuperAdmin() || isPrivilegedRole();
+      allow update: if isSuperAdmin() ||
+        (isAuthenticated() && isOwnerEmail(resource.data.recipientEmail));
+      allow delete: if isSuperAdmin();
+    }
+
+    // Settings Reference Catalog (roles/departments for module select inputs)
+    match /settings_reference_data/{recordId} {
+      allow read: if isPrivilegedRole();
+      allow create, update, delete: if isPrivilegedRole();
+    }
+
+    // Immutable Audit Trail
+    match /clio_audit_logs/{logId} {
       allow read: if isSuperAdmin() || isGRC();
       allow create: if isAuthenticated();
       allow update, delete: if false;
     }
 
-    // Deny by default
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }

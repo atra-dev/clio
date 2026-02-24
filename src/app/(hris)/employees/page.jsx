@@ -1,5 +1,4 @@
-import SurfaceCard from "@/components/hris/SurfaceCard";
-import { EMPLOYEE_ROWS } from "@/features/hris/mock-data";
+import EmployeeRecordsModule from "@/components/hris/modules/EmployeeRecordsModule";
 import { requireModuleAccess } from "@/lib/server-authorization";
 
 export const metadata = {
@@ -7,62 +6,31 @@ export const metadata = {
 };
 
 export default async function EmployeesPage() {
-  await requireModuleAccess("employees");
+  const session = await requireModuleAccess("employees");
+  const employeeRole = String(session?.role || "").toUpperCase().startsWith("EMPLOYEE_");
+  const heading = employeeRole ? "My Employee Record" : "Employee Records";
+  const subtitle = employeeRole
+    ? "Review and update your personal employee profile and contact information."
+    : "Directory, profile center, government IDs, payroll details, and role assignments with full audit traceability.";
 
   return (
-    <div className="space-y-6">
+    <div className={employeeRole ? "space-y-4" : "space-y-6"}>
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Employee Records</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Centralized employee profile data for GRC, HR, and EA teams.
+        <h1
+          className={
+            employeeRole
+              ? "text-xl font-semibold tracking-tight text-slate-900"
+              : "text-2xl font-semibold tracking-tight text-slate-900"
+          }
+        >
+          {heading}
+        </h1>
+        <p className={employeeRole ? "mt-0.5 text-xs text-slate-600" : "mt-1 text-sm text-slate-600"}>
+          {subtitle}
         </p>
       </header>
 
-      <SurfaceCard
-        title="Employee Master List"
-        subtitle="Record maintenance and quick status visibility"
-        action={
-          <div className="flex items-center gap-2">
-            <input
-              type="search"
-              placeholder="Search employee"
-              className="h-9 w-44 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-            />
-            <button className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sky-700">
-              Add Record
-            </button>
-          </div>
-        }
-      >
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
-                <th className="px-2 py-3 font-medium">Employee ID</th>
-                <th className="px-2 py-3 font-medium">Name</th>
-                <th className="px-2 py-3 font-medium">Role</th>
-                <th className="px-2 py-3 font-medium">Employment Type</th>
-                <th className="px-2 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {EMPLOYEE_ROWS.map((employee) => (
-                <tr key={employee.employeeId} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                  <td className="px-2 py-3 font-mono text-xs text-slate-700">{employee.employeeId}</td>
-                  <td className="px-2 py-3 font-medium text-slate-900">{employee.name}</td>
-                  <td className="px-2 py-3">{employee.role}</td>
-                  <td className="px-2 py-3">{employee.type}</td>
-                  <td className="px-2 py-3">
-                    <span className="rounded-md bg-sky-100 px-2 py-1 text-xs font-medium text-sky-700">
-                      {employee.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SurfaceCard>
+      <EmployeeRecordsModule session={session} />
     </div>
   );
 }

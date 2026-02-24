@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { formatNameFromEmail } from "@/lib/name-utils";
 import { cn } from "@/lib/utils";
 
 const statusClasses = {
@@ -20,35 +21,14 @@ const statusDotClasses = {
   Rejected: "bg-rose-500",
 };
 
-const performerProfiles = {
-  "hr.manager@clio.local": {
-    name: "HR Manager",
-    avatar: "/avatars/hr-manager.svg",
-  },
-  "ea.office@clio.local": {
-    name: "EA Office",
-    avatar: "/avatars/ea-office.svg",
-  },
-  "grc.analyst@clio.local": {
-    name: "GRC Analyst",
-    avatar: "/avatars/grc-analyst.svg",
-  },
-  "hr.assistant@clio.local": {
-    name: "HR Assistant",
-    avatar: "/avatars/hr-assistant.svg",
-  },
-  "hr.recruit@clio.local": {
-    name: "HR Recruit",
-    avatar: "/avatars/hr-recruit.svg",
-  },
-  "hr.admin@clio.local": {
-    name: "HR Admin",
-    avatar: "/avatars/hr-admin.svg",
-  },
-};
+function getRecordReference(entry) {
+  const explicitRef = typeof entry?.recordRef === "string" ? entry.recordRef.trim() : "";
+  if (explicitRef) {
+    return explicitRef;
+  }
 
-function getRecordReference(activityName) {
-  if (typeof activityName !== "string") {
+  const activityName = typeof entry?.activityName === "string" ? entry.activityName : "";
+  if (!activityName) {
     return "N/A";
   }
 
@@ -62,33 +42,73 @@ function getRecordReference(activityName) {
 }
 
 function formatPerformerName(value) {
-  if (typeof value !== "string" || value.trim().length === 0) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
     return "Unknown User";
   }
 
-  const key = value.trim().toLowerCase();
-  if (performerProfiles[key]?.name) {
-    return performerProfiles[key].name;
+  if (!raw.includes("@")) {
+    return raw;
   }
 
-  const localPart = key.split("@")[0] || "";
-  const tokens = localPart
-    .replace(/[._-]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((token) => `${token.charAt(0).toUpperCase()}${token.slice(1)}`);
-
-  return tokens.join(" ") || "Unknown User";
+  return formatNameFromEmail(raw, { fallbackLabel: "Unknown User", maxTokens: 2 });
 }
 
-function getPerformerAvatar(value) {
-  if (typeof value !== "string") {
-    return "/avatars/default-user.svg";
+function getPerformerDisplayName(entry) {
+  const fromRecord = typeof entry?.performedByName === "string" ? entry.performedByName.trim() : "";
+  if (fromRecord) {
+    return fromRecord;
   }
+  return formatPerformerName(entry?.performedBy);
+}
 
-  const key = value.trim().toLowerCase();
-  return performerProfiles[key]?.avatar || "/avatars/default-user.svg";
+function getPerformerAvatar(entry) {
+  const fromRecord = typeof entry?.performedByAvatar === "string" ? entry.performedByAvatar.trim() : "";
+  return fromRecord || "/avatars/default-user.svg";
+}
+
+function getPerformerEmail(entry) {
+  const fromRecord = typeof entry?.performedByEmail === "string" ? entry.performedByEmail.trim() : "";
+  if (fromRecord) {
+    return fromRecord;
+  }
+  if (typeof entry?.performedBy === "string") {
+    return entry.performedBy;
+  }
+  return "-";
+}
+
+function toTextList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function toDocumentList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const name = String(item.name || "").trim();
+      const type = String(item.type || "").trim();
+      const id = String(item.id || "").trim();
+      if (!name && !type && !id) {
+        return null;
+      }
+      return {
+        name: name || "Employee Document",
+        type: type || "General",
+        id,
+      };
+    })
+    .filter(Boolean);
 }
 
 function ExpandIcon({ expanded }) {
@@ -248,6 +268,9 @@ export default function ActivityLogTable({ rows }) {
             {filteredRows.map((entry) => {
               const isFailed = entry.status === "Failed" || entry.status === "Rejected";
               const isExpanded = expandedId === entry.id;
+              const changedFields = toTextList(entry.changedFields);
+              const viewedFields = toTextList(entry.viewedFields);
+              const accessedDocuments = toDocumentList(entry.accessedDocuments);
 
               return (
                 <tr key={entry.id} className="border-b border-slate-200 bg-white text-[13px] text-slate-700">
@@ -293,29 +316,29 @@ export default function ActivityLogTable({ rows }) {
                         <div className="px-3 py-2.5">
                           <div className="flex items-center gap-2.5">
                             <Image
-                              src={getPerformerAvatar(entry.performedBy)}
-                              alt={`${formatPerformerName(entry.performedBy)} profile picture`}
+                              src={getPerformerAvatar(entry)}
+                              alt={`${getPerformerDisplayName(entry)} profile picture`}
                               width={32}
                               height={32}
                               className="h-8 w-8 rounded-full border border-slate-300 bg-white"
                             />
                             <div className="min-w-0">
                               <p className="truncate text-xs font-semibold text-slate-800">
-                                {formatPerformerName(entry.performedBy)}
+                                {getPerformerDisplayName(entry)}
                               </p>
-                              <p className="truncate text-xs text-slate-500">{entry.performedBy}</p>
+                              <p className="truncate text-xs text-slate-500">{getPerformerEmail(entry)}</p>
                             </div>
                           </div>
                         </div>
                       </div>
 
-                      <div
-                        id={`activity-details-${entry.id}`}
-                        className={cn(
-                          "overflow-hidden transition-all duration-300 ease-out",
-                          isExpanded ? "max-h-52 opacity-100" : "max-h-0 opacity-0",
-                        )}
-                      >
+                        <div
+                          id={`activity-details-${entry.id}`}
+                          className={cn(
+                            "overflow-hidden transition-all duration-300 ease-out",
+                            isExpanded ? "max-h-[56rem] opacity-100" : "max-h-0 opacity-0",
+                          )}
+                        >
                         <div className="border-t border-slate-200 bg-slate-50/80 px-3 py-3">
                           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -324,21 +347,15 @@ export default function ActivityLogTable({ rows }) {
                             </div>
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Record Ref</p>
-                              <p className="mt-1 text-xs font-semibold text-slate-800">{getRecordReference(entry.activityName)}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-800">{getRecordReference(entry)}</p>
                             </div>
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Audit Note</p>
-                              <p className="mt-1 text-xs text-slate-700">
-                                Change logged under {entry.module} module and included in HRIS compliance trail.
-                              </p>
+                              <p className="mt-1 text-xs text-slate-700">{entry.auditNote || "No audit note."}</p>
                             </div>
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Next Action</p>
-                              <p className="mt-1 text-xs text-slate-700">
-                                {isFailed || entry.status === "Pending"
-                                  ? "Review and resolve with assigned HR owner."
-                                  : "No further action required."}
-                              </p>
+                              <p className="mt-1 text-xs text-slate-700">{entry.nextAction || "No further action required."}</p>
                             </div>
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Action Class</p>
@@ -355,6 +372,50 @@ export default function ActivityLogTable({ rows }) {
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Source IP</p>
                               <p className="mt-1 text-xs text-slate-700">{entry.sourceIp || "N/A"}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Browser</p>
+                              <p className="mt-1 text-xs text-slate-700">{entry.browser || "Unknown Browser"}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Operating System</p>
+                              <p className="mt-1 text-xs text-slate-700">{entry.operatingSystem || "Unknown OS"}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Device</p>
+                              <p className="mt-1 text-xs text-slate-700">{entry.deviceSummary || "Unknown device"}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Changed Fields</p>
+                              {changedFields.length > 0 ? (
+                                <p className="mt-1 text-xs text-slate-700">{changedFields.join(", ")}</p>
+                              ) : (
+                                <p className="mt-1 text-xs text-slate-400">No field updates recorded.</p>
+                              )}
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Viewed Fields</p>
+                              {viewedFields.length > 0 ? (
+                                <p className="mt-1 text-xs text-slate-700">{viewedFields.join(", ")}</p>
+                              ) : (
+                                <p className="mt-1 text-xs text-slate-400">No field view details.</p>
+                              )}
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 sm:col-span-2 xl:col-span-2">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Document Access</p>
+                              {accessedDocuments.length > 0 ? (
+                                <div className="mt-1 space-y-1">
+                                  {accessedDocuments.slice(0, 6).map((document, index) => (
+                                    <p key={`${document.id || document.name}-${index}`} className="text-xs text-slate-700">
+                                      {document.name}
+                                      <span className="text-slate-500"> ({document.type})</span>
+                                      {document.id ? <span className="text-slate-400"> #{document.id}</span> : null}
+                                    </p>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-xs text-slate-400">No document access details.</p>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -378,3 +439,4 @@ export default function ActivityLogTable({ rows }) {
     </section>
   );
 }
+

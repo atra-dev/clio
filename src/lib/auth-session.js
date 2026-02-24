@@ -5,6 +5,14 @@ import { normalizeRole } from "@/lib/hris";
 export const SESSION_COOKIE_NAME = "clio_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
 
+function normalizeSessionVersion(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
+}
+
 function getSessionSecret() {
   const configuredSecret = process.env.CLIO_SESSION_SECRET;
   if (process.env.NODE_ENV === "production" && !configuredSecret) {
@@ -39,12 +47,13 @@ function isMatchingSignature(expected, received) {
   return timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
-export function createSession(email, role) {
+export function createSession(email, role, { sessionVersion } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + SESSION_MAX_AGE_SECONDS;
   const session = {
     email: email.trim().toLowerCase(),
     role: normalizeRole(role),
+    sv: normalizeSessionVersion(sessionVersion),
     iat: now,
     exp: expiresAt,
   };
@@ -90,6 +99,7 @@ export function verifySessionToken(token) {
   return {
     email: payload.email,
     role: normalizeRole(payload.role),
+    sessionVersion: normalizeSessionVersion(payload.sv),
     iat: payload.iat,
     exp: payload.exp,
   };

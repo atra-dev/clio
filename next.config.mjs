@@ -1,7 +1,132 @@
+const isProduction = process.env.NODE_ENV === "production";
+
+function env(name) {
+  return String(process.env[name] || "").trim();
+}
+
+function normalizeProvider(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized.includes("resend")) return "resend";
+  if (normalized.includes("twilio")) return "twilio";
+  if (normalized.includes("console")) return "console";
+  if (normalized === "none" || normalized === "off") return "none";
+  return normalized;
+}
+
+function assertProductionAlertProviders() {
+  if (!isProduction) {
+    return;
+  }
+
+  const emailProvider = normalizeProvider(env("CLIO_ALERT_EMAIL_PROVIDER"));
+  if (emailProvider !== "resend") {
+    throw new Error(
+      "[CLIO Security] Production requires CLIO_ALERT_EMAIL_PROVIDER=resend for incident alert delivery.",
+    );
+  }
+  if (!env("RESEND_API_KEY") || !env("CLIO_EMAIL_FROM")) {
+    throw new Error(
+      "[CLIO Security] RESEND_API_KEY and CLIO_EMAIL_FROM are required when CLIO_ALERT_EMAIL_PROVIDER=resend.",
+    );
+  }
+
+  const smsProvider = normalizeProvider(env("CLIO_ALERT_SMS_PROVIDER"));
+  if (smsProvider === "console") {
+    throw new Error(
+      "[CLIO Security] CLIO_ALERT_SMS_PROVIDER=console is not allowed in production.",
+    );
+  }
+  if (smsProvider === "twilio") {
+    if (!env("TWILIO_ACCOUNT_SID") || !env("TWILIO_AUTH_TOKEN") || !env("TWILIO_FROM_NUMBER")) {
+      throw new Error(
+        "[CLIO Security] TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER are required when CLIO_ALERT_SMS_PROVIDER=twilio.",
+      );
+    }
+  }
+}
+
+assertProductionAlertProviders();
+
+const scriptSrc = [
+  "'self'",
+  "'unsafe-inline'",
+  "https://accounts.google.com",
+  "https://apis.google.com",
+  "https://www.gstatic.com",
+  "https://www.googleapis.com",
+];
+
+if (!isProduction) {
+  scriptSrc.push("'unsafe-eval'");
+}
+
+const securityHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+      "form-action 'self' https://accounts.google.com",
+      `script-src ${scriptSrc.join(" ")}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https://lh3.googleusercontent.com https://firebasestorage.googleapis.com https://*.googleusercontent.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "connect-src 'self' https://apis.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://firebasestorage.googleapis.com https://www.googleapis.com https://*.googleapis.com https://*.firebaseio.com ws: wss:",
+      "frame-src 'self' https://accounts.google.com https://apis.google.com https://*.firebaseapp.com",
+      "worker-src 'self' blob:",
+    ].join("; "),
+  },
+  {
+    key: "Referrer-Policy",
+    value: "strict-origin-when-cross-origin",
+  },
+  {
+    key: "X-Content-Type-Options",
+    value: "nosniff",
+  },
+  {
+    key: "X-Frame-Options",
+    value: "DENY",
+  },
+  {
+    key: "X-DNS-Prefetch-Control",
+    value: "off",
+  },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  },
+  {
+    key: "Cross-Origin-Opener-Policy",
+    value: "same-origin-allow-popups",
+  },
+  {
+    key: "Cross-Origin-Resource-Policy",
+    value: "same-site",
+  },
+];
+
+if (isProduction) {
+  securityHeaders.push({
+    key: "Strict-Transport-Security",
+    value: "max-age=31536000; includeSubDomains; preload",
+  });
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
   reactCompiler: true,
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
