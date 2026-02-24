@@ -5,6 +5,14 @@ function env(name) {
   return String(process.env[name] || "").trim();
 }
 
+function parseBooleanEnv(name, fallbackValue = false) {
+  const raw = env(name).toLowerCase();
+  if (!raw) {
+    return fallbackValue;
+  }
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+
 function normalizeProvider(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return "";
@@ -53,7 +61,37 @@ function assertProductionAlertProviders() {
   }
 }
 
+function assertProductionAuthHardening() {
+  if (!isProduction) {
+    return;
+  }
+
+  const sessionSecret = env("CLIO_SESSION_SECRET");
+  if (!sessionSecret || sessionSecret.length < 48 || sessionSecret.includes("temp-dev-secret")) {
+    throw new Error(
+      "[CLIO Security] CLIO_SESSION_SECRET must be a strong production secret (min 48 chars, non-temporary).",
+    );
+  }
+
+  const claimsStrict = parseBooleanEnv("CLIO_REQUIRE_FIREBASE_CUSTOM_CLAIMS", true);
+  if (!claimsStrict) {
+    throw new Error(
+      "[CLIO Security] CLIO_REQUIRE_FIREBASE_CUSTOM_CLAIMS=false is not allowed in production.",
+    );
+  }
+
+  const adminProjectId = env("FIREBASE_ADMIN_PROJECT_ID");
+  const adminClientEmail = env("FIREBASE_ADMIN_CLIENT_EMAIL");
+  const adminPrivateKey = env("FIREBASE_ADMIN_PRIVATE_KEY");
+  if (!adminProjectId || !adminClientEmail || !adminPrivateKey) {
+    throw new Error(
+      "[CLIO Security] FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL, and FIREBASE_ADMIN_PRIVATE_KEY are required in production.",
+    );
+  }
+}
+
 assertProductionAlertProviders();
+assertProductionAuthHardening();
 
 const scriptSrc = [
   "'self'",

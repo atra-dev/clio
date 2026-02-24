@@ -32,8 +32,10 @@ function parseBooleanEnv(name, fallbackValue = false) {
 }
 
 function isClaimsSyncStrictMode() {
-  const defaultRequired = process.env.NODE_ENV === "production";
-  return parseBooleanEnv("CLIO_REQUIRE_FIREBASE_CUSTOM_CLAIMS", defaultRequired);
+  if (process.env.NODE_ENV === "production") {
+    return true;
+  }
+  return parseBooleanEnv("CLIO_REQUIRE_FIREBASE_CUSTOM_CLAIMS", false);
 }
 
 function mapClaimsSyncFailureMessage(reason) {
