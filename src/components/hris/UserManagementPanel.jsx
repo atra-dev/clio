@@ -273,7 +273,7 @@ export default function UserManagementPanel() {
     <div className="space-y-4">
       <SurfaceCard
         title="Invite User"
-        subtitle="No sign-up form. Invited users must verify email from the invite link before Google sign-in."
+        subtitle="No sign-up form. Invited users must complete invite phone OTP verification before Google sign-in."
       >
         <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]" onSubmit={handleInviteSubmit}>
           <label className="space-y-1">

@@ -33,6 +33,11 @@ function InviteVerificationContent() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isVerified, setIsVerified] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpExpiresAt, setOtpExpiresAt] = useState("");
+  const [resendAvailableAt, setResendAvailableAt] = useState("");
+  const [devOtpCode, setDevOtpCode] = useState("");
 
   const loadInvite = useCallback(async () => {
     if (!token) {
@@ -54,15 +59,15 @@ function InviteVerificationContent() {
       if (!response.ok) {
         setInvite(payload?.invite || null);
         setErrorMessage(payload?.message || "Unable to validate invite link.");
-        setIsVerified(payload?.invite?.status === "verified");
+        setIsVerified(payload?.alreadyVerified === true);
         return;
       }
 
       setInvite(payload?.invite || null);
-      const alreadyVerified = payload?.alreadyVerified === true || payload?.invite?.status === "verified";
+      const alreadyVerified = payload?.alreadyVerified === true;
       setIsVerified(alreadyVerified);
       if (alreadyVerified) {
-        setSuccessMessage(payload?.message || "Invite email is already verified. You can now sign in.");
+        setSuccessMessage(payload?.message || "Invite verification already completed. You can now sign in.");
       }
     } catch {
       setErrorMessage("Unable to validate invite link.");
@@ -76,34 +81,76 @@ function InviteVerificationContent() {
     loadInvite();
   }, [loadInvite]);
 
-  const handleVerify = async () => {
-    if (!token || isSubmitting) {
+  const handleRequestOtp = async () => {
+    if (!token || isSubmitting || isVerified) {
       return;
     }
-
     setIsSubmitting(true);
     setErrorMessage("");
     setSuccessMessage("");
-
+    setDevOtpCode("");
     try {
       const response = await fetch("/api/invite/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({
+          token,
+          action: "start_sms",
+          phoneNumber,
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setErrorMessage(payload?.message || "Unable to complete email verification.");
+        setErrorMessage(payload?.message || "Unable to send OTP.");
         return;
       }
 
       setInvite(payload?.invite || invite);
-      setIsVerified(true);
-      setSuccessMessage(payload?.message || "Email verification completed. You can now sign in with Google.");
+      setOtpExpiresAt(String(payload?.otpExpiresAt || ""));
+      setResendAvailableAt(String(payload?.resendAvailableAt || ""));
+      setDevOtpCode(String(payload?.devOtpCode || ""));
+      if (payload?.alreadyVerified) {
+        setIsVerified(true);
+      }
+      setSuccessMessage(payload?.message || "OTP sent. Enter the code to complete verification.");
     } catch {
-      setErrorMessage("Unable to complete email verification.");
+      setErrorMessage("Unable to send OTP.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!token || isSubmitting || isVerified) {
+      return;
+    }
+    setIsSubmitting(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const response = await fetch("/api/invite/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token,
+          action: "complete_sms",
+          otpCode,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setErrorMessage(payload?.message || "Unable to verify OTP.");
+        return;
+      }
+      setInvite(payload?.invite || invite);
+      setIsVerified(true);
+      setSuccessMessage(payload?.message || "SMS verification completed. You can now sign in.");
+    } catch {
+      setErrorMessage("Unable to verify OTP.");
     } finally {
       setIsSubmitting(false);
     }
@@ -118,9 +165,9 @@ function InviteVerificationContent() {
 
         <div className="mt-6 space-y-2">
           <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#0f6bcf]">Invitation Verification</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Verify your CLIO account email</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Verify your CLIO account (SMS MFA)</h1>
           <p className="text-sm text-slate-600">
-            Complete this verification step first. After this, Google sign-in will be enabled for your invited account.
+            Enter your phone number and complete OTP verification. After this, Google sign-in will be enabled.
           </p>
         </div>
 
@@ -156,13 +203,46 @@ function InviteVerificationContent() {
         ) : null}
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
+          <label className="w-full space-y-1">
+            <span className="text-xs uppercase tracking-[0.08em] text-slate-500">Mobile Number</span>
+            <input
+              type="tel"
+              value={phoneNumber}
+              onChange={(event) => setPhoneNumber(event.target.value)}
+              placeholder="+639171234567"
+              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+              disabled={isSubmitting || isVerified}
+            />
+          </label>
+
           <button
             type="button"
-            onClick={handleVerify}
-            disabled={!canSubmit}
+            onClick={handleRequestOtp}
+            disabled={!canSubmit || !phoneNumber}
             className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0f6bcf] px-5 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSubmitting ? "Verifying..." : isVerified ? "Email Verified" : "Verify Email"}
+            {isSubmitting ? "Processing..." : "Send OTP"}
+          </button>
+
+          <label className="w-full space-y-1">
+            <span className="text-xs uppercase tracking-[0.08em] text-slate-500">OTP Code</span>
+            <input
+              type="text"
+              value={otpCode}
+              onChange={(event) => setOtpCode(event.target.value)}
+              placeholder="6-digit code"
+              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+              disabled={isSubmitting || isVerified}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={handleVerifyOtp}
+            disabled={!canSubmit || !otpCode}
+            className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0f6bcf] px-5 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting ? "Verifying..." : isVerified ? "SMS Verified" : "Verify OTP"}
           </button>
 
           <Link
@@ -171,6 +251,12 @@ function InviteVerificationContent() {
           >
             Go to Login
           </Link>
+        </div>
+
+        <div className="mt-4 text-xs text-slate-500">
+          {otpExpiresAt ? <p>OTP Expires: {formatDate(otpExpiresAt)}</p> : null}
+          {resendAvailableAt ? <p>Resend Available: {formatDate(resendAvailableAt)}</p> : null}
+          {devOtpCode ? <p className="text-amber-700">Dev OTP: {devOtpCode}</p> : null}
         </div>
       </section>
     </main>

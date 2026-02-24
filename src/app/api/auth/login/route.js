@@ -59,8 +59,8 @@ function mapClaimsSyncFailureMessage(reason) {
 }
 
 export async function POST(request) {
-  const isProduction = process.env.NODE_ENV === "production";
   const claimsSyncStrict = isClaimsSyncStrictMode();
+  const smsMfaRequired = parseBooleanEnv("CLIO_REQUIRE_SMS_MFA", true);
   let activeRateLimit = enforceRateLimitByRequest({
     request,
     scope: "auth-login-ip",
@@ -229,7 +229,34 @@ export async function POST(request) {
 
       return jsonResponse(
         {
-          message: "Account invitation must be verified first. Open your invite verification email link.",
+          message: "Account invitation must be verified first. Open your invite verification link and complete OTP.",
+        },
+        { status: 403, rateLimit: activeRateLimit },
+      );
+    }
+
+    if (smsMfaRequired && !account.phoneVerifiedAt) {
+      await recordAuditEvent({
+        activityName: "Login attempt rejected: SMS verification required",
+        status: "Rejected",
+        module: "Authentication",
+        performedBy: normalizedEmail,
+        sensitivity: "Sensitive",
+        metadata: {
+          reason: "sms_mfa_required",
+          accountStatus: account.status,
+          authProvider: "google",
+          firebaseUid: firebaseIdentity.uid,
+          source: account.source,
+        },
+        request,
+      });
+
+      return jsonResponse(
+        {
+          message:
+            "SMS authentication is required before login. Open your invite verification link and complete phone verification.",
+          reason: "sms_mfa_required",
         },
         { status: 403, rateLimit: activeRateLimit },
       );
@@ -400,6 +427,8 @@ export async function POST(request) {
                   ? "Unable to verify Google login with Firebase."
                   : reason === "invite_email_verification_required"
                     ? "Account invitation must be verified first."
+                    : reason === "sms_mfa_required"
+                      ? "SMS authentication setup is required before login."
                     : reason === "firebase_custom_claims_not_configured"
                       ? "Firebase custom claims are not configured."
                       : "Unable to process login request.";
