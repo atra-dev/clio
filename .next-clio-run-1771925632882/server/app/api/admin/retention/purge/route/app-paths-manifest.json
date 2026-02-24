@@ -1,0 +1,3 @@
+{
+  "/api/admin/retention/purge/route": "app/api/admin/retention/purge/route.js"
+}

@@ -1,19 +1,5 @@
-import { IBM_Plex_Mono, Manrope } from "next/font/google";
 import "./globals.css";
 import ToastProvider from "@/components/ui/ToastProvider";
-
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const plexMono = IBM_Plex_Mono({
-  variable: "--font-plex-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  display: "swap",
-});
 
 export const metadata = {
   title: "Clio HRIS",
@@ -29,7 +15,7 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={`${manrope.variable} ${plexMono.variable} antialiased`}>
+      <body className="antialiased">
         <ToastProvider>{children}</ToastProvider>
       </body>
     </html>

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 :root {
+  --font-manrope: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-plex-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
   --canvas: #f7fafc;
   --surface: #ffffff;
   --ink: #0f172a;

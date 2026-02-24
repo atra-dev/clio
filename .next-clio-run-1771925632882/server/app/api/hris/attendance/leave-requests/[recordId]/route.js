@@ -1,0 +1,10 @@
+var R=require("../../../../../../chunks/[turbopack]_runtime.js")("server/app/api/hris/attendance/leave-requests/[recordId]/route.js")
+R.c("server/chunks/_910e133b._.js")
+R.c("server/chunks/_aa6e99b0._.js")
+R.c("server/chunks/[root-of-the-server]__3476a93a._.js")
+R.c("server/chunks/_50ac50e3._.js")
+R.c("server/chunks/src_lib_hris-backend_4dbd0cdd.js")
+R.c("server/chunks/[root-of-the-server]__f408c708._.js")
+R.c("server/chunks/ce889_server_app_api_hris_attendance_leave-requests_[recordId]_route_actions_14bb8bb3.js")
+R.m(76716)
+module.exports=R.m(76716).exports

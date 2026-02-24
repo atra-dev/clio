@@ -1,4 +1,5 @@
 const isProduction = process.env.NODE_ENV === "production";
+const distDir = process.env.CLIO_NEXT_DIST_DIR || ".next-clio";
 
 function env(name) {
   return String(process.env[name] || "").trim();
@@ -118,6 +119,7 @@ if (isProduction) {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir,
   reactCompiler: true,
   async headers() {
     return [
