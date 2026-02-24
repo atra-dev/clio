@@ -404,7 +404,13 @@ export default function LoginCard() {
           return;
         }
 
-        const redirectUser = redirectResult?.user || null;
+        // Firebase can restore currentUser even when getRedirectResult() is null.
+        // Use both sources so redirect callbacks are resilient across browsers.
+        const redirectUser =
+          redirectResult?.user ||
+          auth.currentUser ||
+          (redirectWasPending ? await waitForSignedInUser(auth, REDIRECT_USER_WAIT_TIMEOUT_MS) : null);
+
         if (redirectUser) {
           setIsSubmitting(true);
           setErrorMessage("");
@@ -419,19 +425,8 @@ export default function LoginCard() {
           return;
         }
 
-        setIsSubmitting(true);
-        const fallbackUser = await waitForSignedInUser(auth, REDIRECT_USER_WAIT_TIMEOUT_MS);
-        if (!fallbackUser) {
-          clearRedirectPending();
-          setInfoMessage("Sign-in session was not completed. Click Continue with Google to retry.");
-          return;
-        }
-
-        setErrorMessage("");
         clearRedirectPending();
-        await completeWorkspaceLogin(auth, fallbackUser);
-        router.replace("/dashboard");
-        router.refresh();
+        setInfoMessage("Sign-in session was not completed. Click Continue with Google to retry.");
       } catch (error) {
         if (!active) {
           return;
