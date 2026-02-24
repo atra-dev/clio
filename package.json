@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:clean": "npm run clean:build-artifacts && next build",
     "start": "next start",
     "lint": "eslint",
+    "clean:build-artifacts": "node scripts/clean-build-artifacts.mjs",
     "audit": "npm audit --audit-level=high",
     "audit:full": "npm audit --json"
   },

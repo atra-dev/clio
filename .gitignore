@@ -15,6 +15,9 @@
 
 # next.js
 /.next/
+/.next-check/
+/.next-clio/
+/.next-clio-run-*/
 /out/
 
 # production

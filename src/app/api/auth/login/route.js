@@ -21,6 +21,26 @@ function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   return applyRateLimitHeaders(response, rateLimit);
 }
 
+function mapClaimsSyncFailureMessage(reason) {
+  const normalized = String(reason || "").trim();
+  if (normalized === "firebase_custom_claims_not_configured") {
+    return "Secure login is unavailable: Firebase Admin credentials are not configured on the server.";
+  }
+  if (normalized === "firebase_admin_access_token_failed") {
+    return "Secure login is unavailable: Firebase Admin token generation failed. Check service account key format.";
+  }
+  if (normalized === "firebase_admin_permission_denied") {
+    return "Secure login is unavailable: Firebase Admin service account lacks Identity Toolkit permissions.";
+  }
+  if (normalized === "firebase_project_not_found") {
+    return "Secure login is unavailable: Firebase Admin project ID is invalid.";
+  }
+  if (normalized === "firebase_user_not_found") {
+    return "Secure login is unavailable: signed-in Firebase user was not found in the configured project.";
+  }
+  return "Secure login is temporarily unavailable. Please contact Super Admin.";
+}
+
 export async function POST(request) {
   const isProduction = process.env.NODE_ENV === "production";
   let activeRateLimit = enforceRateLimitByRequest({
@@ -270,7 +290,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Secure login is temporarily unavailable. Please contact Super Admin." },
+        {
+          message: mapClaimsSyncFailureMessage(syncReason),
+          reason: syncReason,
+        },
         { status: 503, rateLimit: activeRateLimit },
       );
       }
@@ -295,7 +318,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Secure login is temporarily unavailable. Please contact Super Admin." },
+        {
+          message: mapClaimsSyncFailureMessage(claimsSyncResult?.reason || "firebase_claims_sync_failed"),
+          reason: claimsSyncResult?.reason || "firebase_claims_sync_failed",
+        },
         { status: 503, rateLimit: activeRateLimit },
       );
       }
