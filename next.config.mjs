@@ -1,5 +1,5 @@
 const isProduction = process.env.NODE_ENV === "production";
-const distDir = process.env.CLIO_NEXT_DIST_DIR || ".next-clio";
+const distDir = process.env.CLIO_NEXT_DIST_DIR || ".next";
 
 function env(name) {
   return String(process.env[name] || "").trim();

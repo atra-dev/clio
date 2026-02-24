@@ -36,7 +36,7 @@ export default function LoginCard() {
       return "Firebase API key is invalid. Check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local.";
     }
     if (rawCode === "auth/internal-error") {
-      return "Firebase sign-in failed due to browser/CSP restrictions. Allow popups and cookies for localhost, then restart dev server and try again.";
+      return "Firebase sign-in failed due to browser/CSP restrictions. Allow popups and cookies for the current domain, then retry.";
     }
     if (rawCode === "auth/multi-factor-auth-required") {
       return "MFA is currently disabled in this app. Remove this user's enrolled MFA factors in Firebase Authentication, then sign in again.";

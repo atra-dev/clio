@@ -1,3 +1,0 @@
-{
-  "/api/hris/attendance/[recordId]/route": "app/api/hris/attendance/[recordId]/route.js"
-}

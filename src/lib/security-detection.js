@@ -94,6 +94,38 @@ function parseIntegerEnv(name, fallbackValue, { min = 1, max = Number.MAX_SAFE_I
   return Math.min(max, Math.max(min, parsed));
 }
 
+function normalizeBaseUrl(value) {
+  const raw = asString(value);
+  if (!raw) {
+    return "";
+  }
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return raw.replace(/\/+$/, "");
+  }
+  return `https://${raw.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+}
+
+function resolveAppBaseUrl() {
+  const configured = normalizeBaseUrl(process.env.CLIO_APP_BASE_URL);
+  if (configured) {
+    return configured;
+  }
+
+  const publicSiteUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+  if (publicSiteUrl) {
+    return publicSiteUrl;
+  }
+
+  const vercelUrl = normalizeBaseUrl(
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL,
+  );
+  if (vercelUrl) {
+    return vercelUrl;
+  }
+
+  return "";
+}
+
 function getDetectionRetryQueueCollectionName() {
   return asString(process.env.CLIO_FIRESTORE_IDS_RETRY_COLLECTION, "clio_ids_retry_queue");
 }
@@ -123,7 +155,7 @@ function getDetectionConfig() {
     incidentCooldownMinutes: parseIntegerEnv("CLIO_IDS_INCIDENT_COOLDOWN_MINUTES", 15, { min: 1, max: 360 }),
     maxRecipientCount: parseIntegerEnv("CLIO_IDS_MAX_RECIPIENTS", 20, { min: 1, max: 100 }),
     systemActorEmail: normalizeEmail(process.env.CLIO_IDS_SYSTEM_ACTOR_EMAIL) || DEFAULT_SYSTEM_ACTOR,
-    appBaseUrl: asString(process.env.CLIO_APP_BASE_URL, "http://localhost:3000").replace(/\/+$/, ""),
+    appBaseUrl: resolveAppBaseUrl(),
     retryEnabled: parseBooleanEnv("CLIO_IDS_RETRY_ENABLED", true),
     retryBatchSize: parseIntegerEnv("CLIO_IDS_RETRY_BATCH_SIZE", 8, { min: 1, max: 32 }),
     retryMaxAttempts: parseIntegerEnv("CLIO_IDS_RETRY_MAX_ATTEMPTS", 5, { min: 1, max: 20 }),
@@ -454,10 +486,13 @@ function buildActionUrl(config, incidentId) {
 }
 
 function buildAbsoluteActionUrl(config, actionPath) {
-  const base = asString(config?.appBaseUrl, "http://localhost:3000").replace(/\/+$/, "");
+  const base = asString(config?.appBaseUrl).replace(/\/+$/, "");
   const path = asString(actionPath, "/incident-management");
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
+  }
+  if (!base) {
+    return path.startsWith("/") ? path : `/${path}`;
   }
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }

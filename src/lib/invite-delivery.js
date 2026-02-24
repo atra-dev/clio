@@ -31,12 +31,38 @@ function isConsoleEmailAllowed() {
     .toLowerCase() === "true";
 }
 
-function getAppBaseUrl() {
-  const configured = String(process.env.CLIO_APP_BASE_URL || "").trim();
-  if (configured) {
-    return configured.replace(/\/+$/, "");
+function normalizeBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
   }
-  return "http://localhost:3000";
+
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return raw.replace(/\/+$/, "");
+  }
+
+  return `https://${raw.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+}
+
+function getAppBaseUrl() {
+  const configured = normalizeBaseUrl(process.env.CLIO_APP_BASE_URL);
+  if (configured) {
+    return configured;
+  }
+
+  const publicSiteUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+  if (publicSiteUrl) {
+    return publicSiteUrl;
+  }
+
+  const vercelUrl = normalizeBaseUrl(
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL,
+  );
+  if (vercelUrl) {
+    return vercelUrl;
+  }
+
+  throw new Error("app_base_url_not_configured");
 }
 
 function getLoginPath() {
