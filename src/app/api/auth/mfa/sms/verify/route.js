@@ -2,20 +2,11 @@ import { NextResponse } from "next/server";
 import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
-import { completeLoginSmsVerification } from "@/lib/user-accounts";
+import { completeLoginSmsVerificationWithFirebase } from "@/lib/user-accounts";
 
 function statusForReason(reason) {
-  if (reason === "invalid_otp") {
+  if (reason === "invalid_phone_number") {
     return 400;
-  }
-  if (reason === "otp_not_requested") {
-    return 409;
-  }
-  if (reason === "otp_expired") {
-    return 410;
-  }
-  if (reason === "otp_attempts_exceeded") {
-    return 429;
   }
   if (reason === "invalid_mfa_challenge" || reason === "account_disabled") {
     return 403;
@@ -23,21 +14,15 @@ function statusForReason(reason) {
   if (reason === "user_not_found") {
     return 404;
   }
+  if (reason === "firebase_phone_not_verified") {
+    return 409;
+  }
   return 400;
 }
 
 function messageForReason(reason) {
-  if (reason === "invalid_otp") {
-    return "OTP is invalid. Check the code and try again.";
-  }
-  if (reason === "otp_not_requested") {
-    return "Request OTP first before entering a verification code.";
-  }
-  if (reason === "otp_expired") {
-    return "OTP has expired. Request a new code.";
-  }
-  if (reason === "otp_attempts_exceeded") {
-    return "Maximum OTP attempts exceeded. Retry Google sign-in to restart verification.";
+  if (reason === "invalid_phone_number") {
+    return "Phone number is invalid. Please use a valid mobile number with country code.";
   }
   if (reason === "invalid_mfa_challenge") {
     return "SMS verification challenge expired. Retry Google sign-in.";
@@ -51,7 +36,10 @@ function messageForReason(reason) {
   if (reason === "already_verified") {
     return "Phone number is already verified. Continue sign-in.";
   }
-  return "Unable to verify OTP.";
+  if (reason === "firebase_phone_not_verified") {
+    return "Phone verification is not yet completed in Firebase. Complete OTP first.";
+  }
+  return "Unable to complete SMS verification.";
 }
 
 function applyRateLimitHeaders(response, rateLimitResult) {
@@ -88,7 +76,7 @@ export async function POST(request) {
     const body = await request.json();
     const idToken = typeof body?.idToken === "string" ? body.idToken : "";
     const challengeToken = typeof body?.challengeToken === "string" ? body.challengeToken : "";
-    const otpCode = typeof body?.otpCode === "string" ? body.otpCode : "";
+    const phoneNumberInput = typeof body?.phoneNumber === "string" ? body.phoneNumber : "";
 
     const identity = await verifyFirebaseIdToken(idToken);
     const email = identity.email;
@@ -121,14 +109,20 @@ export async function POST(request) {
       );
     }
 
-    const updatedUser = await completeLoginSmsVerification({
+    const hasPhoneProvider = Array.isArray(identity.providerIds) && identity.providerIds.includes("phone");
+    const identityPhoneNumber = String(identity.phoneNumber || "").trim();
+    if (!hasPhoneProvider || !identityPhoneNumber) {
+      throw new Error("firebase_phone_not_verified");
+    }
+
+    const updatedUser = await completeLoginSmsVerificationWithFirebase({
       email,
       challengeToken,
-      otpCode,
+      phoneNumber: identityPhoneNumber || phoneNumberInput,
     });
 
     await recordAuditEvent({
-      activityName: "Login SMS verification completed",
+      activityName: "Login SMS verification completed (Firebase phone)",
       status: "Approved",
       module: "Authentication",
       performedBy: email,
@@ -136,6 +130,7 @@ export async function POST(request) {
       metadata: {
         verificationMethod: updatedUser?.verificationMethod || "sms",
         phoneVerifiedAt: updatedUser?.phoneVerifiedAt || null,
+        phoneNumber: identityPhoneNumber || null,
       },
       request,
     });
