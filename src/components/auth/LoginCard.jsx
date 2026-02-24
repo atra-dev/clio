@@ -7,6 +7,7 @@ import {
   getRedirectResult,
   linkWithPhoneNumber,
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   signOut,
 } from "firebase/auth";
@@ -455,13 +456,47 @@ export default function LoginCard() {
     setErrorMessage("");
     setInfoMessage("");
 
+    let auth;
+    let provider;
+
     try {
-      const auth = getFirebaseClientAuth();
-      const provider = buildGoogleProvider();
+      auth = getFirebaseClientAuth();
+      provider = buildGoogleProvider();
+
+      const popupResult = await signInWithPopup(auth, provider);
+      if (popupResult?.user) {
+        clearRedirectPending();
+        await completeWorkspaceLogin(auth, popupResult.user);
+        router.replace("/dashboard");
+        router.refresh();
+        return;
+      }
+
       setRedirectPending();
       await signInWithRedirect(auth, provider);
       return;
     } catch (error) {
+      const rawCode = String(error?.code || "").trim();
+      const canFallbackToRedirect =
+        rawCode === "auth/popup-blocked" ||
+        rawCode === "auth/popup-closed-by-user" ||
+        rawCode === "auth/cancelled-popup-request" ||
+        rawCode === "auth/internal-error";
+
+      if (canFallbackToRedirect && auth && provider) {
+        try {
+          setRedirectPending();
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError) {
+          clearRedirectPending();
+          if (!activateSmsEnrollment(redirectError)) {
+            setErrorMessage(mapLoginError(redirectError));
+          }
+          return;
+        }
+      }
+
       clearRedirectPending();
       if (!activateSmsEnrollment(error)) {
         setErrorMessage(mapLoginError(error));
