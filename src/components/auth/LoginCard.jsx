@@ -102,6 +102,31 @@ export default function LoginCard() {
     const rawCode = String(error?.code || "").trim();
     const rawMessage = String(error?.message || "").trim();
 
+    if (rawCode === "email_not_verified") {
+      return "Google account email must be verified.";
+    }
+    if (rawCode === "provider_not_allowed") {
+      return "Only Google sign-in is allowed for this workspace.";
+    }
+    if (rawCode === "role_not_provisioned") {
+      return "Account is not provisioned for this workspace.";
+    }
+    if (rawCode === "account_disabled") {
+      return "Account is disabled. Please contact Super Admin.";
+    }
+    if (rawCode === "invite_email_verification_required") {
+      return "Complete invite verification first before login.";
+    }
+    if (rawCode === "account_inactive") {
+      return "Account is not active yet. Please contact Super Admin.";
+    }
+    if (rawCode === "sms_mfa_setup_unavailable") {
+      return "SMS authentication setup is temporarily unavailable. Please retry sign-in.";
+    }
+    if (rawCode === "firebase_phone_not_verified") {
+      return "Phone verification is not complete. Finish OTP verification first.";
+    }
+
     if (rawCode === "auth/unauthorized-domain") {
       return "Current domain is not authorized in Firebase Authentication settings.";
     }
@@ -218,7 +243,9 @@ export default function LoginCard() {
       }
 
       await signOut(auth).catch(() => {});
-      throw new Error(payload.message || "Unable to log in.");
+      const loginError = new Error(payload.message || "Unable to log in.");
+      loginError.code = String(payload?.reason || `http_${response.status}` || "").trim();
+      throw loginError;
     }
   };
 
