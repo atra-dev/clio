@@ -2672,6 +2672,104 @@ async function completeLoginSmsVerificationInFile({ email, challengeToken, otpCo
   return toPublicUser(user);
 }
 
+async function completeLoginSmsVerificationWithFirebaseInFirestore(db, { email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  if (!normalizedPhone) {
+    throw new Error("invalid_phone_number");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedEmail);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    throw new Error("user_not_found");
+  }
+
+  const rawUser = snapshot.data() || {};
+  const normalizedUser = normalizeFirestoreUser(snapshot.id, rawUser);
+  if (!normalizedUser) {
+    throw new Error("user_not_found");
+  }
+
+  if (normalizedUser.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (normalizedUser.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: rawUser.loginMfa,
+  });
+
+  const timestamp = nowIso();
+  const nextPayload = {
+    phoneVerifiedAt: timestamp,
+    phoneLast4: getPhoneLast4(normalizedPhone),
+    phoneHash: hashPhoneNumber(normalizedPhone),
+    verificationMethod: "sms",
+    loginMfa: null,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...rawUser,
+    ...nextPayload,
+  });
+
+  return updated ? toPublicUser(updated) : null;
+}
+
+async function completeLoginSmsVerificationWithFirebaseInFile({ email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  if (!normalizedPhone) {
+    throw new Error("invalid_phone_number");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.email === normalizedEmail);
+  if (!user) {
+    throw new Error("user_not_found");
+  }
+
+  if (user.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (user.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: user.loginMfa,
+  });
+
+  const timestamp = nowIso();
+  user.phoneVerifiedAt = timestamp;
+  user.phoneLast4 = getPhoneLast4(normalizedPhone);
+  user.phoneHash = hashPhoneNumber(normalizedPhone);
+  user.verificationMethod = "sms";
+  user.loginMfa = null;
+  user.updatedAt = timestamp;
+  await writeStore(store);
+
+  return toPublicUser(user);
+}
+
 async function completeInviteEmailVerificationInFirestore(db, { token }) {
   const normalizedToken = normalizeInviteToken(token);
   if (!normalizedToken) {
@@ -3047,6 +3145,57 @@ export async function completeLoginSmsVerification({ email, challengeToken, otpC
       email: normalizedEmail,
       challengeToken,
       otpCode,
+    });
+  }
+
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return updatedUser;
+}
+
+export async function completeLoginSmsVerificationWithFirebase({ email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new Error("invalid_email");
+  }
+
+  const businessErrors = new Set([
+    "invalid_email",
+    "invalid_phone_number",
+    "invalid_mfa_challenge",
+    "user_not_found",
+    "account_disabled",
+    "already_verified",
+  ]);
+
+  let updatedUser = null;
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      updatedUser = await completeLoginSmsVerificationWithFirebaseInFirestore(db, {
+        email: normalizedEmail,
+        challengeToken,
+        phoneNumber,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (businessErrors.has(reason)) {
+        throw error;
+      }
+      updatedUser = await completeLoginSmsVerificationWithFirebaseInFile({
+        email: normalizedEmail,
+        challengeToken,
+        phoneNumber,
+      });
+    }
+  } else {
+    updatedUser = await completeLoginSmsVerificationWithFirebaseInFile({
+      email: normalizedEmail,
+      challengeToken,
+      phoneNumber,
     });
   }
 

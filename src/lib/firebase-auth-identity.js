@@ -64,10 +64,13 @@ export async function verifyFirebaseIdToken(idToken) {
         .filter(Boolean)
     : [];
 
+  const phoneNumber = String(user.phoneNumber || "").trim();
+
   return {
     uid: String(user.localId || "").trim(),
     email,
     emailVerified: user.emailVerified === true,
     providerIds,
+    phoneNumber,
   };
 }

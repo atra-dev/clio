@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   GoogleAuthProvider,
+  RecaptchaVerifier,
   getRedirectResult,
+  linkWithPhoneNumber,
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
@@ -20,16 +22,16 @@ export default function LoginCard() {
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
-  const [devOtpCode, setDevOtpCode] = useState("");
   const [mfaState, setMfaState] = useState({
     challengeToken: "",
     challengeExpiresAt: "",
     phoneNumber: "",
     otpCode: "",
-    otpExpiresAt: "",
-    resendAvailableAt: "",
+    otpRequestedAt: "",
   });
   const [pendingFirebaseUser, setPendingFirebaseUser] = useState(null);
+  const confirmationResultRef = useRef(null);
+  const recaptchaVerifierRef = useRef(null);
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
 
   const setRedirectPending = () => {
@@ -110,16 +112,72 @@ export default function LoginCard() {
     if (rawCode === "auth/internal-error") {
       return "Firebase sign-in failed due to browser/CSP restrictions. Allow popups and cookies for the current domain, then retry.";
     }
-    if (rawCode === "auth/multi-factor-auth-required") {
-      return "SMS authentication is required for this account. Complete your invite phone verification first.";
-    }
     if (rawCode === "auth/invalid-app-credential") {
-      return "SMS authentication setup failed. Check Firebase phone authentication setup and retry.";
+      return "SMS authentication setup failed. Check Firebase Phone provider setup and Authorized domains.";
+    }
+    if (rawCode === "auth/operation-not-allowed") {
+      return "Firebase Phone authentication is disabled. Enable it in Firebase Authentication > Sign-in method.";
+    }
+    if (rawCode === "auth/invalid-phone-number") {
+      return "Phone number is invalid. Use international format (e.g. +639171234567).";
+    }
+    if (rawCode === "auth/too-many-requests") {
+      return "Too many OTP attempts. Please wait before retrying.";
+    }
+    if (rawCode === "auth/code-expired") {
+      return "OTP has expired. Request a new code.";
+    }
+    if (rawCode === "auth/invalid-verification-code") {
+      return "OTP is invalid. Check the code and try again.";
+    }
+    if (rawCode === "auth/provider-already-linked") {
+      return "Phone number is already linked. Continue verification.";
+    }
+    if (rawCode === "auth/captcha-check-failed") {
+      return "Captcha validation failed. Retry and complete captcha challenge.";
     }
     if (rawMessage.startsWith("firebase_client_not_configured")) {
       return "Firebase client is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID, then restart npm run dev.";
     }
     return error?.message || "Unable to complete Google sign-in.";
+  };
+
+  const disposeRecaptchaVerifier = () => {
+    if (recaptchaVerifierRef.current) {
+      try {
+        recaptchaVerifierRef.current.clear();
+      } catch {}
+      recaptchaVerifierRef.current = null;
+    }
+
+    if (typeof document !== "undefined") {
+      const container = document.getElementById("clio-login-sms-recaptcha");
+      if (container) {
+        container.innerHTML = "";
+      }
+    }
+  };
+
+  const getOrCreateRecaptchaVerifier = async (auth) => {
+    if (recaptchaVerifierRef.current) {
+      return recaptchaVerifierRef.current;
+    }
+
+    if (typeof window === "undefined") {
+      throw new Error("captcha_not_ready");
+    }
+
+    const container = document.getElementById("clio-login-sms-recaptcha");
+    if (!container) {
+      throw new Error("captcha_not_ready");
+    }
+
+    const verifier = new RecaptchaVerifier(auth, "clio-login-sms-recaptcha", {
+      size: "invisible",
+    });
+    await verifier.render();
+    recaptchaVerifierRef.current = verifier;
+    return verifier;
   };
 
   const resetMfaState = () => {
@@ -128,12 +186,12 @@ export default function LoginCard() {
       challengeExpiresAt: "",
       phoneNumber: "",
       otpCode: "",
-      otpExpiresAt: "",
-      resendAvailableAt: "",
+      otpRequestedAt: "",
     });
     setPendingFirebaseUser(null);
     setInfoMessage("");
-    setDevOtpCode("");
+    confirmationResultRef.current = null;
+    disposeRecaptchaVerifier();
   };
 
   const completeWorkspaceLogin = async (auth, firebaseUser) => {
@@ -184,15 +242,35 @@ export default function LoginCard() {
     setMfaState({
       challengeToken,
       challengeExpiresAt: String(error?.challengeExpiresAt || ""),
-      phoneNumber: "",
+      phoneNumber: authUser.phoneNumber || "",
       otpCode: "",
-      otpExpiresAt: "",
-      resendAvailableAt: "",
+      otpRequestedAt: "",
     });
     setErrorMessage("");
     setInfoMessage("Register your mobile number and verify OTP to continue login.");
-    setDevOtpCode("");
+    confirmationResultRef.current = null;
+    disposeRecaptchaVerifier();
     return true;
+  };
+
+  const completeFirebaseSmsEnrollment = async (firebaseUser, phoneNumberOverride = "") => {
+    const idToken = await firebaseUser.getIdToken(true);
+    const response = await fetch("/api/auth/mfa/sms/verify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        idToken,
+        challengeToken: mfaState.challengeToken,
+        phoneNumber: String(phoneNumberOverride || mfaState.phoneNumber || "").trim(),
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || "Unable to complete SMS verification.");
+    }
   };
 
   const handleSendOtp = async () => {
@@ -203,44 +281,37 @@ export default function LoginCard() {
     setIsSendingOtp(true);
     setErrorMessage("");
     setInfoMessage("");
-    setDevOtpCode("");
 
     try {
-      const idToken = await pendingFirebaseUser.getIdToken(true);
-      const response = await fetch("/api/auth/mfa/sms/start", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          idToken,
-          challengeToken: mfaState.challengeToken,
-          phoneNumber: mfaState.phoneNumber,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.message || "Unable to send OTP.");
+      const auth = getFirebaseClientAuth();
+      const activeUser = auth.currentUser || pendingFirebaseUser;
+      if (!activeUser) {
+        throw new Error("Firebase session expired. Retry Google sign-in.");
       }
 
-      if (payload?.alreadyVerified) {
-        const auth = getFirebaseClientAuth();
-        await completeWorkspaceLogin(auth, pendingFirebaseUser);
+      const alreadyLinked = activeUser.providerData.some((provider) => provider?.providerId === "phone");
+      if (alreadyLinked && activeUser.phoneNumber) {
+        await completeFirebaseSmsEnrollment(activeUser, activeUser.phoneNumber);
+        await completeWorkspaceLogin(auth, activeUser);
         resetMfaState();
         router.replace("/dashboard");
         router.refresh();
         return;
       }
 
+      const verifier = await getOrCreateRecaptchaVerifier(auth);
+      const confirmationResult = await linkWithPhoneNumber(activeUser, mfaState.phoneNumber, verifier);
+      confirmationResultRef.current = confirmationResult;
       setMfaState((current) => ({
         ...current,
-        otpExpiresAt: String(payload?.otpExpiresAt || ""),
-        resendAvailableAt: String(payload?.resendAvailableAt || ""),
+        otpRequestedAt: new Date().toISOString(),
       }));
-      setInfoMessage(payload?.message || "OTP sent.");
-      setDevOtpCode(String(payload?.devOtpCode || ""));
+      setInfoMessage("OTP sent via Firebase. Enter the code to continue.");
     } catch (error) {
-      setErrorMessage(error?.message || "Unable to send OTP.");
+      const mapped = mapLoginError(error);
+      setErrorMessage(mapped);
+      disposeRecaptchaVerifier();
+      confirmationResultRef.current = null;
     } finally {
       setIsSendingOtp(false);
     }
@@ -257,24 +328,19 @@ export default function LoginCard() {
 
     try {
       const auth = getFirebaseClientAuth();
-      const idToken = await pendingFirebaseUser.getIdToken(true);
-      const verifyResponse = await fetch("/api/auth/mfa/sms/verify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          idToken,
-          challengeToken: mfaState.challengeToken,
-          otpCode: mfaState.otpCode,
-        }),
-      });
-      const verifyPayload = await verifyResponse.json().catch(() => ({}));
-      if (!verifyResponse.ok) {
-        throw new Error(verifyPayload?.message || "Unable to verify OTP.");
+      const confirmationResult = confirmationResultRef.current;
+      if (!confirmationResult) {
+        throw new Error("Request OTP first before entering a verification code.");
       }
 
-      await completeWorkspaceLogin(auth, pendingFirebaseUser);
+      const credentialResult = await confirmationResult.confirm(mfaState.otpCode.trim());
+      const verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
+      if (!verifiedUser) {
+        throw new Error("Firebase session expired. Retry Google sign-in.");
+      }
+
+      await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
+      await completeWorkspaceLogin(auth, verifiedUser);
       resetMfaState();
       router.replace("/dashboard");
       router.refresh();
@@ -282,7 +348,7 @@ export default function LoginCard() {
       if (activateSmsEnrollment(error, pendingFirebaseUser)) {
         setInfoMessage("SMS challenge refreshed. Request OTP again.");
       } else {
-        setErrorMessage(error?.message || "Unable to verify OTP.");
+        setErrorMessage(mapLoginError(error));
       }
     } finally {
       setIsVerifyingOtp(false);
@@ -357,6 +423,8 @@ export default function LoginCard() {
     processRedirectResult();
     return () => {
       active = false;
+      disposeRecaptchaVerifier();
+      confirmationResultRef.current = null;
     };
   }, [router]);
 
@@ -364,7 +432,6 @@ export default function LoginCard() {
     setIsSubmitting(true);
     setErrorMessage("");
     setInfoMessage("");
-    setDevOtpCode("");
 
     let auth;
     let provider;
@@ -477,6 +544,8 @@ export default function LoginCard() {
               </button>
             ) : (
               <div className="space-y-3 rounded-2xl border border-[#d7e5f5] bg-[#f8fbff] p-4">
+                <div id="clio-login-sms-recaptcha" className="sr-only" />
+
                 <label className="space-y-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Mobile Number</span>
                   <input
@@ -549,22 +618,16 @@ export default function LoginCard() {
               <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">{infoMessage}</p>
             ) : null}
 
-            {mfaState.otpExpiresAt ? (
+            {mfaState.otpRequestedAt ? (
               <p className="text-xs text-slate-500">
-                OTP Expires:{" "}
-                {new Intl.DateTimeFormat("en-US", {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(mfaState.otpExpiresAt))}
+                OTP requested: {new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(mfaState.otpRequestedAt))}
               </p>
             ) : null}
 
-            {devOtpCode ? <p className="text-xs text-amber-700">Dev OTP: {devOtpCode}</p> : null}
-
             <p className="text-xs text-slate-500">
               {mfaState.challengeToken
-                ? "After OTP verification, your account will continue to secure Google sign-in."
-                : "Complete your invite verification (including phone OTP) first, then use the same invited email for Google sign-in."}
+                ? "SMS OTP is handled by Firebase Phone Authentication. After verification, login continues automatically."
+                : "Complete your invite verification first, then use the same invited email for Google sign-in."}
             </p>
           </div>
         </div>
