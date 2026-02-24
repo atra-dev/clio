@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   GoogleAuthProvider,
   getRedirectResult,
+  onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
   signOut,
@@ -16,6 +17,60 @@ export default function LoginCard() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
+
+  const setRedirectPending = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.sessionStorage.setItem(REDIRECT_PENDING_KEY, "1");
+  };
+
+  const clearRedirectPending = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.sessionStorage.removeItem(REDIRECT_PENDING_KEY);
+  };
+
+  const hasRedirectPending = () => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.sessionStorage.getItem(REDIRECT_PENDING_KEY) === "1";
+  };
+
+  const waitForSignedInUser = async (auth, timeoutMs = 5000) => {
+    if (auth.currentUser) {
+      return auth.currentUser;
+    }
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let unsubscribe = () => {};
+
+      const finish = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        unsubscribe();
+        resolve(value || null);
+      };
+
+      const timeout = window.setTimeout(() => {
+        finish(null);
+      }, timeoutMs);
+
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        if (!user) {
+          return;
+        }
+        window.clearTimeout(timeout);
+        finish(user);
+      });
+    });
+  };
 
   const buildGoogleProvider = () => {
     const provider = new GoogleAuthProvider();
@@ -75,19 +130,45 @@ export default function LoginCard() {
     const processRedirectResult = async () => {
       try {
         const auth = getFirebaseClientAuth();
+        const redirectWasPending = hasRedirectPending();
         const redirectResult = await getRedirectResult(auth);
-        if (!active || !redirectResult?.user) {
+        if (!active) {
           return;
         }
+
+        const redirectUser = redirectResult?.user || null;
+        if (redirectUser) {
+          setIsSubmitting(true);
+          setErrorMessage("");
+          clearRedirectPending();
+          await completeWorkspaceLogin(auth, redirectUser);
+          router.replace("/dashboard");
+          router.refresh();
+          return;
+        }
+
+        if (!redirectWasPending) {
+          return;
+        }
+
         setIsSubmitting(true);
+        const fallbackUser = await waitForSignedInUser(auth, 5000);
+        if (!fallbackUser) {
+          clearRedirectPending();
+          setErrorMessage("Google sign-in did not complete. Please try again.");
+          return;
+        }
+
         setErrorMessage("");
-        await completeWorkspaceLogin(auth, redirectResult.user);
+        clearRedirectPending();
+        await completeWorkspaceLogin(auth, fallbackUser);
         router.replace("/dashboard");
         router.refresh();
       } catch (error) {
         if (!active) {
           return;
         }
+        clearRedirectPending();
         setErrorMessage(mapLoginError(error));
       } finally {
         if (active) {
@@ -119,18 +200,21 @@ export default function LoginCard() {
       const shouldPreferRedirect = !isLocalHost;
 
       if (shouldPreferRedirect) {
+        setRedirectPending();
         await signInWithRedirect(auth, provider);
         return;
       }
 
       const popupResult = await signInWithPopup(auth, provider);
       if (popupResult?.user) {
+        clearRedirectPending();
         await completeWorkspaceLogin(auth, popupResult.user);
         router.replace("/dashboard");
         router.refresh();
         return;
       }
 
+      setRedirectPending();
       await signInWithRedirect(auth, provider);
       return;
     } catch (error) {
@@ -143,14 +227,17 @@ export default function LoginCard() {
 
       if (canFallbackToRedirect && auth && provider) {
         try {
+          setRedirectPending();
           await signInWithRedirect(auth, provider);
           return;
         } catch (redirectError) {
+          clearRedirectPending();
           setErrorMessage(mapLoginError(redirectError));
           return;
         }
       }
 
+      clearRedirectPending();
       setErrorMessage(mapLoginError(error));
     } finally {
       setIsSubmitting(false);
