@@ -16,7 +16,20 @@ import { getFirebaseClientAuth } from "@/lib/firebase-client-auth";
 export default function LoginCard() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
+  const [devOtpCode, setDevOtpCode] = useState("");
+  const [mfaState, setMfaState] = useState({
+    challengeToken: "",
+    challengeExpiresAt: "",
+    phoneNumber: "",
+    otpCode: "",
+    otpExpiresAt: "",
+    resendAvailableAt: "",
+  });
+  const [pendingFirebaseUser, setPendingFirebaseUser] = useState(null);
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
 
   const setRedirectPending = () => {
@@ -81,6 +94,10 @@ export default function LoginCard() {
   };
 
   const mapLoginError = (error) => {
+    if (error?.code === "sms_mfa_required") {
+      return "SMS authentication is required before login.";
+    }
+
     const rawCode = String(error?.code || "").trim();
     const rawMessage = String(error?.message || "").trim();
 
@@ -105,6 +122,20 @@ export default function LoginCard() {
     return error?.message || "Unable to complete Google sign-in.";
   };
 
+  const resetMfaState = () => {
+    setMfaState({
+      challengeToken: "",
+      challengeExpiresAt: "",
+      phoneNumber: "",
+      otpCode: "",
+      otpExpiresAt: "",
+      resendAvailableAt: "",
+    });
+    setPendingFirebaseUser(null);
+    setInfoMessage("");
+    setDevOtpCode("");
+  };
+
   const completeWorkspaceLogin = async (auth, firebaseUser) => {
     const idToken = await firebaseUser.getIdToken(true);
 
@@ -120,8 +151,152 @@ export default function LoginCard() {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
+      if (payload?.reason === "sms_mfa_required") {
+        const smsError = new Error(payload.message || "SMS authentication is required before login.");
+        smsError.code = "sms_mfa_required";
+        smsError.challengeToken = String(payload?.challengeToken || "");
+        smsError.challengeExpiresAt = String(payload?.challengeExpiresAt || "");
+        smsError.firebaseUser = firebaseUser;
+        throw smsError;
+      }
+
       await signOut(auth).catch(() => {});
       throw new Error(payload.message || "Unable to log in.");
+    }
+  };
+
+  const activateSmsEnrollment = (error, fallbackUser = null) => {
+    if (error?.code !== "sms_mfa_required") {
+      return false;
+    }
+
+    const challengeToken = String(error?.challengeToken || "").trim();
+    if (!challengeToken) {
+      return false;
+    }
+
+    const authUser = error?.firebaseUser || fallbackUser || null;
+    if (!authUser) {
+      return false;
+    }
+
+    setPendingFirebaseUser(authUser);
+    setMfaState({
+      challengeToken,
+      challengeExpiresAt: String(error?.challengeExpiresAt || ""),
+      phoneNumber: "",
+      otpCode: "",
+      otpExpiresAt: "",
+      resendAvailableAt: "",
+    });
+    setErrorMessage("");
+    setInfoMessage("Register your mobile number and verify OTP to continue login.");
+    setDevOtpCode("");
+    return true;
+  };
+
+  const handleSendOtp = async () => {
+    if (!pendingFirebaseUser || !mfaState.challengeToken || !mfaState.phoneNumber || isSendingOtp) {
+      return;
+    }
+
+    setIsSendingOtp(true);
+    setErrorMessage("");
+    setInfoMessage("");
+    setDevOtpCode("");
+
+    try {
+      const idToken = await pendingFirebaseUser.getIdToken(true);
+      const response = await fetch("/api/auth/mfa/sms/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idToken,
+          challengeToken: mfaState.challengeToken,
+          phoneNumber: mfaState.phoneNumber,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to send OTP.");
+      }
+
+      if (payload?.alreadyVerified) {
+        const auth = getFirebaseClientAuth();
+        await completeWorkspaceLogin(auth, pendingFirebaseUser);
+        resetMfaState();
+        router.replace("/dashboard");
+        router.refresh();
+        return;
+      }
+
+      setMfaState((current) => ({
+        ...current,
+        otpExpiresAt: String(payload?.otpExpiresAt || ""),
+        resendAvailableAt: String(payload?.resendAvailableAt || ""),
+      }));
+      setInfoMessage(payload?.message || "OTP sent.");
+      setDevOtpCode(String(payload?.devOtpCode || ""));
+    } catch (error) {
+      setErrorMessage(error?.message || "Unable to send OTP.");
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!pendingFirebaseUser || !mfaState.challengeToken || !mfaState.otpCode || isVerifyingOtp) {
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setErrorMessage("");
+    setInfoMessage("");
+
+    try {
+      const auth = getFirebaseClientAuth();
+      const idToken = await pendingFirebaseUser.getIdToken(true);
+      const verifyResponse = await fetch("/api/auth/mfa/sms/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idToken,
+          challengeToken: mfaState.challengeToken,
+          otpCode: mfaState.otpCode,
+        }),
+      });
+      const verifyPayload = await verifyResponse.json().catch(() => ({}));
+      if (!verifyResponse.ok) {
+        throw new Error(verifyPayload?.message || "Unable to verify OTP.");
+      }
+
+      await completeWorkspaceLogin(auth, pendingFirebaseUser);
+      resetMfaState();
+      router.replace("/dashboard");
+      router.refresh();
+    } catch (error) {
+      if (activateSmsEnrollment(error, pendingFirebaseUser)) {
+        setInfoMessage("SMS challenge refreshed. Request OTP again.");
+      } else {
+        setErrorMessage(error?.message || "Unable to verify OTP.");
+      }
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const handleCancelMfa = async () => {
+    try {
+      const auth = getFirebaseClientAuth();
+      await signOut(auth).catch(() => {});
+    } finally {
+      resetMfaState();
+      setErrorMessage("");
+      setInfoMessage("");
     }
   };
 
@@ -169,7 +344,9 @@ export default function LoginCard() {
           return;
         }
         clearRedirectPending();
-        setErrorMessage(mapLoginError(error));
+        if (!activateSmsEnrollment(error)) {
+          setErrorMessage(mapLoginError(error));
+        }
       } finally {
         if (active) {
           setIsSubmitting(false);
@@ -186,6 +363,8 @@ export default function LoginCard() {
   const handleGoogleLogin = async () => {
     setIsSubmitting(true);
     setErrorMessage("");
+    setInfoMessage("");
+    setDevOtpCode("");
 
     let auth;
     let provider;
@@ -221,13 +400,17 @@ export default function LoginCard() {
           return;
         } catch (redirectError) {
           clearRedirectPending();
-          setErrorMessage(mapLoginError(redirectError));
+          if (!activateSmsEnrollment(redirectError)) {
+            setErrorMessage(mapLoginError(redirectError));
+          }
           return;
         }
       }
 
       clearRedirectPending();
-      setErrorMessage(mapLoginError(error));
+      if (!activateSmsEnrollment(error)) {
+        setErrorMessage(mapLoginError(error));
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -254,39 +437,107 @@ export default function LoginCard() {
           </div>
 
           <div className="space-y-2 pt-1">
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Log in to Clio</h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+              {mfaState.challengeToken ? "Set Up SMS Authentication" : "Log in to Clio"}
+            </h2>
             <p className="text-sm text-slate-600">
-              Sign in with your invited and verified work account through Google.
+              {mfaState.challengeToken
+                ? "Register your phone number and complete OTP verification to continue."
+                : "Sign in with your invited and verified work account through Google."}
             </p>
           </div>
 
           <div className="space-y-5 pt-2">
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={isSubmitting}
-              className="relative inline-flex h-12 w-full items-center justify-center rounded-2xl border border-[#d2d6dc] bg-white px-5 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-all duration-200 hover:border-[#c4c8ce] hover:bg-[#f8f9fa] active:scale-[0.997] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1a73e8]/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-65"
-            >
-              <svg viewBox="0 0 18 18" className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2" aria-hidden="true">
-                <path
-                  fill="#4285F4"
-                  d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2086 1.125-.8427 2.0782-1.7977 2.7155v2.2582h2.9082c1.7018-1.5664 2.6859-3.8741 2.6859-6.6146z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1805l-2.9082-2.2582c-.8064.5409-1.8377.8605-3.0482.8605-2.3468 0-4.3341-1.5859-5.0432-3.7168H.9577v2.3332C2.4382 15.98 5.4818 18 9 18z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M3.9568 10.705c-.1809-.5409-.2841-1.1182-.2841-1.705 0-.5868.1032-1.1641.2841-1.705V4.9618H.9577C.3477 6.1732 0 7.5491 0 9c0 1.4509.3477 2.8268.9577 4.0382l2.9991-2.3332z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M9 3.5795c1.3214 0 2.5077.4545 3.4405 1.3455l2.5805-2.5805C13.4632.891 11.4259 0 9 0 5.4818 0 2.4382 2.02.9577 4.9618l2.9991 2.3332C4.6659 5.1641 6.6532 3.5795 9 3.5795z"
-                />
-              </svg>
-              <span>{isSubmitting ? "Signing in..." : "Continue with Google"}</span>
-            </button>
+            {!mfaState.challengeToken ? (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={isSubmitting}
+                className="relative inline-flex h-12 w-full items-center justify-center rounded-2xl border border-[#d2d6dc] bg-white px-5 text-[15px] font-semibold text-[#1f1f1f] shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-all duration-200 hover:border-[#c4c8ce] hover:bg-[#f8f9fa] active:scale-[0.997] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1a73e8]/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-65"
+              >
+                <svg viewBox="0 0 18 18" className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2" aria-hidden="true">
+                  <path
+                    fill="#4285F4"
+                    d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2086 1.125-.8427 2.0782-1.7977 2.7155v2.2582h2.9082c1.7018-1.5664 2.6859-3.8741 2.6859-6.6146z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1805l-2.9082-2.2582c-.8064.5409-1.8377.8605-3.0482.8605-2.3468 0-4.3341-1.5859-5.0432-3.7168H.9577v2.3332C2.4382 15.98 5.4818 18 9 18z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M3.9568 10.705c-.1809-.5409-.2841-1.1182-.2841-1.705 0-.5868.1032-1.1641.2841-1.705V4.9618H.9577C.3477 6.1732 0 7.5491 0 9c0 1.4509.3477 2.8268.9577 4.0382l2.9991-2.3332z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M9 3.5795c1.3214 0 2.5077.4545 3.4405 1.3455l2.5805-2.5805C13.4632.891 11.4259 0 9 0 5.4818 0 2.4382 2.02.9577 4.9618l2.9991 2.3332C4.6659 5.1641 6.6532 3.5795 9 3.5795z"
+                  />
+                </svg>
+                <span>{isSubmitting ? "Signing in..." : "Continue with Google"}</span>
+              </button>
+            ) : (
+              <div className="space-y-3 rounded-2xl border border-[#d7e5f5] bg-[#f8fbff] p-4">
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Mobile Number</span>
+                  <input
+                    type="tel"
+                    value={mfaState.phoneNumber}
+                    onChange={(event) =>
+                      setMfaState((current) => ({
+                        ...current,
+                        phoneNumber: event.target.value,
+                      }))
+                    }
+                    placeholder="+639171234567"
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                    disabled={isSendingOtp || isVerifyingOtp}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleSendOtp}
+                  disabled={isSendingOtp || !mfaState.phoneNumber}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[#0f6bcf] bg-white px-4 text-sm font-semibold text-[#0f6bcf] transition hover:bg-[#eff6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSendingOtp ? "Sending OTP..." : "Send OTP"}
+                </button>
+
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">OTP Code</span>
+                  <input
+                    type="text"
+                    value={mfaState.otpCode}
+                    onChange={(event) =>
+                      setMfaState((current) => ({
+                        ...current,
+                        otpCode: event.target.value,
+                      }))
+                    }
+                    placeholder="6-digit code"
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                    disabled={isSendingOtp || isVerifyingOtp}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleVerifyOtp}
+                  disabled={isVerifyingOtp || mfaState.otpCode.trim().length !== 6}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isVerifyingOtp ? "Verifying OTP..." : "Verify OTP and Continue"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancelMfa}
+                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
             {errorMessage ? (
               <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -294,8 +545,26 @@ export default function LoginCard() {
               </p>
             ) : null}
 
+            {infoMessage ? (
+              <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">{infoMessage}</p>
+            ) : null}
+
+            {mfaState.otpExpiresAt ? (
+              <p className="text-xs text-slate-500">
+                OTP Expires:{" "}
+                {new Intl.DateTimeFormat("en-US", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }).format(new Date(mfaState.otpExpiresAt))}
+              </p>
+            ) : null}
+
+            {devOtpCode ? <p className="text-xs text-amber-700">Dev OTP: {devOtpCode}</p> : null}
+
             <p className="text-xs text-slate-500">
-              Complete your invite verification (including phone OTP) first, then use the same invited email for Google sign-in.
+              {mfaState.challengeToken
+                ? "After OTP verification, your account will continue to secure Google sign-in."
+                : "Complete your invite verification (including phone OTP) first, then use the same invited email for Google sign-in."}
             </p>
           </div>
         </div>

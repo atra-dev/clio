@@ -4,7 +4,7 @@ import { enforceRateLimitByRequest, consumeRateLimit } from "@/lib/api-rate-limi
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
 import { syncFirebaseCustomClaimsForUser } from "@/lib/firebase-custom-claims";
-import { getLoginAccount, markUserLogin } from "@/lib/user-accounts";
+import { createLoginSmsChallenge, getLoginAccount, markUserLogin } from "@/lib/user-accounts";
 
 function applyRateLimitHeaders(response, rateLimitResult) {
   if (!rateLimitResult?.headers || typeof rateLimitResult.headers !== "object") {
@@ -236,6 +236,36 @@ export async function POST(request) {
     }
 
     if (smsMfaRequired && !account.phoneVerifiedAt) {
+      let loginMfaChallenge = null;
+      try {
+        loginMfaChallenge = await createLoginSmsChallenge({
+          email: normalizedEmail,
+        });
+      } catch (error) {
+        const challengeReason = error instanceof Error ? error.message : "mfa_challenge_create_failed";
+        await recordAuditEvent({
+          activityName: "Login attempt rejected: SMS challenge creation failed",
+          status: "Failed",
+          module: "Authentication",
+          performedBy: normalizedEmail,
+          sensitivity: "Sensitive",
+          metadata: {
+            reason: challengeReason,
+            authProvider: "google",
+            firebaseUid: firebaseIdentity.uid,
+          },
+          request,
+        });
+
+        return jsonResponse(
+          {
+            message: "SMS authentication setup is temporarily unavailable. Please retry sign-in.",
+            reason: "sms_mfa_setup_unavailable",
+          },
+          { status: 503, rateLimit: activeRateLimit },
+        );
+      }
+
       await recordAuditEvent({
         activityName: "Login attempt rejected: SMS verification required",
         status: "Rejected",
@@ -254,9 +284,10 @@ export async function POST(request) {
 
       return jsonResponse(
         {
-          message:
-            "SMS authentication is required before login. Open your invite verification link and complete phone verification.",
+          message: "SMS authentication is required before login. Complete phone OTP verification to continue.",
           reason: "sms_mfa_required",
+          challengeToken: loginMfaChallenge.challengeToken,
+          challengeExpiresAt: loginMfaChallenge.challengeExpiresAt,
         },
         { status: 403, rateLimit: activeRateLimit },
       );

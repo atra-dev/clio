@@ -29,6 +29,7 @@ const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const DEFAULT_OTP_TTL_SECONDS = 300;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 const DEFAULT_OTP_RESEND_COOLDOWN_SECONDS = 60;
+const DEFAULT_LOGIN_MFA_CHALLENGE_TTL_SECONDS = 600;
 const LEGACY_LOCAL_ACCOUNT_EMAILS = new Set([
   "superadmin@clio.local",
   "temp.admin@clio.local",
@@ -223,6 +224,13 @@ function getOtpResendCooldownSeconds() {
   });
 }
 
+function getLoginMfaChallengeTtlSeconds() {
+  return envInt("CLIO_LOGIN_MFA_CHALLENGE_TTL_SECONDS", DEFAULT_LOGIN_MFA_CHALLENGE_TTL_SECONDS, {
+    min: 120,
+    max: 1800,
+  });
+}
+
 function normalizePhoneNumber(value) {
   const raw = String(value || "").trim();
   if (!raw) {
@@ -309,6 +317,10 @@ function normalizeInviteToken(value) {
     return "";
   }
   return token;
+}
+
+function normalizeLoginMfaChallengeToken(value) {
+  return normalizeInviteToken(value);
 }
 
 function maskEmail(value) {
@@ -457,6 +469,28 @@ function normalizeUserRecord(user) {
   } catch {
     profilePhotoStoragePath = null;
   }
+  const rawLoginMfa = user?.loginMfa && typeof user.loginMfa === "object" ? user.loginMfa : null;
+  const loginMfaChallengeTokenHash =
+    typeof rawLoginMfa?.challengeTokenHash === "string" ? rawLoginMfa.challengeTokenHash : null;
+  const loginMfaChallengeExpiresAt = normalizeIsoTimestamp(rawLoginMfa?.challengeExpiresAt);
+  const loginMfa = loginMfaChallengeTokenHash
+    ? {
+        challengeTokenHash: loginMfaChallengeTokenHash,
+        challengeExpiresAt: loginMfaChallengeExpiresAt || null,
+        phoneMasked: typeof rawLoginMfa?.phoneMasked === "string" ? rawLoginMfa.phoneMasked : null,
+        phoneLast4: typeof rawLoginMfa?.phoneLast4 === "string" ? rawLoginMfa.phoneLast4 : null,
+        phoneHash: typeof rawLoginMfa?.phoneHash === "string" ? rawLoginMfa.phoneHash : null,
+        otpHash: typeof rawLoginMfa?.otpHash === "string" ? rawLoginMfa.otpHash : null,
+        otpExpiresAt: normalizeIsoTimestamp(rawLoginMfa?.otpExpiresAt) || null,
+        otpRequestedAt: normalizeIsoTimestamp(rawLoginMfa?.otpRequestedAt) || null,
+        otpAttemptCount: Number.isFinite(rawLoginMfa?.otpAttemptCount) ? Math.max(0, rawLoginMfa.otpAttemptCount) : 0,
+        otpMaxAttempts: Number.isFinite(rawLoginMfa?.otpMaxAttempts)
+          ? Math.max(1, rawLoginMfa.otpMaxAttempts)
+          : getOtpMaxAttempts(),
+        resendAvailableAt: normalizeIsoTimestamp(rawLoginMfa?.resendAvailableAt) || null,
+        updatedAt: normalizeIsoTimestamp(rawLoginMfa?.updatedAt) || null,
+      }
+    : null;
 
   return {
     id: typeof user?.id === "string" && user.id.trim().length > 0 ? user.id : email,
@@ -484,6 +518,7 @@ function normalizeUserRecord(user) {
     profilePhotoDataUrl,
     profilePhotoStoragePath,
     profileUpdatedAt: typeof user?.profileUpdatedAt === "string" ? user.profileUpdatedAt : null,
+    loginMfa,
     updatedAt,
     source: user?.source === "bootstrap" ? "bootstrap" : "invite",
   };
@@ -2166,6 +2201,477 @@ async function completeInviteSmsVerificationInFile({ token, otpCode }) {
   };
 }
 
+async function createLoginSmsChallengeInFirestore(db, { email }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedEmail);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    throw new Error("user_not_found");
+  }
+
+  const normalizedUser = normalizeFirestoreUser(snapshot.id, snapshot.data());
+  if (!normalizedUser) {
+    throw new Error("user_not_found");
+  }
+
+  if (normalizedUser.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (normalizedUser.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const challengeToken = createInviteToken();
+  const timestamp = nowIso();
+  const challengeExpiresAt = new Date(Date.now() + getLoginMfaChallengeTtlSeconds() * 1000).toISOString();
+  const loginMfa = {
+    challengeTokenHash: hashValue("login_mfa_challenge", challengeToken),
+    challengeExpiresAt,
+    phoneMasked: null,
+    phoneLast4: null,
+    phoneHash: null,
+    otpHash: null,
+    otpExpiresAt: null,
+    otpRequestedAt: null,
+    otpAttemptCount: 0,
+    otpMaxAttempts: getOtpMaxAttempts(),
+    resendAvailableAt: null,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, {
+    loginMfa,
+    updatedAt: timestamp,
+  });
+
+  return {
+    challengeToken,
+    challengeExpiresAt,
+  };
+}
+
+async function createLoginSmsChallengeInFile({ email }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.email === normalizedEmail);
+  if (!user) {
+    throw new Error("user_not_found");
+  }
+
+  if (user.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (user.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const challengeToken = createInviteToken();
+  const timestamp = nowIso();
+  const challengeExpiresAt = new Date(Date.now() + getLoginMfaChallengeTtlSeconds() * 1000).toISOString();
+  user.loginMfa = {
+    challengeTokenHash: hashValue("login_mfa_challenge", challengeToken),
+    challengeExpiresAt,
+    phoneMasked: null,
+    phoneLast4: null,
+    phoneHash: null,
+    otpHash: null,
+    otpExpiresAt: null,
+    otpRequestedAt: null,
+    otpAttemptCount: 0,
+    otpMaxAttempts: getOtpMaxAttempts(),
+    resendAvailableAt: null,
+    updatedAt: timestamp,
+  };
+  user.updatedAt = timestamp;
+  await writeStore(store);
+
+  return {
+    challengeToken,
+    challengeExpiresAt,
+  };
+}
+
+function resolveLoginMfaState(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const challengeTokenHash = typeof raw.challengeTokenHash === "string" ? raw.challengeTokenHash : "";
+  if (!challengeTokenHash) {
+    return null;
+  }
+  return {
+    challengeTokenHash,
+    challengeExpiresAt: normalizeIsoTimestamp(raw.challengeExpiresAt) || "",
+    phoneMasked: typeof raw.phoneMasked === "string" ? raw.phoneMasked : "",
+    phoneLast4: typeof raw.phoneLast4 === "string" ? raw.phoneLast4 : "",
+    phoneHash: typeof raw.phoneHash === "string" ? raw.phoneHash : "",
+    otpHash: typeof raw.otpHash === "string" ? raw.otpHash : "",
+    otpExpiresAt: normalizeIsoTimestamp(raw.otpExpiresAt) || "",
+    otpRequestedAt: normalizeIsoTimestamp(raw.otpRequestedAt) || "",
+    otpAttemptCount: Number.isFinite(raw.otpAttemptCount) ? Math.max(0, raw.otpAttemptCount) : 0,
+    otpMaxAttempts: Number.isFinite(raw.otpMaxAttempts) ? Math.max(1, raw.otpMaxAttempts) : getOtpMaxAttempts(),
+    resendAvailableAt: normalizeIsoTimestamp(raw.resendAvailableAt) || "",
+    updatedAt: normalizeIsoTimestamp(raw.updatedAt) || "",
+  };
+}
+
+function verifyLoginMfaChallenge({ challengeToken, loginMfa }) {
+  const normalizedToken = normalizeLoginMfaChallengeToken(challengeToken);
+  if (!normalizedToken) {
+    throw new Error("invalid_mfa_challenge");
+  }
+
+  const state = resolveLoginMfaState(loginMfa);
+  if (!state?.challengeTokenHash) {
+    throw new Error("invalid_mfa_challenge");
+  }
+
+  const expectedChallengeHash = hashValue("login_mfa_challenge", normalizedToken);
+  if (!safeEqual(expectedChallengeHash, state.challengeTokenHash)) {
+    throw new Error("invalid_mfa_challenge");
+  }
+
+  if (!state.challengeExpiresAt || new Date(state.challengeExpiresAt).getTime() <= Date.now()) {
+    throw new Error("invalid_mfa_challenge");
+  }
+
+  return {
+    normalizedToken,
+    state,
+  };
+}
+
+async function startLoginSmsVerificationInFirestore(db, { email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  if (!normalizedPhone) {
+    throw new Error("invalid_phone_number");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedEmail);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    throw new Error("user_not_found");
+  }
+
+  const rawUser = snapshot.data() || {};
+  const normalizedUser = normalizeFirestoreUser(snapshot.id, rawUser);
+  if (!normalizedUser) {
+    throw new Error("user_not_found");
+  }
+
+  if (normalizedUser.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (normalizedUser.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const { normalizedToken, state } = verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: rawUser.loginMfa,
+  });
+
+  if (state.resendAvailableAt && new Date(state.resendAvailableAt).getTime() > Date.now()) {
+    throw new Error("otp_cooldown");
+  }
+
+  const timestamp = nowIso();
+  const otpCode = generateOtpCode();
+  const otpExpiresAt = new Date(Date.now() + getOtpTtlSeconds() * 1000).toISOString();
+  const nextLoginMfa = {
+    ...state,
+    phoneMasked: maskPhoneNumber(normalizedPhone),
+    phoneLast4: getPhoneLast4(normalizedPhone),
+    phoneHash: hashPhoneNumber(normalizedPhone),
+    otpHash: hashOtpCode({ token: normalizedToken, code: otpCode }),
+    otpExpiresAt,
+    otpRequestedAt: timestamp,
+    otpAttemptCount: 0,
+    otpMaxAttempts: getOtpMaxAttempts(),
+    resendAvailableAt: new Date(Date.now() + getOtpResendCooldownSeconds() * 1000).toISOString(),
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, {
+    loginMfa: nextLoginMfa,
+    updatedAt: timestamp,
+  });
+
+  return {
+    phoneNumber: normalizedPhone,
+    phoneMasked: nextLoginMfa.phoneMasked,
+    otpCode,
+    otpExpiresAt,
+    resendAvailableAt: nextLoginMfa.resendAvailableAt,
+  };
+}
+
+async function startLoginSmsVerificationInFile({ email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  if (!normalizedPhone) {
+    throw new Error("invalid_phone_number");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.email === normalizedEmail);
+  if (!user) {
+    throw new Error("user_not_found");
+  }
+
+  if (user.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (user.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const { normalizedToken, state } = verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: user.loginMfa,
+  });
+
+  if (state.resendAvailableAt && new Date(state.resendAvailableAt).getTime() > Date.now()) {
+    throw new Error("otp_cooldown");
+  }
+
+  const timestamp = nowIso();
+  const otpCode = generateOtpCode();
+  const otpExpiresAt = new Date(Date.now() + getOtpTtlSeconds() * 1000).toISOString();
+  const nextLoginMfa = {
+    ...state,
+    phoneMasked: maskPhoneNumber(normalizedPhone),
+    phoneLast4: getPhoneLast4(normalizedPhone),
+    phoneHash: hashPhoneNumber(normalizedPhone),
+    otpHash: hashOtpCode({ token: normalizedToken, code: otpCode }),
+    otpExpiresAt,
+    otpRequestedAt: timestamp,
+    otpAttemptCount: 0,
+    otpMaxAttempts: getOtpMaxAttempts(),
+    resendAvailableAt: new Date(Date.now() + getOtpResendCooldownSeconds() * 1000).toISOString(),
+    updatedAt: timestamp,
+  };
+
+  user.loginMfa = nextLoginMfa;
+  user.updatedAt = timestamp;
+  await writeStore(store);
+
+  return {
+    phoneNumber: normalizedPhone,
+    phoneMasked: nextLoginMfa.phoneMasked,
+    otpCode,
+    otpExpiresAt,
+    resendAvailableAt: nextLoginMfa.resendAvailableAt,
+  };
+}
+
+async function completeLoginSmsVerificationInFirestore(db, { email, challengeToken, otpCode }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  if (!isValidOtpCode(otpCode)) {
+    throw new Error("invalid_otp");
+  }
+
+  const userRef = doc(db, getUsersCollectionName(), normalizedEmail);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    throw new Error("user_not_found");
+  }
+
+  const rawUser = snapshot.data() || {};
+  const normalizedUser = normalizeFirestoreUser(snapshot.id, rawUser);
+  if (!normalizedUser) {
+    throw new Error("user_not_found");
+  }
+
+  if (normalizedUser.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (normalizedUser.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const { normalizedToken, state } = verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: rawUser.loginMfa,
+  });
+
+  if (!state.otpHash || !state.otpExpiresAt) {
+    throw new Error("otp_not_requested");
+  }
+
+  if (new Date(state.otpExpiresAt).getTime() <= Date.now()) {
+    await updateDoc(userRef, {
+      loginMfa: {
+        ...state,
+        otpHash: null,
+        otpExpiresAt: null,
+        updatedAt: nowIso(),
+      },
+      updatedAt: nowIso(),
+    });
+    throw new Error("otp_expired");
+  }
+
+  const maxAttempts = Number.isFinite(state.otpMaxAttempts) ? Math.max(1, state.otpMaxAttempts) : getOtpMaxAttempts();
+  const currentAttempts = Number.isFinite(state.otpAttemptCount) ? Math.max(0, state.otpAttemptCount) : 0;
+  if (currentAttempts >= maxAttempts) {
+    throw new Error("otp_attempts_exceeded");
+  }
+
+  const expectedHash = hashOtpCode({
+    token: normalizedToken,
+    code: String(otpCode).trim(),
+  });
+  if (!safeEqual(expectedHash, state.otpHash)) {
+    const nextAttemptCount = currentAttempts + 1;
+    const timestamp = nowIso();
+    await updateDoc(userRef, {
+      loginMfa: {
+        ...state,
+        otpAttemptCount: nextAttemptCount,
+        updatedAt: timestamp,
+      },
+      updatedAt: timestamp,
+    });
+
+    if (nextAttemptCount >= maxAttempts) {
+      throw new Error("otp_attempts_exceeded");
+    }
+
+    throw new Error("invalid_otp");
+  }
+
+  const timestamp = nowIso();
+  const nextPayload = {
+    phoneVerifiedAt: timestamp,
+    phoneLast4: state.phoneLast4 || null,
+    phoneHash: state.phoneHash || null,
+    verificationMethod: "sms",
+    loginMfa: null,
+    updatedAt: timestamp,
+  };
+
+  await updateDoc(userRef, nextPayload);
+
+  const updated = normalizeFirestoreUser(snapshot.id, {
+    ...rawUser,
+    ...nextPayload,
+  });
+
+  return updated ? toPublicUser(updated) : null;
+}
+
+async function completeLoginSmsVerificationInFile({ email, challengeToken, otpCode }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("invalid_email");
+  }
+
+  if (!isValidOtpCode(otpCode)) {
+    throw new Error("invalid_otp");
+  }
+
+  const store = await loadStore();
+  const user = store.users.find((item) => item.email === normalizedEmail);
+  if (!user) {
+    throw new Error("user_not_found");
+  }
+
+  if (user.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  if (user.phoneVerifiedAt) {
+    throw new Error("already_verified");
+  }
+
+  const { normalizedToken, state } = verifyLoginMfaChallenge({
+    challengeToken,
+    loginMfa: user.loginMfa,
+  });
+
+  if (!state.otpHash || !state.otpExpiresAt) {
+    throw new Error("otp_not_requested");
+  }
+
+  if (new Date(state.otpExpiresAt).getTime() <= Date.now()) {
+    user.loginMfa = {
+      ...state,
+      otpHash: null,
+      otpExpiresAt: null,
+      updatedAt: nowIso(),
+    };
+    user.updatedAt = nowIso();
+    await writeStore(store);
+    throw new Error("otp_expired");
+  }
+
+  const maxAttempts = Number.isFinite(state.otpMaxAttempts) ? Math.max(1, state.otpMaxAttempts) : getOtpMaxAttempts();
+  const currentAttempts = Number.isFinite(state.otpAttemptCount) ? Math.max(0, state.otpAttemptCount) : 0;
+  if (currentAttempts >= maxAttempts) {
+    throw new Error("otp_attempts_exceeded");
+  }
+
+  const expectedHash = hashOtpCode({
+    token: normalizedToken,
+    code: String(otpCode).trim(),
+  });
+  if (!safeEqual(expectedHash, state.otpHash)) {
+    const timestamp = nowIso();
+    const nextAttemptCount = currentAttempts + 1;
+    user.loginMfa = {
+      ...state,
+      otpAttemptCount: nextAttemptCount,
+      updatedAt: timestamp,
+    };
+    user.updatedAt = timestamp;
+    await writeStore(store);
+
+    if (nextAttemptCount >= maxAttempts) {
+      throw new Error("otp_attempts_exceeded");
+    }
+
+    throw new Error("invalid_otp");
+  }
+
+  const timestamp = nowIso();
+  user.phoneVerifiedAt = timestamp;
+  user.phoneLast4 = state.phoneLast4 || null;
+  user.phoneHash = state.phoneHash || null;
+  user.verificationMethod = "sms";
+  user.loginMfa = null;
+  user.updatedAt = timestamp;
+  await writeStore(store);
+
+  return toPublicUser(user);
+}
+
 async function completeInviteEmailVerificationInFirestore(db, { token }) {
   const normalizedToken = normalizeInviteToken(token);
   if (!normalizedToken) {
@@ -2430,6 +2936,126 @@ export async function verifyInviteEmail({ token }) {
   });
 
   return result;
+}
+
+export async function createLoginSmsChallenge({ email }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new Error("invalid_email");
+  }
+
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await createLoginSmsChallengeInFirestore(db, { email: normalizedEmail });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (["invalid_email", "user_not_found", "account_disabled", "already_verified"].includes(reason)) {
+        throw error;
+      }
+      return await createLoginSmsChallengeInFile({ email: normalizedEmail });
+    }
+  }
+
+  return await createLoginSmsChallengeInFile({ email: normalizedEmail });
+}
+
+export async function startLoginSmsVerification({ email, challengeToken, phoneNumber }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new Error("invalid_email");
+  }
+
+  const businessErrors = new Set([
+    "invalid_email",
+    "invalid_phone_number",
+    "invalid_mfa_challenge",
+    "otp_cooldown",
+    "user_not_found",
+    "account_disabled",
+    "already_verified",
+  ]);
+
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await startLoginSmsVerificationInFirestore(db, {
+        email: normalizedEmail,
+        challengeToken,
+        phoneNumber,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (businessErrors.has(reason)) {
+        throw error;
+      }
+      return await startLoginSmsVerificationInFile({
+        email: normalizedEmail,
+        challengeToken,
+        phoneNumber,
+      });
+    }
+  }
+
+  return await startLoginSmsVerificationInFile({
+    email: normalizedEmail,
+    challengeToken,
+    phoneNumber,
+  });
+}
+
+export async function completeLoginSmsVerification({ email, challengeToken, otpCode }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new Error("invalid_email");
+  }
+
+  const businessErrors = new Set([
+    "invalid_email",
+    "invalid_mfa_challenge",
+    "invalid_otp",
+    "otp_not_requested",
+    "otp_expired",
+    "otp_attempts_exceeded",
+    "user_not_found",
+    "account_disabled",
+    "already_verified",
+  ]);
+
+  let updatedUser = null;
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      updatedUser = await completeLoginSmsVerificationInFirestore(db, {
+        email: normalizedEmail,
+        challengeToken,
+        otpCode,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (businessErrors.has(reason)) {
+        throw error;
+      }
+      updatedUser = await completeLoginSmsVerificationInFile({
+        email: normalizedEmail,
+        challengeToken,
+        otpCode,
+      });
+    }
+  } else {
+    updatedUser = await completeLoginSmsVerificationInFile({
+      email: normalizedEmail,
+      challengeToken,
+      otpCode,
+    });
+  }
+
+  await syncCustomClaimsForPublicUser(updatedUser, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return updatedUser;
 }
 
 export async function revokeInviteById(inviteId) {
