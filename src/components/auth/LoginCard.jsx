@@ -32,6 +32,7 @@ export default function LoginCard() {
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
+  const REDIRECT_USER_WAIT_TIMEOUT_MS = 15000;
 
   const setRedirectPending = () => {
     if (typeof window === "undefined") {
@@ -134,7 +135,7 @@ export default function LoginCard() {
       return "Firebase API key is invalid. Check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local.";
     }
     if (rawCode === "auth/internal-error") {
-      return "Google sign-in did not complete. Please try again.";
+      return "Authentication flow was interrupted. Click Continue with Google again.";
     }
     if (rawCode === "auth/invalid-app-credential") {
       return "SMS authentication setup failed. Check Firebase Phone provider setup and Authorized domains.";
@@ -419,10 +420,10 @@ export default function LoginCard() {
         }
 
         setIsSubmitting(true);
-        const fallbackUser = await waitForSignedInUser(auth, 5000);
+        const fallbackUser = await waitForSignedInUser(auth, REDIRECT_USER_WAIT_TIMEOUT_MS);
         if (!fallbackUser) {
           clearRedirectPending();
-          setErrorMessage("Google sign-in did not complete. Please try again.");
+          setInfoMessage("Sign-in session was not completed. Click Continue with Google to retry.");
           return;
         }
 
