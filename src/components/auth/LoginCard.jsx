@@ -194,17 +194,6 @@ export default function LoginCard() {
       auth = getFirebaseClientAuth();
       provider = buildGoogleProvider();
 
-      const isLocalHost =
-        typeof window !== "undefined" &&
-        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-      const shouldPreferRedirect = !isLocalHost;
-
-      if (shouldPreferRedirect) {
-        setRedirectPending();
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-
       const popupResult = await signInWithPopup(auth, provider);
       if (popupResult?.user) {
         clearRedirectPending();
