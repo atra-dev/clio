@@ -137,7 +137,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Google account email must be verified." },
+        {
+          message: "Google account email must be verified.",
+          reason: "email_not_verified",
+        },
         { status: 403, rateLimit: activeRateLimit },
       );
     }
@@ -160,7 +163,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Only Google sign-in is allowed for this workspace." },
+        {
+          message: "Only Google sign-in is allowed for this workspace.",
+          reason: "provider_not_allowed",
+        },
         { status: 403, rateLimit: activeRateLimit },
       );
     }
@@ -182,7 +188,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Account is not provisioned for this workspace." },
+        {
+          message: "Account is not provisioned for this workspace.",
+          reason: "role_not_provisioned",
+        },
         { status: 403, rateLimit: activeRateLimit },
       );
     }
@@ -204,7 +213,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Account is disabled. Please contact Super Admin." },
+        {
+          message: "Account is disabled. Please contact Super Admin.",
+          reason: "account_disabled",
+        },
         { status: 403, rateLimit: activeRateLimit },
       );
     }
@@ -230,6 +242,7 @@ export async function POST(request) {
       return jsonResponse(
         {
           message: "Account invitation must be verified first. Open your invite verification link and complete OTP.",
+          reason: "invite_email_verification_required",
         },
         { status: 403, rateLimit: activeRateLimit },
       );
@@ -310,7 +323,10 @@ export async function POST(request) {
       });
 
       return jsonResponse(
-        { message: "Account is not active yet. Please contact Super Admin." },
+        {
+          message: "Account is not active yet. Please contact Super Admin.",
+          reason: "account_inactive",
+        },
         { status: 403, rateLimit: activeRateLimit },
       );
     }

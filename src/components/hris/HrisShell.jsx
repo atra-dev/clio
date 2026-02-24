@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { signOut as signOutFirebase } from "firebase/auth";
 import BrandMark from "@/components/ui/BrandMark";
 import ModuleSubTabAnchors from "@/components/hris/ModuleSubTabAnchors";
 import { useToast } from "@/components/ui/ToastProvider";
@@ -11,6 +12,7 @@ import { getModulesForRole, normalizeRole } from "@/lib/hris";
 import { canAccessModule } from "@/lib/rbac";
 import { MODULES } from "@/features/hris/constants";
 import { formatPersonName } from "@/lib/name-utils";
+import { getFirebaseClientAuth } from "@/lib/firebase-client-auth";
 import {
   removeStorageObjectByPath,
   uploadProfilePhotoToStorage,
@@ -337,6 +339,13 @@ function SidebarOpenIcon({ className }) {
   );
 }
 
+function clearLoginRedirectPendingFlag() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.sessionStorage.removeItem("clio_google_redirect_pending");
+}
+
 export default function HrisShell({ children, session }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -576,10 +585,17 @@ export default function HrisShell({ children, session }) {
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      const auth = getFirebaseClientAuth();
+      await signOutFirebase(auth).catch(() => null);
+      clearLoginRedirectPendingFlag();
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
     } finally {
-      router.replace("/login");
-      router.refresh();
+      if (typeof window !== "undefined") {
+        window.location.assign("/login");
+      } else {
+        router.replace("/login");
+        router.refresh();
+      }
     }
   };
 
@@ -853,10 +869,17 @@ export default function HrisShell({ children, session }) {
         throw new Error(payload?.message || "Unable to revoke active sessions.");
       }
 
+      const auth = getFirebaseClientAuth();
+      await signOutFirebase(auth).catch(() => null);
+      clearLoginRedirectPendingFlag();
       toast.success("All active sessions were signed out.");
       setIsProfileModalOpen(false);
-      router.replace("/login");
-      router.refresh();
+      if (typeof window !== "undefined") {
+        window.location.assign("/login");
+      } else {
+        router.replace("/login");
+        router.refresh();
+      }
     } catch (error) {
       toast.error(error.message || "Unable to revoke active sessions.");
     } finally {
