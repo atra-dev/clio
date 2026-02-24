@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "clean:build-artifacts": "node scripts/clean-build-artifacts.mjs",
+    "env:firebase-admin": "node scripts/apply-firebase-admin-env.js",
     "audit": "npm audit --audit-level=high",
     "audit:full": "npm audit --json"
   },
