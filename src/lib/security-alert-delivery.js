@@ -515,3 +515,10 @@ export async function dispatchSecurityIncidentAlerts({
 export function resolveSecurityAlertEmailRecipients(explicitRecipients = []) {
   return resolveSecurityAlertRecipients(explicitRecipients);
 }
+
+export async function dispatchDirectSms({ recipients = [], body = "" } = {}) {
+  return await dispatchSmsAlerts({
+    recipients,
+    body: asString(body, ""),
+  });
+}

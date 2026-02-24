@@ -1773,7 +1773,23 @@ async function startInviteSmsVerificationInFirestore(db, { token, phoneNumber })
     throw new Error("invite_revoked");
   }
 
-  if (currentStatus === "verified") {
+  const userRef = doc(db, getUsersCollectionName(), found.invite.email);
+  const userSnapshot = await getDoc(userRef);
+  if (!userSnapshot.exists()) {
+    throw new Error("invite_user_not_found");
+  }
+
+  const currentUser = normalizeFirestoreUser(userSnapshot.id, userSnapshot.data());
+  if (!currentUser) {
+    throw new Error("invite_user_not_found");
+  }
+
+  if (currentUser.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  const phoneAlreadyVerified = Boolean(currentUser.phoneVerifiedAt || currentUser.verificationMethod === "sms");
+  if (currentStatus === "verified" && phoneAlreadyVerified) {
     throw new Error("invite_already_verified");
   }
 
@@ -1847,7 +1863,17 @@ async function startInviteSmsVerificationInFile({ token, phoneNumber }) {
     throw new Error("invite_revoked");
   }
 
-  if (currentStatus === "verified") {
+  const user = found.store.users.find((item) => item.email === found.invite.email);
+  if (!user) {
+    throw new Error("invite_user_not_found");
+  }
+
+  if (user.status === "disabled") {
+    throw new Error("account_disabled");
+  }
+
+  const phoneAlreadyVerified = Boolean(user.phoneVerifiedAt || user.verificationMethod === "sms");
+  if (currentStatus === "verified" && phoneAlreadyVerified) {
     throw new Error("invite_already_verified");
   }
 
@@ -1992,6 +2018,7 @@ async function completeInviteSmsVerificationInFirestore(db, { token, otpCode }) 
     ...currentUser,
     status: "active",
     activatedAt: currentUser.activatedAt || timestamp,
+    emailVerifiedAt: currentUser.emailVerifiedAt || timestamp,
     updatedAt: timestamp,
     phoneVerifiedAt: timestamp,
     phoneLast4: verification.phoneLast4 || null,
@@ -2115,6 +2142,7 @@ async function completeInviteSmsVerificationInFile({ token, otpCode }) {
   const timestamp = nowIso();
   user.status = "active";
   user.activatedAt = user.activatedAt || timestamp;
+  user.emailVerifiedAt = user.emailVerifiedAt || timestamp;
   user.phoneVerifiedAt = timestamp;
   user.phoneLast4 = verification.phoneLast4 || null;
   user.phoneHash = verification.phoneHash || null;
@@ -2300,6 +2328,73 @@ export async function getInviteForEmailVerification(token) {
   }
 
   return await getInviteForAccountOpeningFromFile(token);
+}
+
+export async function startInviteSmsVerification({ token, phoneNumber }) {
+  const inviteBusinessErrors = new Set([
+    "invalid_invite_token",
+    "invalid_phone_number",
+    "invite_not_found",
+    "invite_expired",
+    "invite_revoked",
+    "invite_already_verified",
+    "invite_user_not_found",
+    "account_disabled",
+    "otp_cooldown",
+  ]);
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await startInviteSmsVerificationInFirestore(db, { token, phoneNumber });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (inviteBusinessErrors.has(reason)) {
+        throw error;
+      }
+      return await startInviteSmsVerificationInFile({ token, phoneNumber });
+    }
+  }
+
+  return await startInviteSmsVerificationInFile({ token, phoneNumber });
+}
+
+export async function completeInviteSmsVerification({ token, otpCode }) {
+  const inviteBusinessErrors = new Set([
+    "invalid_invite_token",
+    "invite_not_found",
+    "invite_expired",
+    "invite_revoked",
+    "invite_already_verified",
+    "invite_user_not_found",
+    "account_disabled",
+    "otp_not_requested",
+    "otp_expired",
+    "otp_attempts_exceeded",
+    "invalid_otp",
+  ]);
+
+  let result;
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      result = await completeInviteSmsVerificationInFirestore(db, { token, otpCode });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "";
+      if (inviteBusinessErrors.has(reason)) {
+        throw error;
+      }
+      result = await completeInviteSmsVerificationInFile({ token, otpCode });
+    }
+  } else {
+    result = await completeInviteSmsVerificationInFile({ token, otpCode });
+  }
+
+  await syncCustomClaimsForPublicUser(result?.user, {
+    allowMissingUser: false,
+    strict: false,
+  });
+
+  return result;
 }
 
 export async function verifyInviteEmail({ token }) {

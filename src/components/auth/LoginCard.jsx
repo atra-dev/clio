@@ -94,10 +94,10 @@ export default function LoginCard() {
       return "Firebase sign-in failed due to browser/CSP restrictions. Allow popups and cookies for the current domain, then retry.";
     }
     if (rawCode === "auth/multi-factor-auth-required") {
-      return "MFA is currently disabled in this app. Remove this user's enrolled MFA factors in Firebase Authentication, then sign in again.";
+      return "SMS authentication is required for this account. Complete your invite phone verification first.";
     }
     if (rawCode === "auth/invalid-app-credential") {
-      return "MFA is disabled in this app. If this user still has SMS MFA enrolled in Firebase, unenroll it first.";
+      return "SMS authentication setup failed. Check Firebase phone authentication setup and retry.";
     }
     if (rawMessage.startsWith("firebase_client_not_configured")) {
       return "Firebase client is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID, then restart npm run dev.";
@@ -295,7 +295,7 @@ export default function LoginCard() {
             ) : null}
 
             <p className="text-xs text-slate-500">
-              Complete your invite email verification first, then use the same invited email for Google sign-in.
+              Complete your invite verification (including phone OTP) first, then use the same invited email for Google sign-in.
             </p>
           </div>
         </div>
