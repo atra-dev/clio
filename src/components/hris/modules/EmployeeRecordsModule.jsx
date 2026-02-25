@@ -26,6 +26,7 @@ const DETAIL_TABS = [
 
 const EMPLOYMENT_STATUS_OPTIONS = ["Active Employee", "Probation", "On Leave", "Resigned", "Terminated"];
 const RECORD_STATUS_OPTIONS = ["Active", "Probation", "Inactive", "Archived"];
+const ONBOARDING_WORK_SETUP_OPTIONS = ["On-site", "Hybrid", "Remote"];
 const DEFAULT_ROLE_OPTIONS = [
   { value: "SUPER_ADMIN", label: "Super Admin" },
   { value: "GRC", label: "GRC" },
@@ -72,20 +73,15 @@ const PAYROLL_FIELDS = [
 
 const initialCreateForm = {
   employeeId: "",
-  name: "",
+  lastName: "",
+  firstName: "",
+  middleName: "",
+  suffix: "",
   email: "",
   role: "EMPLOYEE_L1",
   department: "",
-  jobTitle: "",
+  workSetup: "On-site",
   hireDate: "",
-  employmentStatus: "Active Employee",
-  status: "Active",
-  contact: "",
-  address: "",
-  emergencyContact: "",
-  managerEmail: "",
-  payrollGroup: "",
-  govId: "",
 };
 
 const initialMasterDraft = {
@@ -96,14 +92,12 @@ const initialMasterDraft = {
   suffix: "",
   email: "",
   department: "",
-  jobTitle: "",
   hireDate: "",
 };
 
 const initialEmploymentDraft = {
-  employmentStatus: "Active Employee",
-  status: "Active",
-  managerEmail: "",
+  role: "EMPLOYEE_L1",
+  workSetup: "On-site",
 };
 
 const initialContactDraft = {
@@ -378,7 +372,6 @@ function buildMasterDraft(record) {
     suffix: String(record.suffix || legacy.suffix || ""),
     email: String(record.email || ""),
     department: String(record.department || ""),
-    jobTitle: String(record.jobTitle || ""),
     hireDate: String(record.hireDate || ""),
   };
 }
@@ -388,9 +381,8 @@ function buildEmploymentDraft(record) {
     return initialEmploymentDraft;
   }
   return {
-    employmentStatus: String(record.employmentStatus || "Active Employee"),
-    status: String(record.status || "Active"),
-    managerEmail: String(record.managerEmail || ""),
+    role: String(record.role || "EMPLOYEE_L1"),
+    workSetup: String(record.workSetup || "On-site"),
   };
 }
 
@@ -893,15 +885,35 @@ export default function EmployeeRecordsModule({ session }) {
     if (!canManageRecords) {
       return;
     }
-    const targetName = String(createForm.name || "").trim() || "this employee";
+    const composedName = formatEmployeeName({
+      lastName: createForm.lastName,
+      firstName: createForm.firstName,
+      middleName: createForm.middleName,
+      suffix: createForm.suffix,
+      fallback: createForm.email,
+      fallbackEmail: createForm.email,
+      fallbackLabel: "Employee",
+    });
+    const targetName = composedName || String(createForm.employeeId || "").trim() || "this employee";
     if (!requestActionConfirmation(`Create employee record for ${targetName}?`)) {
       return;
     }
     setIsSubmitting(true);
     try {
       await hrisApi.employees.create({
-        ...createForm,
+        employeeId: String(createForm.employeeId || "").trim(),
+        name: composedName,
+        lastName: String(createForm.lastName || "").trim(),
+        firstName: String(createForm.firstName || "").trim(),
+        middleName: String(createForm.middleName || "").trim(),
+        suffix: String(createForm.suffix || "").trim(),
         email: normalizeEmail(createForm.email),
+        role: String(createForm.role || "").trim(),
+        department: String(createForm.department || "").trim(),
+        workSetup: String(createForm.workSetup || "").trim(),
+        hireDate: String(createForm.hireDate || "").trim(),
+        employmentStatus: "Active Employee",
+        status: "Active",
       });
       setCreateForm(initialCreateForm);
       setShowCreateForm(false);
@@ -1158,8 +1170,9 @@ export default function EmployeeRecordsModule({ session }) {
         suffix: String(masterDraft.suffix || "").trim(),
         email: normalizeEmail(masterDraft.email),
         department: String(masterDraft.department || "").trim(),
-        jobTitle: String(masterDraft.jobTitle || "").trim(),
         hireDate: String(masterDraft.hireDate || "").trim(),
+        role: String(employmentDraft.role || "").trim(),
+        workSetup: String(employmentDraft.workSetup || "").trim(),
       },
       "Employee master data updated.",
       "Save employee master data changes?",
@@ -1172,12 +1185,11 @@ export default function EmployeeRecordsModule({ session }) {
     }
     await updateRecord(
       {
-        employmentStatus: String(employmentDraft.employmentStatus || "").trim(),
-        status: String(employmentDraft.status || "").trim(),
-        managerEmail: normalizeEmail(employmentDraft.managerEmail),
+        role: String(employmentDraft.role || "").trim(),
+        workSetup: String(employmentDraft.workSetup || "").trim(),
       },
-      "Employment tracking updated.",
-      "Save employment status and manager changes?",
+      "Employment assignment updated.",
+      "Save role and work setup changes?",
     );
   };
 
@@ -1228,11 +1240,9 @@ export default function EmployeeRecordsModule({ session }) {
         suffix: String(masterDraft.suffix || "").trim(),
         email: normalizeEmail(masterDraft.email),
         department: String(masterDraft.department || "").trim(),
-        jobTitle: String(masterDraft.jobTitle || "").trim(),
         hireDate: String(masterDraft.hireDate || "").trim(),
-        employmentStatus: String(employmentDraft.employmentStatus || "").trim(),
-        status: String(employmentDraft.status || "").trim(),
-        managerEmail: normalizeEmail(employmentDraft.managerEmail),
+        role: String(employmentDraft.role || "").trim(),
+        workSetup: String(employmentDraft.workSetup || "").trim(),
         contact: String(contactDraft.contact || "").trim(),
         address: String(contactDraft.address || "").trim(),
         emergencyContact: String(contactDraft.emergencyContact || "").trim(),
@@ -1539,120 +1549,144 @@ export default function EmployeeRecordsModule({ session }) {
         </div>
 
         <form className="grid gap-3 md:grid-cols-3" onSubmit={handleCreate}>
-        <input
-          value={createForm.employeeId}
-          onChange={handleCreateField("employeeId")}
-          placeholder="Employee ID"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          required
-          value={createForm.name}
-          onChange={handleCreateField("name")}
-          placeholder="Full name"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          required
-          type="email"
-          value={createForm.email}
-          onChange={handleCreateField("email")}
-          placeholder="work.email@gmail.com"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <select
-          value={createForm.department}
-          onChange={handleCreateField("department")}
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        >
-          <option value="">Department</option>
-          {departmentCatalogOptions.map((departmentOption) => (
-            <option key={`create-department-${departmentOption.value}`} value={departmentOption.value}>
-              {departmentOption.label}
-            </option>
-          ))}
-        </select>
-        <input
-          value={createForm.jobTitle}
-          onChange={handleCreateField("jobTitle")}
-          placeholder="Job title"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          type="date"
-          value={createForm.hireDate}
-          onChange={handleCreateField("hireDate")}
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <select
-          value={createForm.role}
-          onChange={handleCreateField("role")}
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        >
-          {roleCatalogOptions.map((roleOption) => (
-            <option key={roleOption.value} value={roleOption.value}>
-              {roleOption.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={createForm.employmentStatus}
-          onChange={handleCreateField("employmentStatus")}
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        >
-          {EMPLOYMENT_STATUS_OPTIONS.map((statusOption) => (
-            <option key={statusOption} value={statusOption}>
-              {statusOption}
-            </option>
-          ))}
-        </select>
-        <select
-          value={createForm.status}
-          onChange={handleCreateField("status")}
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        >
-          {RECORD_STATUS_OPTIONS.map((statusOption) => (
-            <option key={statusOption} value={statusOption}>
-              {statusOption}
-            </option>
-          ))}
-        </select>
-        <input
-          value={createForm.managerEmail}
-          onChange={handleCreateField("managerEmail")}
-          placeholder="Manager email"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          value={createForm.contact}
-          onChange={handleCreateField("contact")}
-          placeholder="Primary contact"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          value={createForm.address}
-          onChange={handleCreateField("address")}
-          placeholder="Address"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          value={createForm.emergencyContact}
-          onChange={handleCreateField("emergencyContact")}
-          placeholder="Emergency contact"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          value={createForm.payrollGroup}
-          onChange={handleCreateField("payrollGroup")}
-          placeholder="Payroll group"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
-        <input
-          value={createForm.govId}
-          onChange={handleCreateField("govId")}
-          placeholder="Primary government ID"
-          className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-        />
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee Number</span>
+          <input
+            required
+            value={createForm.employeeId}
+            onChange={handleCreateField("employeeId")}
+            placeholder="Employee number"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Name</span>
+          <input
+            required
+            value={createForm.lastName}
+            onChange={handleCreateField("lastName")}
+            placeholder="Last name"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">First Name</span>
+          <input
+            required
+            value={createForm.firstName}
+            onChange={handleCreateField("firstName")}
+            placeholder="First name"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Middle Name</span>
+          <input
+            value={createForm.middleName}
+            onChange={handleCreateField("middleName")}
+            placeholder="Middle name"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Suffix</span>
+          <input
+            value={createForm.suffix}
+            onChange={handleCreateField("suffix")}
+            placeholder="Suffix (optional)"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1 md:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Account Email (Google Sign-In)
+          </span>
+          <input
+            required
+            type="email"
+            value={createForm.email}
+            onChange={handleCreateField("email")}
+            placeholder="employee@gmail.com"
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned Role</span>
+          <select
+            required
+            value={createForm.role}
+            onChange={handleCreateField("role")}
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          >
+            <option value="">Select role</option>
+            {roleCatalogOptions.map((roleOption) => (
+              <option key={roleOption.value} value={roleOption.value}>
+                {roleOption.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned Department</span>
+          <select
+            required
+            value={createForm.department}
+            onChange={handleCreateField("department")}
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          >
+            <option value="">Select department</option>
+            {departmentCatalogOptions.map((departmentOption) => (
+              <option key={`create-department-${departmentOption.value}`} value={departmentOption.value}>
+                {departmentOption.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Work Setup</span>
+          <select
+            value={createForm.workSetup}
+            onChange={handleCreateField("workSetup")}
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          >
+            {ONBOARDING_WORK_SETUP_OPTIONS.map((workSetup) => (
+              <option key={`create-work-${workSetup}`} value={workSetup}>
+                {workSetup}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Employment Start Date
+          </span>
+          <input
+            type="date"
+            required
+            value={createForm.hireDate}
+            onChange={handleCreateField("hireDate")}
+            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+          />
+        </label>
+        <label className="space-y-1 md:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Generated Employee Display Name
+          </span>
+          <input
+            value={formatEmployeeName({
+              lastName: createForm.lastName,
+              firstName: createForm.firstName,
+              middleName: createForm.middleName,
+              suffix: createForm.suffix,
+              fallback: createForm.email,
+              fallbackEmail: createForm.email,
+              fallbackLabel: "Employee",
+            })}
+            readOnly
+            aria-readonly="true"
+            className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700"
+          />
+        </label>
         <div className="md:col-span-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">Data classification: Restricted PII</p>
           <div className="flex items-center gap-2">
@@ -1729,7 +1763,7 @@ export default function EmployeeRecordsModule({ session }) {
                   <input
                     value={masterDraft.employeeId}
                     onChange={(event) => setMasterDraft((current) => ({ ...current, employeeId: event.target.value }))}
-                    placeholder="Employee ID"
+                    placeholder="Employee number"
                     disabled={!canManageRecords}
                     className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
                   />
@@ -1764,10 +1798,23 @@ export default function EmployeeRecordsModule({ session }) {
                   <input
                     value={masterDraft.email}
                     onChange={(event) => setMasterDraft((current) => ({ ...current, email: event.target.value }))}
-                    placeholder="Email"
+                    placeholder="Account email (Google Sign-In)"
                     disabled={!canManageRecords}
                     className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
                   />
+                  <select
+                    value={employmentDraft.role}
+                    onChange={(event) => setEmploymentDraft((current) => ({ ...current, role: event.target.value }))}
+                    disabled={!canManageRecords}
+                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                  >
+                    <option value="">Assigned role</option>
+                    {roleOptions.map((roleOption) => (
+                      <option key={`profile-role-${roleOption.value}`} value={roleOption.value}>
+                        {roleOption.label}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     value={masterDraft.department}
                     onChange={(event) => setMasterDraft((current) => ({ ...current, department: event.target.value }))}
@@ -1781,13 +1828,18 @@ export default function EmployeeRecordsModule({ session }) {
                       </option>
                     ))}
                   </select>
-                  <input
-                    value={masterDraft.jobTitle}
-                    onChange={(event) => setMasterDraft((current) => ({ ...current, jobTitle: event.target.value }))}
-                    placeholder="Job title"
+                  <select
+                    value={employmentDraft.workSetup}
+                    onChange={(event) => setEmploymentDraft((current) => ({ ...current, workSetup: event.target.value }))}
                     disabled={!canManageRecords}
                     className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                  />
+                  >
+                    {ONBOARDING_WORK_SETUP_OPTIONS.map((workSetup) => (
+                      <option key={`profile-work-${workSetup}`} value={workSetup}>
+                        {workSetup}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     type="date"
                     value={masterDraft.hireDate}
@@ -1795,62 +1847,34 @@ export default function EmployeeRecordsModule({ session }) {
                     disabled={!canManageRecords}
                     className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
                   />
-                  <select
-                    value={employmentDraft.employmentStatus}
-                    onChange={(event) =>
-                      setEmploymentDraft((current) => ({ ...current, employmentStatus: event.target.value }))
-                    }
-                    disabled={!canManageRecords}
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                  >
-                    {EMPLOYMENT_STATUS_OPTIONS.map((statusOption) => (
-                      <option key={statusOption} value={statusOption}>
-                        {statusOption}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={employmentDraft.status}
-                    onChange={(event) => setEmploymentDraft((current) => ({ ...current, status: event.target.value }))}
-                    disabled={!canManageRecords}
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                  >
-                    {RECORD_STATUS_OPTIONS.map((statusOption) => (
-                      <option key={statusOption} value={statusOption}>
-                        {statusOption}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    value={employmentDraft.managerEmail}
-                    onChange={(event) =>
-                      setEmploymentDraft((current) => ({ ...current, managerEmail: event.target.value }))
-                    }
-                    placeholder="Manager email"
-                    disabled={!canManageRecords}
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                  />
-                  <input
-                    value={contactDraft.contact}
-                    placeholder="Contact"
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                    onChange={(event) => setContactDraft((current) => ({ ...current, contact: event.target.value }))}
-                  />
-                  <input
-                    value={contactDraft.address}
-                    placeholder="Address"
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                    onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))}
-                  />
-                  <input
-                    value={contactDraft.emergencyContact}
-                    placeholder="Emergency contact"
-                    disabled={!canManageRecords}
-                    className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                    onChange={(event) =>
-                      setContactDraft((current) => ({ ...current, emergencyContact: event.target.value }))
-                    }
-                  />
+                </div>
+
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                    Contact Details (Optional)
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={contactDraft.contact}
+                      placeholder="Contact number"
+                      className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                      onChange={(event) => setContactDraft((current) => ({ ...current, contact: event.target.value }))}
+                    />
+                    <input
+                      value={contactDraft.address}
+                      placeholder="Address"
+                      className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                      onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))}
+                    />
+                    <input
+                      value={contactDraft.emergencyContact}
+                      placeholder="Emergency contact"
+                      className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none sm:col-span-2"
+                      onChange={(event) =>
+                        setContactDraft((current) => ({ ...current, emergencyContact: event.target.value }))
+                      }
+                    />
+                  </div>
                 </div>
 
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1869,19 +1893,16 @@ export default function EmployeeRecordsModule({ session }) {
               <div className="space-y-3">
                 <div className="space-y-2 sm:hidden">
                   {[
-                    ["Employee ID", valueOrDash(masterDraft.employeeId)],
+                    ["Employee Number", valueOrDash(masterDraft.employeeId)],
                     ["Last Name", valueOrDash(masterDraft.lastName)],
                     ["First Name", valueOrDash(masterDraft.firstName)],
                     ["Middle Name", valueOrDash(masterDraft.middleName)],
                     ["Suffix", valueOrDash(masterDraft.suffix)],
-                    ["Email", valueOrDash(masterDraft.email)],
-                    ["Department", valueOrDash(masterDraft.department)],
-                    ["Role", toLabel(selectedRow.role || "EMPLOYEE_L1")],
-                    ["Job Title", valueOrDash(masterDraft.jobTitle)],
-                    ["Employment Status", valueOrDash(employmentDraft.employmentStatus)],
-                    ["Record Status", valueOrDash(employmentDraft.status)],
-                    ["Start Date", valueOrDash(masterDraft.hireDate)],
-                    ["Emergency Contact", valueOrDash(contactDraft.emergencyContact)],
+                    ["Account Email", valueOrDash(masterDraft.email)],
+                    ["Assigned Role", toLabel(selectedRow.role || employmentDraft.role || "EMPLOYEE_L1")],
+                    ["Assigned Department", valueOrDash(masterDraft.department)],
+                    ["Work Setup", valueOrDash(employmentDraft.workSetup)],
+                    ["Employment Start Date", valueOrDash(masterDraft.hireDate)],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
@@ -1899,19 +1920,16 @@ export default function EmployeeRecordsModule({ session }) {
                     </thead>
                     <tbody>
                       {[
-                        ["Employee ID", valueOrDash(masterDraft.employeeId)],
+                        ["Employee Number", valueOrDash(masterDraft.employeeId)],
                         ["Last Name", valueOrDash(masterDraft.lastName)],
                         ["First Name", valueOrDash(masterDraft.firstName)],
                         ["Middle Name", valueOrDash(masterDraft.middleName)],
                         ["Suffix", valueOrDash(masterDraft.suffix)],
-                        ["Email", valueOrDash(masterDraft.email)],
-                        ["Department", valueOrDash(masterDraft.department)],
-                        ["Role", toLabel(selectedRow.role || "EMPLOYEE_L1")],
-                        ["Job Title", valueOrDash(masterDraft.jobTitle)],
-                        ["Employment Status", valueOrDash(employmentDraft.employmentStatus)],
-                        ["Record Status", valueOrDash(employmentDraft.status)],
-                        ["Start Date", valueOrDash(masterDraft.hireDate)],
-                        ["Emergency Contact", valueOrDash(contactDraft.emergencyContact)],
+                        ["Account Email", valueOrDash(masterDraft.email)],
+                        ["Assigned Role", toLabel(selectedRow.role || employmentDraft.role || "EMPLOYEE_L1")],
+                        ["Assigned Department", valueOrDash(masterDraft.department)],
+                        ["Work Setup", valueOrDash(employmentDraft.workSetup)],
+                        ["Employment Start Date", valueOrDash(masterDraft.hireDate)],
                       ].map(([label, value]) => (
                         <tr key={label} className="border-b border-slate-100 last:border-b-0">
                           <td className="px-3 py-2 text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">
