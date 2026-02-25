@@ -61,6 +61,38 @@ a {
   background: #1558b8;
 }
 
+.clio-sidebar-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #7aa9e8 #dbe6f3;
+}
+
+.clio-sidebar-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.clio-sidebar-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.clio-sidebar-scroll::-webkit-scrollbar-track {
+  background: #dbe6f3;
+  border-radius: 999px;
+}
+
+.clio-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #9cc2f0 0%, #7aa9e8 100%);
+  border-radius: 999px;
+  border: 0;
+}
+
+.clio-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #7aa9e8 0%, #5a91da 100%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

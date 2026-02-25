@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
+import PaginationControls from "@/components/hris/shared/PaginationControls";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
+import { useToast } from "@/components/ui/ToastProvider";
+import { useConfirm } from "@/components/ui/ConfirmProvider";
 import { formatEmployeeName, formatPersonName } from "@/lib/name-utils";
 import { hrisApi } from "@/services/hris-api-client";
 import { toSubTabAnchor } from "@/lib/subtab-anchor";
@@ -33,6 +36,27 @@ const SECTION_DESCRIPTIONS = {
   "role-changes": "Role/department movement workflows with effectivity details.",
   "disciplinary-records": "Disciplinary case workflows with controlled updates and timeline visibility.",
   "offboarding-access-revocation": "Offboarding workflows with access revocation and account disablement trail.",
+};
+
+const REQUIRED_EVIDENCE_BY_WORKFLOW = {
+  disciplinary: [
+    { id: "incident-report", label: "Incident Report", keywords: ["incident", "report"] },
+    {
+      id: "notice-to-explain",
+      label: "Notice to Explain / Written Explanation",
+      keywords: ["notice", "explain", "written explanation", "explanation"],
+    },
+    { id: "decision-memo", label: "Decision Memo", keywords: ["decision", "memo"] },
+  ],
+  offboarding: [
+    {
+      id: "resignation-termination",
+      label: "Resignation / Termination Document",
+      keywords: ["resignation", "termination", "termination notice"],
+    },
+    { id: "clearance-form", label: "Clearance Form", keywords: ["clearance"] },
+    { id: "handover-exit", label: "Handover / Exit Checklist", keywords: ["handover", "exit checklist", "exit interview"] },
+  ],
 };
 
 const DEFAULT_ROLE_ASSIGNMENT_OPTIONS = [
@@ -159,16 +183,26 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function normalizeLifecycleWorkflowType(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "onboarding";
+  }
+  if (normalized.includes("disciplin")) {
+    return "disciplinary";
+  }
+  if (normalized.includes("offboard") || normalized.includes("resign") || normalized.includes("terminate")) {
+    return "offboarding";
+  }
+  if (normalized.includes("role") || normalized.includes("promotion")) {
+    return "role-change";
+  }
+  return "onboarding";
+}
+
 function valueOrDash(value) {
   const normalized = String(value || "").trim();
   return normalized || "-";
-}
-
-function requestActionConfirmation(message) {
-  if (typeof window === "undefined") {
-    return true;
-  }
-  return window.confirm(message);
 }
 
 function formatFileSize(bytes) {
@@ -428,6 +462,44 @@ function isOffboardingRecord(record) {
   return category.includes("offboard") || category.includes("resign") || category.includes("terminate");
 }
 
+function getRequiredEvidenceSummary(record) {
+  const workflowType = normalizeLifecycleWorkflowType(record?.workflowType || record?.category);
+  const rules = REQUIRED_EVIDENCE_BY_WORKFLOW[workflowType] || [];
+  if (rules.length === 0) {
+    return { required: [], matched: [], missing: [], complete: true };
+  }
+
+  const evidence = Array.isArray(record?.evidence) ? record.evidence : [];
+  const normalizedEvidence = evidence.map((entry) =>
+    normalizeText([entry?.name, entry?.type, entry?.note].filter(Boolean).join(" ")),
+  );
+
+  const matched = [];
+  const missing = [];
+  rules.forEach((rule) => {
+    const keywords = Array.isArray(rule.keywords) ? rule.keywords.map((item) => normalizeText(item)).filter(Boolean) : [];
+    const hasMatch = normalizedEvidence.some((text) => keywords.some((keyword) => text.includes(keyword)));
+    const detail = { id: rule.id, label: rule.label };
+    if (hasMatch) {
+      matched.push(detail);
+    } else {
+      missing.push(detail);
+    }
+  });
+
+  return {
+    required: rules.map((rule) => ({ id: rule.id, label: rule.label })),
+    matched,
+    missing,
+    complete: missing.length === 0,
+  };
+}
+
+function getRequiredEvidenceRulesForCategory(category) {
+  const workflowType = normalizeLifecycleWorkflowType(category);
+  return REQUIRED_EVIDENCE_BY_WORKFLOW[workflowType] || [];
+}
+
 function composeEmployeeName(record) {
   return formatEmployeeName({
     firstName: record?.firstName,
@@ -457,6 +529,8 @@ function toEmployeeOption(record) {
 }
 
 export default function EmploymentLifecycleModule({ session }) {
+  const toast = useToast();
+  const confirmAction = useConfirm();
   const actorRole = session?.role || "EMPLOYEE_L1";
   const actorRoleId = normalizeRoleValue(actorRole);
   const employeeRole = isEmployeeRole(actorRole);
@@ -474,6 +548,8 @@ export default function EmploymentLifecycleModule({ session }) {
   const [isWorkflowConsoleOpen, setIsWorkflowConsoleOpen] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [recordsPage, setRecordsPage] = useState(1);
+  const recordsPageSize = 10;
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [isLoadingEmployeeOptions, setIsLoadingEmployeeOptions] = useState(false);
   const [employeeOptionsError, setEmployeeOptionsError] = useState("");
@@ -484,6 +560,8 @@ export default function EmploymentLifecycleModule({ session }) {
   const [isLoadingReferenceCatalog, setIsLoadingReferenceCatalog] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [onboardingDocuments, setOnboardingDocuments] = useState([]);
+  const [disciplinaryDocuments, setDisciplinaryDocuments] = useState([]);
+  const [offboardingDocuments, setOffboardingDocuments] = useState([]);
 
   const evidenceInputRef = useRef(null);
 
@@ -747,6 +825,33 @@ export default function EmploymentLifecycleModule({ session }) {
     });
   }, [records, section, selectedStatus, searchQuery]);
 
+  const recordsPagination = useMemo(() => {
+    const total = filteredRecords.length;
+    const totalPages = Math.max(1, Math.ceil(total / recordsPageSize));
+    const page = Math.min(Math.max(1, recordsPage), totalPages);
+    return {
+      page,
+      pageSize: recordsPageSize,
+      total,
+      totalPages,
+    };
+  }, [filteredRecords.length, recordsPage]);
+
+  const pagedRecords = useMemo(() => {
+    const start = (recordsPagination.page - 1) * recordsPagination.pageSize;
+    return filteredRecords.slice(start, start + recordsPagination.pageSize);
+  }, [filteredRecords, recordsPagination.page, recordsPagination.pageSize]);
+
+  useEffect(() => {
+    setRecordsPage(1);
+  }, [section, searchQuery, selectedStatus]);
+
+  useEffect(() => {
+    if (recordsPage > recordsPagination.totalPages) {
+      setRecordsPage(recordsPagination.totalPages);
+    }
+  }, [recordsPage, recordsPagination.totalPages]);
+
   useEffect(() => {
     if (filteredRecords.length === 0) {
       setSelectedRecordId("");
@@ -790,6 +895,18 @@ export default function EmploymentLifecycleModule({ session }) {
     ? Number(activeRecord.workflow.stageIndex)
     : 0;
   const activeEvidence = Array.isArray(activeRecord?.evidence) ? activeRecord.evidence : [];
+  const activeRequiredEvidence = useMemo(() => getRequiredEvidenceSummary(activeRecord), [activeRecord]);
+  const createRequiredEvidenceRules = useMemo(() => getRequiredEvidenceRulesForCategory(form.category), [form.category]);
+  const createCategoryType = useMemo(() => normalizeLifecycleWorkflowType(form.category), [form.category]);
+  const createWorkflowDocuments = useMemo(() => {
+    if (createCategoryType === "disciplinary") {
+      return disciplinaryDocuments;
+    }
+    if (createCategoryType === "offboarding") {
+      return offboardingDocuments;
+    }
+    return onboardingDocuments;
+  }, [createCategoryType, disciplinaryDocuments, offboardingDocuments, onboardingDocuments]);
 
   const summaryMetrics = useMemo(() => {
     const inProgress = filteredRecords.filter((record) => {
@@ -838,11 +955,39 @@ export default function EmploymentLifecycleModule({ session }) {
     setOnboardingDocuments((current) => current.filter((_, index) => index !== indexToRemove));
   };
 
+  const handleCategoryDocumentsChange = (categoryType) => (event) => {
+    const files = Array.from(event.target.files || []).slice(0, 10);
+    if (categoryType === "disciplinary") {
+      setDisciplinaryDocuments(files);
+      return;
+    }
+    if (categoryType === "offboarding") {
+      setOffboardingDocuments(files);
+    }
+  };
+
+  const removeCategoryDocument = (categoryType, indexToRemove) => {
+    if (categoryType === "disciplinary") {
+      setDisciplinaryDocuments((current) => current.filter((_, index) => index !== indexToRemove));
+      return;
+    }
+    if (categoryType === "offboarding") {
+      setOffboardingDocuments((current) => current.filter((_, index) => index !== indexToRemove));
+    }
+  };
+
   const handleCategoryChange = (event) => {
     const nextCategory = event.target.value;
+    const nextCategoryType = normalizeLifecycleWorkflowType(nextCategory);
     const onboardingMode = isOnboardingCategory(nextCategory);
-    if (!onboardingMode) {
+    if (nextCategoryType !== "onboarding") {
       setOnboardingDocuments([]);
+    }
+    if (nextCategoryType !== "disciplinary") {
+      setDisciplinaryDocuments([]);
+    }
+    if (nextCategoryType !== "offboarding") {
+      setOffboardingDocuments([]);
     }
     setForm((current) => {
       if (onboardingMode) {
@@ -937,6 +1082,16 @@ export default function EmploymentLifecycleModule({ session }) {
       const oversizedFile = onboardingDocuments.find((file) => file.size > 10 * 1024 * 1024);
       if (oversizedFile) {
         setErrorMessage("Each onboarding document must be 10MB or below.");
+        toast.error("Each onboarding document must be 10MB or below.");
+        return;
+      }
+    }
+    if (createCategoryType === "disciplinary" || createCategoryType === "offboarding") {
+      const oversizedFile = createWorkflowDocuments.find((file) => file.size > 10 * 1024 * 1024);
+      if (oversizedFile) {
+        const label = createCategoryType === "disciplinary" ? "disciplinary" : "offboarding";
+        setErrorMessage(`Each ${label} document must be 10MB or below.`);
+        toast.error(`Each ${label} document must be 10MB or below.`);
         return;
       }
     }
@@ -953,6 +1108,16 @@ export default function EmploymentLifecycleModule({ session }) {
         setErrorMessage("Current department is missing on employee record. Set employee department first.");
         return;
       }
+    }
+
+    if (
+      !(await confirmAction({
+        title: "Create Lifecycle Workflow",
+        message: `Create ${form.category} workflow for ${valueOrDash(form.employeeEmail || form.employee)}?`,
+        confirmText: "Create",
+      }))
+    ) {
+      return;
     }
 
     setIsSubmitting(true);
@@ -975,9 +1140,17 @@ export default function EmploymentLifecycleModule({ session }) {
         details: buildLifecycleDetailsPayload(form),
       });
       const createdRecordId = String(response?.record?.id || "").trim();
+      const evidenceTypeLabel =
+        createCategoryType === "onboarding"
+          ? "Onboarding"
+          : createCategoryType === "disciplinary"
+            ? "Disciplinary"
+            : createCategoryType === "offboarding"
+              ? "Offboarding"
+              : "Evidence";
 
-      if (onboardingMode && createdRecordId && onboardingDocuments.length > 0) {
-        for (const file of onboardingDocuments) {
+      if (createdRecordId && createWorkflowDocuments.length > 0) {
+        for (const file of createWorkflowDocuments) {
           const uploaded = await uploadLifecycleEvidenceToStorage({
             file,
             lifecycleRecordId: createdRecordId,
@@ -987,12 +1160,13 @@ export default function EmploymentLifecycleModule({ session }) {
           await hrisApi.lifecycle.update(createdRecordId, {
             workflowAction: {
               type: "add-evidence",
-              evidence: {
-                id: `evidence-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                name: String(file.name || "").trim() || "Onboarding Document",
-                ref: uploaded.downloadUrl,
-                storagePath: uploaded.storagePath,
-                contentType: uploaded.contentType,
+                evidence: {
+                  id: `evidence-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  name: String(file.name || "").trim() || "Onboarding Document",
+                  type: evidenceTypeLabel,
+                  ref: uploaded.downloadUrl,
+                  storagePath: uploaded.storagePath,
+                  contentType: uploaded.contentType,
                 sizeBytes: uploaded.sizeBytes,
                 uploadedAt: new Date().toISOString(),
                 uploadedBy: session?.email || "system@gmail.com",
@@ -1004,20 +1178,25 @@ export default function EmploymentLifecycleModule({ session }) {
 
       setForm(initialForm);
       setOnboardingDocuments([]);
+      setDisciplinaryDocuments([]);
+      setOffboardingDocuments([]);
       setIsCreateModalOpen(false);
       const effectSummary = summarizeLifecycleEffects(response?.effects);
       const documentSummary =
-        onboardingMode && onboardingDocuments.length > 0
-          ? `${onboardingDocuments.length} onboarding document${onboardingDocuments.length > 1 ? "s" : ""} uploaded. `
+        createWorkflowDocuments.length > 0
+          ? `${createWorkflowDocuments.length} ${evidenceTypeLabel.toLowerCase()} document${createWorkflowDocuments.length > 1 ? "s" : ""} uploaded. `
           : "";
-      setSuccessMessage(
+      const successText =
         effectSummary
           ? `${documentSummary}Lifecycle workflow created. ${effectSummary}`
-          : `${documentSummary}Lifecycle workflow created.`,
-      );
+          : `${documentSummary}Lifecycle workflow created.`;
+      setSuccessMessage(successText);
+      toast.success(successText);
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to create lifecycle workflow.");
+      const message = error.message || "Unable to create lifecycle workflow.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -1039,10 +1218,14 @@ export default function EmploymentLifecycleModule({ session }) {
           completed,
         },
       });
-      setSuccessMessage(completed ? "Checklist task marked as completed." : "Checklist task reverted to pending.");
+      const message = completed ? "Checklist task marked as completed." : "Checklist task reverted to pending.";
+      setSuccessMessage(message);
+      toast.success(message);
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to update checklist task.");
+      const message = error.message || "Unable to update checklist task.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -1050,6 +1233,25 @@ export default function EmploymentLifecycleModule({ session }) {
 
   const setWorkflowStage = async (record, stageIndex) => {
     if (!record?.id || !canManage) {
+      return;
+    }
+
+    if (
+      !(await confirmAction({
+        title: "Update Workflow Stage",
+        message: "Update workflow stage for this case?",
+        confirmText: "Update",
+      }))
+    ) {
+      return;
+    }
+    if (
+      !(await confirmAction({
+        title: "Update Checklist Task",
+        message: completed ? `Mark "${valueOrDash(task.label)}" as completed?` : `Set "${valueOrDash(task.label)}" back to pending?`,
+        confirmText: completed ? "Mark Complete" : "Set Pending",
+      }))
+    ) {
       return;
     }
 
@@ -1064,9 +1266,12 @@ export default function EmploymentLifecycleModule({ session }) {
         },
       });
       setSuccessMessage("Workflow stage updated.");
+      toast.success("Workflow stage updated.");
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to update workflow stage.");
+      const message = error.message || "Unable to update workflow stage.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -1076,7 +1281,24 @@ export default function EmploymentLifecycleModule({ session }) {
     if (!record?.id || !canManage) {
       return;
     }
-    if (!requestActionConfirmation("Trigger immediate offboarding and access revocation for this employee?")) {
+    const requiredEvidence = getRequiredEvidenceSummary(record);
+    if (!requiredEvidence.complete) {
+      const message = `Required offboarding documents are missing: ${requiredEvidence.missing.map((item) => item.label).join(", ")}.`;
+      setErrorMessage(
+        `Required offboarding documents are missing: ${requiredEvidence.missing.map((item) => item.label).join(", ")}.`,
+      );
+      toast.error(message);
+      setSuccessMessage("");
+      return;
+    }
+    if (
+      !(await confirmAction({
+        title: "Trigger Offboarding",
+        message: "Trigger immediate offboarding and access revocation for this employee?",
+        confirmText: "Offboard",
+        tone: "danger",
+      }))
+    ) {
       return;
     }
     setIsSubmitting(true);
@@ -1092,9 +1314,12 @@ export default function EmploymentLifecycleModule({ session }) {
           ? `Offboarding completed. ${effectSummary}`
           : "Offboarding completed. Access revocation has been triggered.",
       );
+      toast.success("Offboarding completed.");
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to complete offboarding.");
+      const message = error.message || "Unable to complete offboarding.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -1108,10 +1333,17 @@ export default function EmploymentLifecycleModule({ session }) {
     }
     if (file.size > 10 * 1024 * 1024) {
       setErrorMessage("Evidence upload is limited to 10MB per file.");
+      toast.error("Evidence upload is limited to 10MB per file.");
       event.target.value = "";
       return;
     }
-    if (!requestActionConfirmation(`Upload evidence file \"${file.name}\" to this workflow?`)) {
+    if (
+      !(await confirmAction({
+        title: "Upload Evidence",
+        message: `Upload evidence file \"${file.name}\" to this workflow?`,
+        confirmText: "Upload",
+      }))
+    ) {
       event.target.value = "";
       return;
     }
@@ -1143,9 +1375,12 @@ export default function EmploymentLifecycleModule({ session }) {
       });
 
       setSuccessMessage("Evidence file uploaded.");
+      toast.success("Evidence file uploaded.");
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to upload evidence file.");
+      const message = error.message || "Unable to upload evidence file.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
       event.target.value = "";
@@ -1157,7 +1392,14 @@ export default function EmploymentLifecycleModule({ session }) {
       return;
     }
     const label = String(evidence?.name || "evidence file").trim();
-    if (!requestActionConfirmation(`Remove evidence \"${label}\" from this workflow?`)) {
+    if (
+      !(await confirmAction({
+        title: "Remove Evidence",
+        message: `Remove evidence \"${label}\" from this workflow?`,
+        confirmText: "Remove",
+        tone: "danger",
+      }))
+    ) {
       return;
     }
 
@@ -1176,9 +1418,12 @@ export default function EmploymentLifecycleModule({ session }) {
         removeStorageObjectByPath(storagePath).catch(() => null);
       }
       setSuccessMessage("Evidence file removed.");
+      toast.success("Evidence file removed.");
       await loadRecords();
     } catch (error) {
-      setErrorMessage(error.message || "Unable to remove evidence file.");
+      const message = error.message || "Unable to remove evidence file.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -1189,6 +1434,8 @@ export default function EmploymentLifecycleModule({ session }) {
       return;
     }
     setOnboardingDocuments([]);
+    setDisciplinaryDocuments([]);
+    setOffboardingDocuments([]);
     setIsCreateModalOpen(false);
   };
 
@@ -1215,6 +1462,8 @@ export default function EmploymentLifecycleModule({ session }) {
       status: "In Progress",
     }));
     setOnboardingDocuments([]);
+    setDisciplinaryDocuments([]);
+    setOffboardingDocuments([]);
     setIsCreateModalOpen(true);
   };
 
@@ -1320,6 +1569,10 @@ export default function EmploymentLifecycleModule({ session }) {
 
   const renderLifecycleActionCell = (record, rowSelected) => (
     <td className="px-2 py-3 text-right">
+      {(() => {
+        const requiredEvidence = getRequiredEvidenceSummary(record);
+        const offboardBlocked = isOffboardingRecord(record) && !requiredEvidence.complete;
+        return (
       <div className="inline-flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
@@ -1336,13 +1589,16 @@ export default function EmploymentLifecycleModule({ session }) {
           <button
             type="button"
             onClick={() => triggerOffboarding(record)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || offboardBlocked}
+            title={offboardBlocked ? "Attach required offboarding evidence first." : undefined}
             className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
           >
             Offboard
           </button>
         ) : null}
       </div>
+        );
+      })()}
     </td>
   );
 
@@ -1536,25 +1792,47 @@ export default function EmploymentLifecycleModule({ session }) {
                   </select>
                 </div>
               )}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 md:col-span-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                  Workflow Steps
-                </p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
-                    1. Encode Employee Details
-                  </span>
-                  <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
-                    2. Upload Documents
-                  </span>
-                  <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
-                    3. Create Account
-                  </span>
-                  <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
-                    4. Activate Employment
-                  </span>
+              {createRequiredEvidenceRules.length > 0 ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 md:col-span-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+                    Required Documents For Final Status
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {createRequiredEvidenceRules.map((rule) => (
+                      <span
+                        key={rule.id}
+                        className="inline-flex rounded-md border border-amber-200 bg-white px-2 py-1 text-[11px] font-medium text-amber-700"
+                      >
+                        {rule.label}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-amber-700">
+                    You cannot set this workflow to Approved/Completed/Access Revoked until all required documents are attached.
+                  </p>
                 </div>
-              </div>
+              ) : null}
+              {isOnboardingCategory(form.category) ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 md:col-span-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                    Workflow Steps
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
+                      1. Encode Employee Details
+                    </span>
+                    <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
+                      2. Upload Documents
+                    </span>
+                    <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
+                      3. Create Account
+                    </span>
+                    <span className="inline-flex rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
+                      4. Activate Employment
+                    </span>
+                  </div>
+                </div>
+              ) : null}
 
               {isOnboardingCategory(form.category) ? (
                 <>
@@ -1853,6 +2131,46 @@ export default function EmploymentLifecycleModule({ session }) {
                   </div>
                 </>
               ) : null}
+              {createCategoryType === "disciplinary" || createCategoryType === "offboarding" ? (
+                <div className="space-y-1 md:col-span-3">
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                    Upload {createCategoryType === "disciplinary" ? "Disciplinary" : "Offboarding"} Documents
+                  </label>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                    onChange={handleCategoryDocumentsChange(createCategoryType)}
+                    className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-2.5 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Attach supporting files now (max 10 files, 10 MB each).
+                  </p>
+                  {createWorkflowDocuments.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {createWorkflowDocuments.map((file, index) => (
+                        <span
+                          key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700"
+                        >
+                          <span className="max-w-[210px] truncate">{file.name}</span>
+                          <span className="text-slate-500">({formatFileSize(file.size)})</span>
+                          <button
+                            type="button"
+                            onClick={() => removeCategoryDocument(createCategoryType, index)}
+                            className="rounded px-1 text-slate-500 transition hover:bg-slate-200 hover:text-slate-700"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            x
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500">No files selected.</p>
+                  )}
+                </div>
+              ) : null}
               <div
                 className={`space-y-1 ${isRoleMovementCategory(form.category) || isOnboardingCategory(form.category) ? "md:col-span-3" : ""}`}
               >
@@ -1958,26 +2276,29 @@ export default function EmploymentLifecycleModule({ session }) {
               subtitle="Create a workflow or change filters to view results."
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                    {renderLifecycleHeaderCells()}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRecords.map((record) => {
-                    const checklistProgress = getChecklistProgress(record);
-                    const rowSelected = isWorkflowConsoleOpen && selectedRecordId === record.id;
-                    return (
-                      <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                        {renderLifecycleDataCells(record, { checklistProgress, rowSelected })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-[1180px] w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                      {renderLifecycleHeaderCells()}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedRecords.map((record) => {
+                      const checklistProgress = getChecklistProgress(record);
+                      const rowSelected = isWorkflowConsoleOpen && selectedRecordId === record.id;
+                      return (
+                        <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                          {renderLifecycleDataCells(record, { checklistProgress, rowSelected })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationControls pagination={recordsPagination} onPageChange={setRecordsPage} />
+            </>
           )}
         </SurfaceCard>
 
@@ -2022,21 +2343,11 @@ export default function EmploymentLifecycleModule({ session }) {
                 ) : (
                   <div className="space-y-3">
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                <p className="text-sm font-semibold text-slate-900">{valueOrDash(activeRecord.employee)}</p>
-                <p className="text-xs text-slate-600">{valueOrDash(activeRecord.employeeEmail)}</p>
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
-                  <span className="rounded-md border border-slate-200 bg-white px-2 py-1">
-                    Stage: {valueOrDash(activeRecord?.workflow?.stage)}
-                  </span>
-                  <span className="rounded-md border border-slate-200 bg-white px-2 py-1">
-                    SLA Due: {formatDateShort(activeRecord?.workflow?.slaDueAt)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Stage Control</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{valueOrDash(activeRecord.employee)}</p>
+                    <p className="text-xs text-slate-600">{valueOrDash(activeRecord.employeeEmail)}</p>
+                  </div>
                   {canManage ? (
                     <select
                       value={activeStageIndex}
@@ -2051,6 +2362,14 @@ export default function EmploymentLifecycleModule({ session }) {
                       ))}
                     </select>
                   ) : null}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
+                  <span className="rounded-md border border-slate-200 bg-white px-2 py-1">
+                    Stage: {valueOrDash(activeRecord?.workflow?.stage)}
+                  </span>
+                  <span className="rounded-md border border-slate-200 bg-white px-2 py-1">
+                    SLA Due: {formatDateShort(activeRecord?.workflow?.slaDueAt)}
+                  </span>
                 </div>
               </div>
 
@@ -2115,6 +2434,36 @@ export default function EmploymentLifecycleModule({ session }) {
                     </div>
                   ) : null}
                 </div>
+
+                {activeRequiredEvidence.required.length > 0 ? (
+                  <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Required Documents</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {activeRequiredEvidence.required.map((item) => {
+                        const completed = activeRequiredEvidence.matched.some((entry) => entry.id === item.id);
+                        return (
+                          <span
+                            key={item.id}
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${
+                              completed
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-amber-200 bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {item.label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {!activeRequiredEvidence.complete ? (
+                      <p className="mt-1.5 text-[11px] text-amber-700">
+                        Final status is blocked until all required documents are attached.
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-[11px] text-emerald-700">Required evidence complete.</p>
+                    )}
+                  </div>
+                ) : null}
 
                 <div className="mt-2 space-y-2">
                   {activeEvidence.length === 0 ? (

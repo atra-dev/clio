@@ -5,6 +5,7 @@ import SurfaceCard from "@/components/hris/SurfaceCard";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import { useToast } from "@/components/ui/ToastProvider";
+import { useConfirm } from "@/components/ui/ConfirmProvider";
 import { hrisApi } from "@/services/hris-api-client";
 
 const SECTION_TABS = [
@@ -29,6 +30,7 @@ function valueOrDash(value) {
 
 export default function SettingsReferenceDataModule() {
   const toast = useToast();
+  const confirmAction = useConfirm();
   const [section, setSection] = useState("roles");
   const [catalogs, setCatalogs] = useState({
     roles: [],
@@ -113,11 +115,14 @@ export default function SettingsReferenceDataModule() {
     }
 
     const valueLabel = valueOrDash(entry.label || entry.value);
-    if (typeof window !== "undefined") {
-      const confirmed = window.confirm(`Remove "${valueLabel}" from ${section === "roles" ? "role" : "department"} catalog?`);
-      if (!confirmed) {
-        return;
-      }
+    const confirmed = await confirmAction({
+      title: `Remove ${section === "roles" ? "Role" : "Department"}`,
+      message: `Remove "${valueLabel}" from ${section === "roles" ? "role" : "department"} catalog?`,
+      confirmText: "Remove",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
     }
 
     setIsSubmitting(true);

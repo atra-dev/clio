@@ -1,5 +1,7 @@
 const isProduction = process.env.NODE_ENV === "production";
-const distDir = process.env.CLIO_NEXT_DIST_DIR || ".next";
+const distDir =
+  process.env.CLIO_NEXT_DIST_DIR ||
+  (isProduction ? ".next" : "next-dev-cache");
 
 function env(name) {
   return String(process.env[name] || "").trim();
@@ -167,6 +169,14 @@ if (isProduction) {
 const nextConfig = {
   distDir,
   reactCompiler: true,
+  turbopack: {},
+  webpack(config, { dev }) {
+    if (dev) {
+      // Avoid flaky filesystem cache corruption on Windows + synced folders.
+      config.cache = false;
+    }
+    return config;
+  },
   async headers() {
     return [
       {

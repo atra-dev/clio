@@ -33,7 +33,6 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{dashboard.title}</h1>
-        <p className="mt-1 text-sm text-slate-600">{dashboard.subtitle}</p>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -46,7 +45,7 @@ export default async function DashboardPage() {
         ))}
       </section>
 
-      <SurfaceCard title="Role Priorities" subtitle="Focused actions for this workspace role">
+      <SurfaceCard title="Role Priorities">
         <ul className="space-y-2">
           {dashboard.priorities.map((item) => (
             <li key={item} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -57,16 +56,12 @@ export default async function DashboardPage() {
       </SurfaceCard>
 
       {showRoleCoreVisualization ? (
-        <SurfaceCard
-          title="Core Functional Features"
-          subtitle="Simple visualization for GRC, HR, and EA role workspaces"
-        >
+        <SurfaceCard title="Core Functional Features">
           <div className="grid gap-4 lg:grid-cols-2">
             {CORE_FUNCTIONAL_FEATURES.map((feature) => (
               <article key={feature.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Main Tab</p>
                 <h3 className="mt-1 text-base font-semibold text-slate-900">{feature.mainTab}</h3>
-                <p className="mt-1 text-xs text-slate-600">{feature.summary}</p>
                 <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Sub Tabs</p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {feature.subTabs.map((subTab) => (
@@ -83,7 +78,7 @@ export default async function DashboardPage() {
 
       {isEmployeeRole ? (
         <section className="space-y-4">
-          <SurfaceCard title="Dashboard Tabs" subtitle="Employee role (L1/L2/L3) self-service only">
+          <SurfaceCard title="Dashboard Tabs">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {EMPLOYEE_PANEL_LINKS.map((item) => (
                 <Link
@@ -95,41 +90,37 @@ export default async function DashboardPage() {
                     <p className="text-sm font-semibold text-slate-900">{item.title}</p>
                     <span className="rounded-md bg-sky-100 px-2 py-1 text-[11px] font-medium text-sky-700">{item.label}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-600">{item.description}</p>
                 </Link>
               ))}
             </div>
           </SurfaceCard>
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <SurfaceCard title="Accessible Modules" subtitle="Least-privilege permissions for employee self-service">
+            <SurfaceCard title="Accessible Modules">
               <ul className="space-y-2">
                 {EMPLOYEE_ACCESSIBLE_MODULES.map((item) => (
                   <li key={item} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                    {`Allowed: ${item}`}
+                    {item}
                   </li>
                 ))}
               </ul>
             </SurfaceCard>
 
-            <SurfaceCard title="No Access" subtitle="Restricted by RBAC and resource ownership validation">
+            <SurfaceCard title="No Access">
               <ul className="space-y-2">
                 {EMPLOYEE_RESTRICTED_MODULES.map((item) => (
                   <li key={item} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    {`Blocked: ${item}`}
+                    {item}
                   </li>
                 ))}
               </ul>
             </SurfaceCard>
           </section>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
-            Access is enforced on the server for every route and API request.
-          </div>
         </section>
       ) : null}
 
       {!isEmployeeRole ? (
-        <SurfaceCard title="Role Privilege Matrix" subtitle="Least-privilege access model aligned to CLIO policy">
+        <SurfaceCard title="Role Privilege Matrix">
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead>
@@ -171,7 +162,6 @@ export default async function DashboardPage() {
 
       <SurfaceCard
         title={dashboard.table.title}
-        subtitle={dashboard.table.subtitle}
         action={
           <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100">
             {dashboard.table.actionLabel}
