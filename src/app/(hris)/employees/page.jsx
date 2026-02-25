@@ -11,10 +11,10 @@ export default async function EmployeesPage() {
   const heading = employeeRole ? "My Employee Record" : "Employee Records";
   const subtitle = employeeRole
     ? "Review and update your personal employee profile and contact information."
-    : "Directory, profile center, government IDs, payroll details, and role assignments with full audit traceability.";
+    : "Directory, profile, compliance IDs, payroll, and audit history.";
 
   return (
-    <div className={employeeRole ? "space-y-4" : "space-y-6"}>
+    <div className="space-y-3">
       <header>
         <h1
           className={
@@ -25,7 +25,7 @@ export default async function EmployeesPage() {
         >
           {heading}
         </h1>
-        <p className={employeeRole ? "mt-0.5 text-xs text-slate-600" : "mt-1 text-sm text-slate-600"}>
+        <p className={employeeRole ? "mt-0.5 text-xs text-slate-600" : "mt-0.5 text-xs text-slate-600"}>
           {subtitle}
         </p>
       </header>

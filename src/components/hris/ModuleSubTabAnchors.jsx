@@ -14,6 +14,11 @@ const MODULE_SUBTABS = {
     { id: "disciplinary-records", label: "Disciplinary Records" },
     { id: "offboarding-access-revocation", label: "Offboarding + Access Revocation" },
   ],
+  attendance: [
+    { id: "monitoring-dashboard", label: "Attendance Dashboard" },
+    { id: "records", label: "Records" },
+    { id: "audit-logs", label: "Audit Logs" },
+  ],
   "incident-management": [
     { id: "incident-dashboard", label: "Incident Dashboard" },
     { id: "report-incident", label: "Report Incident" },

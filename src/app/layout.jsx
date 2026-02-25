@@ -1,5 +1,6 @@
 import "./globals.css";
 import ToastProvider from "@/components/ui/ToastProvider";
+import ConfirmProvider from "@/components/ui/ConfirmProvider";
 
 export const metadata = {
   title: "Clio HRIS",
@@ -16,7 +17,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className="antialiased">
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          <ConfirmProvider>{children}</ConfirmProvider>
+        </ToastProvider>
       </body>
     </html>
   );

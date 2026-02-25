@@ -39,6 +39,13 @@ const PERMISSION_DENIED_REASONS = new Set([
   "session_role_mismatch",
   "session_version_mismatch",
 ]);
+const ACCOUNT_ACCESS_BLOCK_REASONS = new Set([
+  "account_disabled",
+  "account_inactive",
+  "account_archived",
+  "offboarded_user",
+]);
+const PRIVILEGED_ROLE_KEYS = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -71,6 +78,13 @@ function normalizeEmail(value) {
 function normalizeIp(value) {
   const ip = asString(value).toLowerCase();
   return ip || "unknown";
+}
+
+function normalizeRoleKey(value) {
+  return asString(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function toTimeMs(value) {
@@ -152,6 +166,10 @@ function getDetectionConfig() {
     exportSpikeWindowMinutes: parseIntegerEnv("CLIO_IDS_EXPORT_SPIKE_WINDOW_MINUTES", 20, { min: 1, max: 180 }),
     piiAccessSpikeThreshold: parseIntegerEnv("CLIO_IDS_PII_ACCESS_SPIKE_THRESHOLD", 12, { min: 4, max: 80 }),
     piiAccessSpikeWindowMinutes: parseIntegerEnv("CLIO_IDS_PII_ACCESS_SPIKE_WINDOW_MINUTES", 15, { min: 1, max: 180 }),
+    offboardedAccessThreshold: parseIntegerEnv("CLIO_IDS_OFFBOARDED_ACCESS_THRESHOLD", 2, { min: 1, max: 30 }),
+    offboardedAccessWindowMinutes: parseIntegerEnv("CLIO_IDS_OFFBOARDED_ACCESS_WINDOW_MINUTES", 30, { min: 1, max: 240 }),
+    privilegedRoleChangeThreshold: parseIntegerEnv("CLIO_IDS_ROLE_ESCALATION_THRESHOLD", 2, { min: 1, max: 20 }),
+    privilegedRoleChangeWindowMinutes: parseIntegerEnv("CLIO_IDS_ROLE_ESCALATION_WINDOW_MINUTES", 60, { min: 1, max: 480 }),
     breachWindowMinutes: parseIntegerEnv("CLIO_IDS_BREACH_WINDOW_MINUTES", 30, { min: 5, max: 240 }),
     breachExportThreshold: parseIntegerEnv("CLIO_IDS_BREACH_EXPORT_THRESHOLD", 2, { min: 1, max: 50 }),
     breachPiiThreshold: parseIntegerEnv("CLIO_IDS_BREACH_PII_THRESHOLD", 6, { min: 1, max: 120 }),
@@ -252,20 +270,49 @@ function buildFingerprint(ruleId, entry, detection, nowMs, windowMinutes) {
   return [asString(ruleId), actor || "unknown", sourceIp, moduleName || "module", target || "none", bucket].join("|");
 }
 
+function buildCorrelationKey(ruleId, entry, detection) {
+  const actor = normalizeEmail(entry?.performedBy);
+  const sourceIp = normalizeIp(entry?.metadata?.sourceIp || entry?.sourceIp);
+  const moduleName = normalizeText(entry?.module || "");
+  const target = normalizeEmail(detection?.affectedEmployeeEmail || entry?.metadata?.employeeEmail || "");
+  return [asString(ruleId), actor || "unknown", sourceIp, moduleName || "module", target || "none"].join("|");
+}
+
+function normalizeIncidentState(value) {
+  return normalizeText(value).replace(/\s+/g, "_");
+}
+
+function isIncidentOpenForConsolidation(status) {
+  const state = normalizeIncidentState(status);
+  return !["resolved", "closed"].includes(state);
+}
+
+function toDetectionOccurrenceEntry(entry) {
+  const metadata = asObject(entry?.metadata);
+  return {
+    at: asString(entry?.occurredAt, nowIso()),
+    activityName: asString(entry?.activityName, "Activity"),
+    module: asString(entry?.module, "System"),
+    sourceEventId: asString(entry?.id),
+    sourceIp: asString(metadata.sourceIp || entry?.sourceIp),
+    requestPath: asString(metadata.requestPath || entry?.requestPath),
+    requestMethod: asString(metadata.requestMethod || entry?.requestMethod),
+    actorEmail: normalizeEmail(entry?.performedBy),
+    targetEmployeeEmail: normalizeEmail(metadata.targetEmployeeEmail || metadata.employeeEmail || metadata.affectedEmployeeEmail),
+  };
+}
+
 function chooseSeverity(baseSeverity, observedCount, threshold) {
   const severity = normalizeText(baseSeverity);
   if (severity === "critical") {
-    return "Critical";
+    return "High";
   }
   const safeThreshold = Math.max(1, Number(threshold || 1));
   if (observedCount >= safeThreshold * 2) {
-    return "Critical";
+    return "High";
   }
   if (severity === "high") {
     return "High";
-  }
-  if (severity === "medium") {
-    return "Medium";
   }
   return "Low";
 }
@@ -284,6 +331,8 @@ function extractEventContext(entry) {
     sensitivity: normalizeText(entry?.sensitivity),
     targetEmployeeEmail: normalizeEmail(metadata.targetEmployeeEmail || metadata.employeeEmail || metadata.affectedEmployeeEmail),
     ownerEmail: normalizeEmail(metadata.ownerEmail),
+    targetRole: normalizeRoleKey(metadata.targetRole || metadata.assignedRole || ""),
+    actorRole: normalizeRoleKey(metadata.actorRole || metadata.currentRole || ""),
     occurredAtMs: toTimeMs(entry?.occurredAt) || Date.now(),
   };
 }
@@ -347,7 +396,7 @@ function detectPermissionDeniedSpike(entry, context, config) {
     context.moduleName.includes("employee records") ||
     context.moduleName.includes("performance") ||
     context.moduleName.includes("attendance");
-  const severity = chooseSeverity(piiModule ? "high" : "medium", count, config.permissionDeniedThreshold);
+  const severity = chooseSeverity(piiModule ? "high" : "low", count, config.permissionDeniedThreshold);
   return {
     ruleId: "UNAUTHORIZED_ACCESS_ATTEMPT",
     incidentType: "Unauthorized Access",
@@ -401,16 +450,20 @@ function detectExportSpike(entry, context, config) {
 }
 
 function detectPiiAccessSpike(entry, context, config) {
-  const isPiiRead =
-    context.sensitivity === "sensitive" &&
+  const isRecordViewActivity = context.activityName.includes("view") || context.activityName.includes("list");
+  const isUnauthorizedRecordView =
     context.moduleName.includes("employee records") &&
-    (context.activityName.includes("view") || context.activityName.includes("list")) &&
-    (context.status === "completed" || context.status === "approved");
-  if (!isPiiRead) {
+    isRecordViewActivity &&
+    isDeniedStatus(context.status) &&
+    (PERMISSION_DENIED_REASONS.has(context.reason) ||
+      context.activityName.includes("permission") ||
+      context.activityName.includes("ownership") ||
+      context.activityName.includes("forbidden"));
+  if (!isUnauthorizedRecordView) {
     return null;
   }
 
-  const key = `pii-read:${context.actorEmail || context.sourceIp || "unknown"}`;
+  const key = `unauthorized-record-view:${context.actorEmail || context.sourceIp || "unknown"}`;
   const count = incrementCounterWindow(
     key,
     context.occurredAtMs,
@@ -420,18 +473,92 @@ function detectPiiAccessSpike(entry, context, config) {
     return null;
   }
 
-  const severity = chooseSeverity("medium", count, config.piiAccessSpikeThreshold);
+  const severity = chooseSeverity("high", count, config.piiAccessSpikeThreshold);
   return {
-    ruleId: "PII_ACCESS_VOLUME_SPIKE",
-    incidentType: "Policy Violation",
+    ruleId: "UNAUTHORIZED_RECORD_VIEW_SPIKE",
+    incidentType: "Unauthorized Access",
     severity,
     restrictedPiiInvolved: true,
     observedCount: count,
     windowMinutes: config.piiAccessSpikeWindowMinutes,
     affectedEmployeeEmail: context.targetEmployeeEmail || "",
-    title: "Sensitive PII access spike detected",
-    summary: `Detected ${count} sensitive employee-record read actions in ${config.piiAccessSpikeWindowMinutes} minute(s).`,
-    tags: ["pii", "privacy", "monitoring", "ids"],
+    title: "Unauthorized employee-record view attempts detected",
+    summary: `Detected ${count} denied employee-record view/list actions in ${config.piiAccessSpikeWindowMinutes} minute(s).`,
+    tags: ["authorization", "employee-records", "pii", "ids"],
+  };
+}
+
+function detectOffboardedAccessAttempt(entry, context, config) {
+  const isAuthenticationModule = context.moduleName.includes("authentication") || context.requestPath.includes("/api/auth/");
+  const isAccountBlockedAttempt =
+    isDeniedStatus(context.status) &&
+    (ACCOUNT_ACCESS_BLOCK_REASONS.has(context.reason) ||
+      context.activityName.includes("account disabled") ||
+      context.activityName.includes("account inactive") ||
+      context.activityName.includes("offboard"));
+  if (!(isAuthenticationModule && isAccountBlockedAttempt)) {
+    return null;
+  }
+
+  const key = `offboarded-access:${context.actorEmail || context.sourceIp || "unknown"}`;
+  const count = incrementCounterWindow(
+    key,
+    context.occurredAtMs,
+    config.offboardedAccessWindowMinutes * 60 * 1000,
+  );
+  if (count < config.offboardedAccessThreshold) {
+    return null;
+  }
+
+  const severity = chooseSeverity("high", count, config.offboardedAccessThreshold);
+  return {
+    ruleId: "OFFBOARDED_ACCESS_ATTEMPT",
+    incidentType: "Unauthorized Access",
+    severity,
+    restrictedPiiInvolved: true,
+    observedCount: count,
+    windowMinutes: config.offboardedAccessWindowMinutes,
+    affectedEmployeeEmail: context.actorEmail || context.targetEmployeeEmail,
+    title: "Offboarded/disabled account access attempts detected",
+    summary: `Detected ${count} blocked sign-in/access attempts for disabled or offboarded account ${context.actorEmail || "unknown"} within ${config.offboardedAccessWindowMinutes} minute(s).`,
+    tags: ["authentication", "offboarding", "access-control", "ids"],
+  };
+}
+
+function detectPrivilegedRoleAssignmentSpike(entry, context, config) {
+  const isRoleAssignmentActivity =
+    context.moduleName.includes("user management") &&
+    context.activityName.includes("role updated") &&
+    (context.status === "approved" || context.status === "completed");
+  if (!isRoleAssignmentActivity) {
+    return null;
+  }
+  if (!context.targetRole || !PRIVILEGED_ROLE_KEYS.has(context.targetRole)) {
+    return null;
+  }
+
+  const key = `priv-role-assignment:${context.actorEmail || "unknown"}:${context.targetRole}`;
+  const count = incrementCounterWindow(
+    key,
+    context.occurredAtMs,
+    config.privilegedRoleChangeWindowMinutes * 60 * 1000,
+  );
+  if (count < config.privilegedRoleChangeThreshold) {
+    return null;
+  }
+
+  const severity = chooseSeverity("high", count, config.privilegedRoleChangeThreshold);
+  return {
+    ruleId: "PRIVILEGED_ROLE_ASSIGNMENT_SPIKE",
+    incidentType: "Policy Violation",
+    severity,
+    restrictedPiiInvolved: true,
+    observedCount: count,
+    windowMinutes: config.privilegedRoleChangeWindowMinutes,
+    affectedEmployeeEmail: context.targetEmployeeEmail || "",
+    title: "Privileged role assignment spike detected",
+    summary: `Detected ${count} privileged role assignments (${context.targetRole}) by ${context.actorEmail || "unknown"} within ${config.privilegedRoleChangeWindowMinutes} minute(s).`,
+    tags: ["rbac", "role-assignment", "privilege", "ids"],
   };
 }
 
@@ -498,6 +625,8 @@ function detectSuspiciousEvent(entry, context, config) {
   const rules = [
     detectAuthFailureSpike,
     detectPermissionDeniedSpike,
+    detectOffboardedAccessAttempt,
+    detectPrivilegedRoleAssignmentSpike,
     detectExportSpike,
     detectPiiAccessSpike,
     detectPotentialBreach,
@@ -584,6 +713,7 @@ function buildRetryQueueEntry({
   entry,
   detection,
   fingerprint,
+  correlationKey,
   errorMessage,
   config,
   attempts = 1,
@@ -601,6 +731,7 @@ function buildRetryQueueEntry({
     nextAttemptAt,
     lastError: asString(errorMessage, "ids_processing_failed"),
     fingerprint: asString(fingerprint),
+    correlationKey: asString(correlationKey),
     entry: asObject(entry),
     detection: asObject(detection),
     createdAt: queuedAtIso,
@@ -612,6 +743,7 @@ async function enqueueDetectionRetryWorkItem({
   entry,
   detection,
   fingerprint,
+  correlationKey,
   errorMessage,
   config,
   attempts = 1,
@@ -637,6 +769,7 @@ async function enqueueDetectionRetryWorkItem({
     entry,
     detection,
     fingerprint,
+    correlationKey,
     errorMessage,
     config,
     attempts,
@@ -717,11 +850,7 @@ async function deleteRetryQueueRecord(config, recordId) {
   await deleteDoc(doc(db, config.retryCollectionName, recordId));
 }
 
-async function hasDuplicateIncident(fingerprint, nowMs, config) {
-  if (isInIncidentCooldown(fingerprint, nowMs)) {
-    return true;
-  }
-
+async function findConsolidationIncident({ correlationKey, fingerprint, nowMs, config }) {
   let rows = [];
   try {
     rows = await listIncidentRecordsBackend();
@@ -729,31 +858,80 @@ async function hasDuplicateIncident(fingerprint, nowMs, config) {
     rows = [];
   }
 
-  const cooldownMs = config.incidentCooldownMinutes * 60 * 1000;
-  const duplicate = asArray(rows).some((row) => {
-    const currentFingerprint = asString(row?.detectionFingerprint);
-    if (!currentFingerprint || currentFingerprint !== fingerprint) {
+  const exactActiveMatch = asArray(rows).find((row) => {
+    if (!isIncidentOpenForConsolidation(row?.status)) {
       return false;
     }
-    const status = normalizeText(row?.status);
-    if (status === "resolved" || status === "closed") {
-      return false;
-    }
-    const detectedAtMs = toTimeMs(row?.detectedAt || row?.createdAt);
-    if (!Number.isFinite(detectedAtMs)) {
+    const currentCorrelationKey = asString(row?.detectionCorrelationKey);
+    if (currentCorrelationKey && currentCorrelationKey === correlationKey) {
       return true;
     }
-    return detectedAtMs >= nowMs - cooldownMs;
+    const currentFingerprint = asString(row?.detectionFingerprint);
+    return Boolean(currentFingerprint && currentFingerprint === fingerprint);
   });
+  if (exactActiveMatch) {
+    return exactActiveMatch;
+  }
 
-  return duplicate;
+  if (isInIncidentCooldown(fingerprint, nowMs)) {
+    return { id: "", duplicateOnly: true };
+  }
+
+  return null;
 }
 
-async function createAutoIncident(entry, detection, config, fingerprint, nowMs) {
+async function mergeDetectionIntoIncident({
+  incident,
+  entry,
+  detection,
+  correlationKey,
+  fingerprint,
+  nowMs,
+  config,
+}) {
+  if (!incident?.id) {
+    return null;
+  }
+  const nextCount = Math.max(1, Number(incident?.alertOccurrenceCount || 1)) + 1;
+  const previousOccurrences = asArray(incident?.alertOccurrences).slice(-39);
+  const nextOccurrences = [...previousOccurrences, toDetectionOccurrenceEntry(entry)];
+  const patchPayload = {
+    detectionFingerprint: asString(incident?.detectionFingerprint || fingerprint),
+    detectionCorrelationKey: asString(incident?.detectionCorrelationKey || correlationKey),
+    detectionWindowEnd: new Date(nowMs).toISOString(),
+    alertDescription: detection.summary,
+    alertOccurrenceCount: nextCount,
+    alertFirstObservedAt: asString(incident?.alertFirstObservedAt || incident?.detectedAt || nowIso()),
+    alertLastObservedAt: asString(entry?.occurredAt, nowIso()),
+    alertOccurrences: nextOccurrences,
+    summary: detection.summary,
+    notes: [
+      asString(incident?.notes),
+      `Latest alert occurrence #${nextCount}: ${asString(entry?.activityName, "Activity")} | ${asString(entry?.module, "System")} | ${asString(entry?.occurredAt, nowIso())} | Source IP: ${asString(entry?.metadata?.sourceIp || entry?.sourceIp, "unknown")}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+
+  const updated = await updateIncidentRecordBackend(incident.id, patchPayload, config.systemActorEmail);
+  rememberIncidentCooldown(fingerprint, nowMs, config.incidentCooldownMinutes);
+  return updated;
+}
+
+async function createAutoIncident(entry, detection, config, fingerprint, correlationKey, nowMs) {
   const occurredAt = asString(entry?.occurredAt, nowIso());
   const ownerEmail = resolveOwnerEmail(entry, detection);
   const actorEmail = config.systemActorEmail || DEFAULT_SYSTEM_ACTOR;
   const sourceMetadata = asObject(entry?.metadata);
+  const targetEmployee = asString(
+    sourceMetadata.targetEmployeeEmail || sourceMetadata.employeeEmail || detection.affectedEmployeeEmail,
+    "",
+  );
+  const recordLabel = asString(sourceMetadata.resourceLabel || sourceMetadata.recordRef || sourceMetadata.recordId, "");
+  const viewedFields = asArray(sourceMetadata.viewedFields, []);
+  const accessedDocuments = asArray(sourceMetadata.accessedDocuments, []);
+  const firstObservedAt = asString(entry?.occurredAt, nowIso());
+  const firstOccurrence = toDetectionOccurrenceEntry(entry);
   const payload = {
     title: detection.title,
     summary: detection.summary,
@@ -774,15 +952,33 @@ async function createAutoIncident(entry, detection, config, fingerprint, nowMs) 
       `Auto-generated by CLIO IDS rule: ${detection.ruleId}`,
       `Observed count: ${Number(detection.observedCount || 0)}`,
       `Window: ${Number(detection.windowMinutes || 0)} minute(s)`,
+      targetEmployee ? `Target employee: ${targetEmployee}` : null,
+      recordLabel ? `Record reference: ${recordLabel}` : null,
+      viewedFields.length > 0 ? `Viewed fields: ${viewedFields.slice(0, 12).join(", ")}` : null,
+      accessedDocuments.length > 0
+        ? `Accessed documents: ${accessedDocuments
+            .map((doc) => asString(doc?.name || doc?.ref || doc?.id))
+            .filter(Boolean)
+            .slice(0, 6)
+            .join(", ")}`
+        : null,
       `Source event: ${asString(entry?.id, "N/A")} | ${asString(entry?.module, "System")} | ${asString(entry?.activityName, "Activity")}`,
       `Source IP: ${asString(sourceMetadata.sourceIp || entry?.sourceIp, "unknown")}`,
       `Request: ${asString(sourceMetadata.requestMethod || entry?.requestMethod, "GET")} ${asString(sourceMetadata.requestPath || entry?.requestPath, "unknown")}`,
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
     autoGenerated: true,
     detectionRuleId: detection.ruleId,
     detectionFingerprint: fingerprint,
+    detectionCorrelationKey: correlationKey,
     detectionWindowStart: new Date(nowMs - detection.windowMinutes * 60 * 1000).toISOString(),
     detectionWindowEnd: new Date(nowMs).toISOString(),
+    alertDescription: detection.summary,
+    alertOccurrenceCount: 1,
+    alertFirstObservedAt: firstObservedAt,
+    alertLastObservedAt: firstObservedAt,
+    alertOccurrences: [firstOccurrence],
     sourceSystem: "CLIO_IDS",
     sourceEventId: asString(entry?.id),
     sourceEventModule: asString(entry?.module),
@@ -829,19 +1025,46 @@ async function executeDetectionWorkflow({
   detection,
   config,
   fingerprint,
+  correlationKey,
   nowMs,
 }) {
-  const duplicate = await hasDuplicateIncident(fingerprint, nowMs, config);
-  if (duplicate) {
+  const existingIncident = await findConsolidationIncident({
+    correlationKey,
+    fingerprint,
+    nowMs,
+    config,
+  });
+  if (existingIncident?.duplicateOnly) {
     return {
       detected: true,
       duplicate: true,
       detection,
       fingerprint,
+      correlationKey,
+    };
+  }
+  if (existingIncident?.id) {
+    const updatedIncident = await mergeDetectionIntoIncident({
+      incident: existingIncident,
+      entry,
+      detection,
+      correlationKey,
+      fingerprint,
+      nowMs,
+      config,
+    });
+    return {
+      detected: true,
+      duplicate: true,
+      consolidated: true,
+      detection,
+      fingerprint,
+      correlationKey,
+      incidentRecord: updatedIncident || existingIncident,
     };
   }
 
-  const incident = await createAutoIncident(entry, detection, config, fingerprint, nowMs);
+  const incident = await createAutoIncident(entry, detection, config, fingerprint, correlationKey, nowMs);
   const actionUrl = buildActionUrl(config, incident?.id || incident?.recordId);
   const absoluteActionUrl = buildAbsoluteActionUrl(config, actionUrl);
   const recipients = await resolveAlertRecipients(entry, detection, incident, config);
@@ -899,6 +1122,7 @@ async function processSingleRetryQueueRecord(config, row) {
   const entry = asObject(row?.entry);
   const detection = asObject(row?.detection);
   const fingerprint = asString(row?.fingerprint);
+  const correlationKey = asString(row?.correlationKey);
   if (!fingerprint || !asString(detection?.ruleId) || (!asString(entry?.activityName) && !asString(entry?.module))) {
     await moveRetryRecordToDeadLetter(config, row, "invalid_retry_payload");
     await deleteRetryQueueRecord(config, recordId);
@@ -908,6 +1132,7 @@ async function processSingleRetryQueueRecord(config, row) {
   const result = await processAuditEventForSecurityDetections(entry, {
     forcedDetection: detection,
     forcedFingerprint: fingerprint,
+    forcedCorrelationKey: correlationKey,
     skipQueueOnError: true,
     disableQueueDrain: true,
   });
@@ -1055,6 +1280,8 @@ export async function processAuditEventForSecurityDetections(entry, options = {}
       nowMs,
       detection.windowMinutes || config.incidentCooldownMinutes,
     );
+  const correlationKey =
+    asString(options?.forcedCorrelationKey) || buildCorrelationKey(detection.ruleId, entry, detection);
 
   try {
     return await executeDetectionWorkflow({
@@ -1062,6 +1289,7 @@ export async function processAuditEventForSecurityDetections(entry, options = {}
       detection,
       config,
       fingerprint,
+      correlationKey,
       nowMs,
     });
   } catch (error) {
@@ -1082,6 +1310,7 @@ export async function processAuditEventForSecurityDetections(entry, options = {}
       entry,
       detection,
       fingerprint,
+      correlationKey,
       errorMessage,
       config,
       attempts: 1,

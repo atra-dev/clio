@@ -5,6 +5,7 @@ import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { useToast } from "@/components/ui/ToastProvider";
+import { useConfirm } from "@/components/ui/ConfirmProvider";
 import { toSubTabAnchor } from "@/lib/subtab-anchor";
 import { hrisApi } from "@/services/hris-api-client";
 import {
@@ -12,7 +13,7 @@ import {
   uploadIncidentEvidenceToStorage,
 } from "@/services/firebase-storage-client";
 
-const SEVERITY_OPTIONS = ["Low", "Medium", "High", "Critical"];
+const SEVERITY_OPTIONS = ["Low", "High"];
 const STATUS_OPTIONS = ["Open", "Containment", "Investigating", "Escalated", "Regulatory Review", "Resolved", "Closed"];
 const CONTAINMENT_OPTIONS = ["Not Started", "In Progress", "Contained"];
 const IMPACT_OPTIONS = ["Pending", "In Progress", "Completed"];
@@ -52,7 +53,7 @@ const initialCreateForm = {
   title: "",
   summary: "",
   incidentType: "Unauthorized Access",
-  severity: "Medium",
+  severity: "Low",
   detectedAt: "",
   ownerEmail: "",
   affectedEmployeeEmail: "",
@@ -101,6 +102,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeSeverityValue(value, fallback = "Low") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "high" || normalized === "critical") return "High";
+  if (normalized === "low" || normalized === "medium") return "Low";
+  return fallback;
+}
+
 function getRecordLabel(record) {
   return String(record?.title || "").trim() || String(record?.incidentCode || "").trim() || "Incident";
 }
@@ -110,7 +118,7 @@ function mapDraft(record) {
     title: String(record?.title || ""),
     summary: String(record?.summary || ""),
     incidentType: String(record?.incidentType || "Other"),
-    severity: String(record?.severity || "Medium"),
+    severity: normalizeSeverityValue(record?.severity, "Low"),
     status: String(record?.status || "Open"),
     containmentStatus: String(record?.containmentStatus || "Not Started"),
     containmentSummary: String(record?.containmentSummary || ""),
@@ -141,13 +149,9 @@ function mapDraft(record) {
   };
 }
 
-function requestActionConfirmation(message) {
-  if (typeof window === "undefined") return true;
-  return window.confirm(message);
-}
-
 export default function IncidentManagementModule({ session }) {
   const toast = useToast();
+  const confirmAction = useConfirm();
   const actorRole = String(session?.role || "").trim().toUpperCase();
   const canEdit = actorRole === "GRC" || actorRole === "SUPER_ADMIN";
   const [section, setSection] = useState("incident-dashboard");
@@ -389,7 +393,12 @@ export default function IncidentManagementModule({ session }) {
   const handleBreachConfirmation = async (shouldConfirm) => {
     if (!canEdit || !selectedRecordId) return;
     if (shouldConfirm) {
-      const ok = requestActionConfirmation("Mark this incident as a confirmed breach?");
+      const ok = await confirmAction({
+        title: "Confirm Breach",
+        message: "Mark this incident as a confirmed breach?",
+        confirmText: "Confirm Breach",
+        tone: "danger",
+      });
       if (!ok) return;
     }
     await patchSelected(
@@ -438,7 +447,15 @@ export default function IncidentManagementModule({ session }) {
 
   const removeEvidence = async (entry) => {
     if (!selectedRecord || !canEdit) return;
-    if (!requestActionConfirmation(`Remove evidence "${String(entry?.name || "file")}"?`)) return;
+    if (
+      !(await confirmAction({
+        title: "Remove Evidence",
+        message: `Remove evidence "${String(entry?.name || "file")}"?`,
+        confirmText: "Remove",
+        tone: "danger",
+      }))
+    )
+      return;
     const current = Array.isArray(selectedRecord.evidenceDocuments) ? selectedRecord.evidenceDocuments : [];
     const next = current.filter((item) => String(item?.id || "").trim() !== String(entry?.id || "").trim());
     await patchSelected({ evidenceDocuments: next }, "Evidence removed.");
@@ -524,11 +541,39 @@ export default function IncidentManagementModule({ session }) {
       sample.requestMethod && sample.requestPath
         ? `${sample.requestMethod} ${sample.requestPath}`
         : sample.requestPath || "";
+    const employeeEmail =
+      sample.employeeEmail || sample.targetEmployeeEmail || selectedRecord?.affectedEmployeeEmail || "";
+    const recordLabel = sample.resourceLabel || sample.recordRef || "";
+    const viewedFields = Array.isArray(sample.viewedFields) ? sample.viewedFields : [];
+    const viewedFieldsSummary =
+      viewedFields.length > 0 ? `${viewedFields.slice(0, 8).join(", ")}${viewedFields.length > 8 ? "…" : ""}` : "";
+    const accessedDocuments = Array.isArray(sample.accessedDocuments) ? sample.accessedDocuments : [];
+    const accessedDocsSummary =
+      accessedDocuments.length > 0
+        ? accessedDocuments
+            .map((doc) => String(doc?.name || doc?.ref || doc?.id || "").trim())
+            .filter(Boolean)
+            .slice(0, 6)
+            .join(", ")
+        : "";
     return [
+      { label: "Alert Description", value: selectedRecord?.alertDescription || selectedRecord?.summary || "-" },
+      { label: "Occurrences", value: Number(selectedRecord?.alertOccurrenceCount || 1) },
       { label: "Performed By", value: sample.performedBy || selectedRecord?.ownerEmail || "-" },
       { label: "Activity", value: sample.activityName || selectedRecord?.incidentType || "-" },
       { label: "Module", value: sample.module || "-" },
       { label: "Request", value: requestLine || "-" },
+      { label: "Employee Email", value: employeeEmail || "-" },
+      { label: "Employee Record", value: recordLabel || "-" },
+      {
+        label: "Viewed Fields",
+        value: viewedFieldsSummary || (sample.viewedFieldCount ? `${sample.viewedFieldCount} fields` : "-"),
+      },
+      {
+        label: "Documents Accessed",
+        value:
+          accessedDocsSummary || (sample.accessedDocumentCount ? `${sample.accessedDocumentCount} document(s)` : "-"),
+      },
       { label: "Source IP", value: sample.sourceIp || "-" },
       { label: "Device", value: sample.device || "-" },
       { label: "User Agent", value: sample.userAgent || "-" },
@@ -654,6 +699,12 @@ export default function IncidentManagementModule({ session }) {
                     <td className="px-2 py-3">
                       <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
                       <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {String(record?.alertDescription || record?.summary || "No description provided.")}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-sky-700">
+                        Occurrences: {Number(record?.alertOccurrenceCount || 1)}
+                      </p>
                     </td>
                     <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
                     <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
@@ -892,6 +943,12 @@ export default function IncidentManagementModule({ session }) {
                         <td className="px-2 py-3">
                           <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
                           <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
+                          <p className="mt-1 max-w-[32rem] text-xs text-slate-600">
+                            {String(record?.alertDescription || record?.summary || "No description provided.")}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-sky-700">
+                            Occurrences: {Number(record?.alertOccurrenceCount || 1)}
+                          </p>
                         </td>
                         <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
                         <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
@@ -1204,7 +1261,7 @@ export default function IncidentManagementModule({ session }) {
               </div>
             ) : (
               <div className="max-h-[72vh] space-y-3 overflow-y-auto pr-1">
-                <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 sm:grid-cols-2 lg:grid-cols-6">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Incident</p>
                     <p className="text-sm font-semibold text-slate-900">{getRecordLabel(selectedRecord)}</p>
@@ -1222,7 +1279,65 @@ export default function IncidentManagementModule({ session }) {
                     <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Regulatory Status</p>
                     <StatusBadge value={selectedRecord?.regulatoryStatus || "Not Required"} />
                   </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Occurrences</p>
+                    <p className="text-xs font-semibold text-slate-900">{Number(selectedRecord?.alertOccurrenceCount || 1)}</p>
+                    <p className="text-xs text-slate-500">Last: {formatDateTime(selectedRecord?.alertLastObservedAt)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Alert Rule</p>
+                    <p className="text-xs font-semibold text-slate-900">{String(selectedRecord?.detectionRuleId || "-")}</p>
+                    <p className="text-xs text-slate-500">{String(selectedRecord?.incidentType || "-")}</p>
+                  </div>
                 </div>
+
+                <SurfaceCard
+                  title="Alert Occurrence History"
+                  subtitle="Consolidated alert hits for this incident (newest first)"
+                >
+                  {Array.isArray(selectedRecord?.alertOccurrences) &&
+                  selectedRecord.alertOccurrences.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-left text-xs text-slate-700">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                            <th className="px-2 py-2 font-semibold">#</th>
+                            <th className="px-2 py-2 font-semibold">When</th>
+                            <th className="px-2 py-2 font-semibold">Activity</th>
+                            <th className="px-2 py-2 font-semibold">Module</th>
+                            <th className="px-2 py-2 font-semibold">Actor</th>
+                            <th className="px-2 py-2 font-semibold">Source IP</th>
+                            <th className="px-2 py-2 font-semibold">Path</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...selectedRecord.alertOccurrences]
+                            .reverse()
+                            .map((entry, index) => {
+                              const entryId = String(
+                                entry?.id || entry?.occurredAt || `${entry?.activityName || "entry"}-${index}`,
+                              );
+                              return (
+                                <tr key={`occ-${entryId}-${index}`} className="border-b border-slate-100 align-top">
+                                  <td className="px-2 py-2 text-slate-500">
+                                    {Number(selectedRecord?.alertOccurrenceCount || selectedRecord.alertOccurrences.length) - index}
+                                  </td>
+                                  <td className="px-2 py-2">{formatDateTime(entry?.occurredAt)}</td>
+                                  <td className="px-2 py-2">{String(entry?.activityName || "-")}</td>
+                                  <td className="px-2 py-2">{String(entry?.module || "-")}</td>
+                                  <td className="px-2 py-2">{String(entry?.actorEmail || "-")}</td>
+                                  <td className="px-2 py-2">{String(entry?.sourceIp || "-")}</td>
+                                  <td className="px-2 py-2">{String(entry?.requestPath || "-")}</td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">No occurrence history recorded yet.</p>
+                  )}
+                </SurfaceCard>
 
                 <div className="grid gap-3 lg:grid-cols-2">
                   <SurfaceCard title="Workflow Control" subtitle="Severity, containment, impact, and status updates">

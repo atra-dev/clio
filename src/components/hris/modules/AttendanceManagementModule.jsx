@@ -4,14 +4,14 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
-import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { formatNameFromEmail, formatPersonName } from "@/lib/name-utils";
+import { toSubTabAnchor } from "@/lib/subtab-anchor";
 import { hrisApi } from "@/services/hris-api-client";
 
-const SECTION_TABS = [
-  { id: "time-logs", label: "Time Logs" },
-  { id: "adjustments", label: "Attendance Adjustments" },
+const MANAGEMENT_SECTION_TABS = [
+  { id: "monitoring-dashboard", label: "Attendance Monitoring Dashboard" },
+  { id: "records", label: "Records" },
   { id: "audit-logs", label: "Attendance Audit Logs" },
 ];
 
@@ -54,16 +54,6 @@ const SHIFT_WINDOWS = [
     wrapsMidnight: true,
   },
 ];
-
-const initialAttendanceForm = {
-  employeeEmail: "",
-  employee: "",
-  date: "",
-  checkIn: "",
-  checkOut: "",
-  status: "Recorded",
-  reason: "",
-};
 
 function isEmployeeRole(role) {
   return String(role || "")
@@ -269,6 +259,35 @@ function appendClockOutSummary(existingSummary, clockOutTime) {
   return `${base} | ${suffix}`;
 }
 
+function computeWorkedMinutes(checkInValue, checkOutValue) {
+  const checkIn = parseTimeToMinutes(checkInValue);
+  const checkOut = parseTimeToMinutes(checkOutValue);
+  if (!Number.isFinite(checkIn) || !Number.isFinite(checkOut)) {
+    return null;
+  }
+  let diff = checkOut - checkIn;
+  if (diff < 0) {
+    diff += 24 * 60;
+  }
+  return diff >= 0 ? diff : null;
+}
+
+function formatWorkedHours(minutes) {
+  if (!Number.isFinite(minutes)) {
+    return "-";
+  }
+  const hours = minutes / 60;
+  return `${hours.toFixed(2)} h`;
+}
+
+function getDepartmentLabel(row) {
+  const direct = String(row?.department || "").trim();
+  if (direct) {
+    return direct;
+  }
+  return "Unassigned";
+}
+
 function getStatusBadgeClass(status) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "early") {
@@ -324,7 +343,6 @@ export default function AttendanceManagementModule({ session }) {
   const actorLastName = session?.lastName || "";
   const actorRole = session?.role || "EMPLOYEE_L1";
   const employeeRole = isEmployeeRole(actorRole);
-  const canManage = !employeeRole;
   const employeeDisplayName = useMemo(
     () =>
       formatPersonName({
@@ -338,17 +356,15 @@ export default function AttendanceManagementModule({ session }) {
   );
   const employeeInitials = useMemo(() => getInitialsFromName(employeeDisplayName), [employeeDisplayName]);
 
-  const [section, setSection] = useState("time-logs");
+  const [section, setSection] = useState("monitoring-dashboard");
   const [attendanceRows, setAttendanceRows] = useState([]);
-  const [attendanceForm, setAttendanceForm] = useState(initialAttendanceForm);
-  const [selectedAttendanceId, setSelectedAttendanceId] = useState("");
-  const [adjustmentReason, setAdjustmentReason] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isClockInfoOpen, setIsClockInfoOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [recordsFilter, setRecordsFilter] = useState("all");
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -376,10 +392,50 @@ export default function AttendanceManagementModule({ session }) {
     loadData();
   }, [loadData]);
 
-  const selectedAttendanceRecord = useMemo(
-    () => attendanceRows.find((row) => row.id === selectedAttendanceId) || null,
-    [attendanceRows, selectedAttendanceId],
-  );
+  useEffect(() => {
+    if (employeeRole || typeof window === "undefined") {
+      return;
+    }
+
+    const allowed = new Set(MANAGEMENT_SECTION_TABS.map((tab) => tab.id));
+    const syncSectionFromHash = (rawHash = window.location.hash) => {
+      const hash = String(rawHash || "")
+        .trim()
+        .replace(/^#/, "");
+      if (!hash) {
+        setSection("monitoring-dashboard");
+        return;
+      }
+      const matched = MANAGEMENT_SECTION_TABS.find((tab) => toSubTabAnchor(tab.id) === hash);
+      if (matched && allowed.has(matched.id)) {
+        setSection(matched.id);
+      }
+    };
+
+    const onSubTabAnchor = (event) => {
+      const anchor = String(event?.detail?.anchor || "")
+        .trim()
+        .replace(/^#/, "");
+      if (!anchor) {
+        return;
+      }
+      const matched = MANAGEMENT_SECTION_TABS.find((tab) => toSubTabAnchor(tab.id) === anchor);
+      if (matched && allowed.has(matched.id)) {
+        setSection(matched.id);
+      }
+    };
+
+    const onHashChange = () => syncSectionFromHash();
+
+    syncSectionFromHash();
+    window.addEventListener("hashchange", onHashChange);
+    window.addEventListener("clio:subtab-anchor", onSubTabAnchor);
+
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("clio:subtab-anchor", onSubTabAnchor);
+    };
+  }, [employeeRole]);
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentShift = useMemo(() => resolveShiftForMinutes(currentMinutes), [currentMinutes]);
@@ -412,56 +468,106 @@ export default function AttendanceManagementModule({ session }) {
     [attendanceRows],
   );
 
-  const handleAttendanceField = (field) => (event) => {
-    setAttendanceForm((current) => ({
-      ...current,
-      [field]: event.target.value,
-    }));
-  };
+  const computedAttendanceRows = useMemo(
+    () =>
+      attendanceRows.map((row) => {
+        const workedMinutes = computeWorkedMinutes(row.checkIn, row.checkOut);
+        const isLate = String(row.status || "")
+          .trim()
+          .toLowerCase()
+          .includes("late");
+        const isUndertime = Number.isFinite(workedMinutes) && workedMinutes < 8 * 60;
+        const overtimeMinutes = Number.isFinite(workedMinutes) ? Math.max(0, workedMinutes - 8 * 60) : 0;
 
-  const submitAttendance = async (event) => {
-    event.preventDefault();
-    setIsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = {
-        ...attendanceForm,
-        employeeEmail: employeeRole ? actorEmail : attendanceForm.employeeEmail,
-        employee: employeeRole ? actorEmail : attendanceForm.employee,
-      };
-      await hrisApi.attendance.create(payload);
-      setAttendanceForm(initialAttendanceForm);
-      setSuccessMessage("Attendance entry saved.");
-      await loadData();
-    } catch (error) {
-      setErrorMessage(error.message || "Unable to save attendance entry.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+        return {
+          ...row,
+          workedMinutes,
+          workedHours: formatWorkedHours(workedMinutes),
+          isLate,
+          isUndertime,
+          overtimeMinutes,
+          overtimeHours: formatWorkedHours(overtimeMinutes),
+          departmentLabel: getDepartmentLabel(row),
+        };
+      }),
+    [attendanceRows],
+  );
 
-  const submitAdjustment = async () => {
-    if (!selectedAttendanceRecord?.id) {
-      return;
+  const todaySummary = useMemo(() => {
+    const rows = computedAttendanceRows.filter((row) => normalizeDateKey(row.date || row.createdAt) === todayKey);
+    const total = rows.length;
+    const absent = rows.filter((row) => !hasValue(row.checkIn)).length;
+    const late = rows.filter((row) => row.isLate).length;
+    const completed = rows.filter((row) => hasValue(row.checkIn) && hasValue(row.checkOut)).length;
+    return { total, absent, late, completed };
+  }, [computedAttendanceRows, todayKey]);
+
+  const overtimeRows = useMemo(
+    () => computedAttendanceRows.filter((row) => Number.isFinite(row.overtimeMinutes) && row.overtimeMinutes > 0),
+    [computedAttendanceRows],
+  );
+
+  const departmentOverview = useMemo(() => {
+    const map = new Map();
+    computedAttendanceRows.forEach((row) => {
+      const key = row.departmentLabel;
+      const current = map.get(key) || { department: key, total: 0, late: 0, absent: 0, completed: 0 };
+      current.total += 1;
+      if (row.isLate) {
+        current.late += 1;
+      }
+      if (!hasValue(row.checkIn)) {
+        current.absent += 1;
+      }
+      if (hasValue(row.checkIn) && hasValue(row.checkOut)) {
+        current.completed += 1;
+      }
+      map.set(key, current);
+    });
+    return [...map.values()].sort((left, right) => right.total - left.total);
+  }, [computedAttendanceRows]);
+
+  const dailyTrend = useMemo(() => {
+    const map = new Map();
+    computedAttendanceRows.forEach((row) => {
+      const key = normalizeDateKey(row.date || row.createdAt);
+      if (!key) {
+        return;
+      }
+      const current = map.get(key) || { dateKey: key, total: 0, late: 0, absent: 0 };
+      current.total += 1;
+      if (row.isLate) {
+        current.late += 1;
+      }
+      if (!hasValue(row.checkIn)) {
+        current.absent += 1;
+      }
+      map.set(key, current);
+    });
+    return [...map.values()].sort((a, b) => String(b.dateKey).localeCompare(String(a.dateKey))).slice(0, 7);
+  }, [computedAttendanceRows]);
+
+  const filteredRecords = useMemo(() => {
+    if (recordsFilter === "late") {
+      return computedAttendanceRows.filter((row) => row.isLate);
     }
-    setIsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await hrisApi.attendance.update(selectedAttendanceRecord.id, {
-        reason: adjustmentReason,
-        status: "Adjusted",
-      });
-      setAdjustmentReason("");
-      setSuccessMessage("Attendance adjustment logged.");
-      await loadData();
-    } catch (error) {
-      setErrorMessage(error.message || "Unable to submit adjustment.");
-    } finally {
-      setIsSubmitting(false);
+    if (recordsFilter === "undertime") {
+      return computedAttendanceRows.filter((row) => row.isUndertime);
     }
-  };
+    if (recordsFilter === "overtime") {
+      return computedAttendanceRows.filter((row) => Number.isFinite(row.overtimeMinutes) && row.overtimeMinutes > 0);
+    }
+    if (recordsFilter === "completed") {
+      return computedAttendanceRows.filter((row) => hasValue(row.checkIn) && hasValue(row.checkOut));
+    }
+    if (recordsFilter === "active") {
+      return computedAttendanceRows.filter((row) => hasValue(row.checkIn) && !hasValue(row.checkOut));
+    }
+    if (recordsFilter === "absent") {
+      return computedAttendanceRows.filter((row) => !hasValue(row.checkIn));
+    }
+    return computedAttendanceRows;
+  }, [computedAttendanceRows, recordsFilter]);
 
   const handleClockIn = async () => {
     if (!employeeRole) {
@@ -746,8 +852,6 @@ export default function AttendanceManagementModule({ session }) {
 
   return (
     <div className="space-y-4">
-      <ModuleTabs tabs={SECTION_TABS} value={section} onChange={setSection} />
-
       {errorMessage ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMessage}</p>
       ) : null}
@@ -755,77 +859,104 @@ export default function AttendanceManagementModule({ session }) {
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{successMessage}</p>
       ) : null}
 
-      {(section === "time-logs" || section === "adjustments") && (
-        <SurfaceCard title="Manual Attendance Entry" subtitle="Clock-in and clock-out with traceability">
-          <form className="grid gap-2 md:grid-cols-4" onSubmit={submitAttendance}>
-            {!employeeRole ? (
-              <>
-                <input
-                  required
-                  value={attendanceForm.employeeEmail}
-                  onChange={handleAttendanceField("employeeEmail")}
-                  placeholder="Employee email"
-                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-                <input
-                  value={attendanceForm.employee}
-                  onChange={handleAttendanceField("employee")}
-                  placeholder="Employee name"
-                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-              </>
-            ) : null}
-            <input
-              type="date"
-              required
-              value={attendanceForm.date}
-              onChange={handleAttendanceField("date")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <input
-              type="time"
-              value={attendanceForm.checkIn}
-              onChange={handleAttendanceField("checkIn")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <input
-              type="time"
-              value={attendanceForm.checkOut}
-              onChange={handleAttendanceField("checkOut")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <input
-              value={attendanceForm.reason}
-              onChange={handleAttendanceField("reason")}
-              placeholder="Reason / notes"
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <div className="md:col-span-4">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="inline-flex h-9 items-center justify-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-              >
-                {isSubmitting ? "Saving..." : "Save Attendance"}
-              </button>
-            </div>
-          </form>
-        </SurfaceCard>
-      )}
-
       <SurfaceCard
         title={
-          section === "audit-logs"
-            ? "Attendance Audit Logs"
-            : "Attendance Records"
+          section === "monitoring-dashboard"
+            ? "Attendance Monitoring Dashboard"
+            : section === "records"
+              ? "Attendance Records"
+              : "Attendance Audit Logs"
         }
-        subtitle="Time logs and modification traceability"
+        subtitle="Daily attendance summary, monitoring, and traceability"
       >
         {isLoading ? (
           <p className="text-sm text-slate-600">Loading attendance data...</p>
         ) : (
           <>
-            {section === "audit-logs" ? (
+            {section === "monitoring-dashboard" ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <p className="text-xs uppercase tracking-[0.09em] text-slate-500">Daily Attendance Summary</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">{todaySummary.total}</p>
+                  </div>
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3">
+                    <p className="text-xs uppercase tracking-[0.09em] text-rose-600">Absent Employees</p>
+                    <p className="mt-2 text-2xl font-semibold text-rose-700">{todaySummary.absent}</p>
+                  </div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                    <p className="text-xs uppercase tracking-[0.09em] text-amber-700">Late Employees</p>
+                    <p className="mt-2 text-2xl font-semibold text-amber-700">{todaySummary.late}</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3">
+                    <p className="text-xs uppercase tracking-[0.09em] text-emerald-700">Overtime Reports</p>
+                    <p className="mt-2 text-2xl font-semibold text-emerald-700">{overtimeRows.length}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-sm font-semibold text-slate-900">Department Attendance Overview</p>
+                    {departmentOverview.length === 0 ? (
+                      <p className="mt-2 text-xs text-slate-500">No department attendance data yet.</p>
+                    ) : (
+                      <div className="mt-2 overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-200 uppercase tracking-[0.08em] text-slate-500">
+                              <th className="px-2 py-2 font-medium">Department</th>
+                              <th className="px-2 py-2 font-medium">Total</th>
+                              <th className="px-2 py-2 font-medium">Late</th>
+                              <th className="px-2 py-2 font-medium">Absent</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {departmentOverview.map((item) => (
+                              <tr key={item.department} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                                <td className="px-2 py-2">{item.department}</td>
+                                <td className="px-2 py-2">{item.total}</td>
+                                <td className="px-2 py-2">{item.late}</td>
+                                <td className="px-2 py-2">{item.absent}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-sm font-semibold text-slate-900">Trends and Analytics (Last 7 days)</p>
+                    {dailyTrend.length === 0 ? (
+                      <p className="mt-2 text-xs text-slate-500">No trend data yet.</p>
+                    ) : (
+                      <div className="mt-2 overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-200 uppercase tracking-[0.08em] text-slate-500">
+                              <th className="px-2 py-2 font-medium">Date</th>
+                              <th className="px-2 py-2 font-medium">Total</th>
+                              <th className="px-2 py-2 font-medium">Late</th>
+                              <th className="px-2 py-2 font-medium">Absent</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dailyTrend.map((item) => (
+                              <tr key={item.dateKey} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                                <td className="px-2 py-2">{formatDate(item.dateKey)}</td>
+                                <td className="px-2 py-2">{item.total}</td>
+                                <td className="px-2 py-2">{item.late}</td>
+                                <td className="px-2 py-2">{item.absent}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : section === "audit-logs" ? (
               attendanceRows.length === 0 ? (
                 <EmptyState title="No attendance audit logs yet" subtitle="Modification trails will appear after updates." />
               ) : (
@@ -872,6 +1003,74 @@ export default function AttendanceManagementModule({ session }) {
                   ))}
                 </div>
               )
+            ) : section === "records" ? (
+              <>
+                <div className="mb-3 flex flex-wrap items-end gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.09em] text-slate-500" htmlFor="attendance-records-filter">
+                    Records Filter
+                  </label>
+                  <select
+                    id="attendance-records-filter"
+                    value={recordsFilter}
+                    onChange={(event) => setRecordsFilter(event.target.value)}
+                    className="h-9 min-w-[220px] rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                  >
+                    <option value="all">All records</option>
+                    <option value="late">Late only</option>
+                    <option value="undertime">Undertime only</option>
+                    <option value="overtime">Overtime only</option>
+                    <option value="completed">Completed only</option>
+                    <option value="active">Active (no clock-out)</option>
+                    <option value="absent">Absent (no clock-in)</option>
+                  </select>
+                </div>
+
+                {filteredRecords.length === 0 ? (
+                  <EmptyState title="No matching attendance records" subtitle="Change filter to view other attendance records." />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                          <th className="px-2 py-3 font-medium">Employee</th>
+                          <th className="px-2 py-3 font-medium">Date</th>
+                          <th className="px-2 py-3 font-medium">Clock In</th>
+                          <th className="px-2 py-3 font-medium">Clock Out</th>
+                          <th className="px-2 py-3 font-medium">Worked</th>
+                          <th className="px-2 py-3 font-medium">Overtime</th>
+                          <th className="px-2 py-3 font-medium">Flags</th>
+                          <th className="px-2 py-3 font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRecords.map((row) => (
+                          <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                            <td className="px-2 py-3">
+                              <p className="font-medium text-slate-900">{row.employee || "-"}</p>
+                              <p className="text-xs text-slate-500">{row.employeeEmail || "-"}</p>
+                            </td>
+                            <td className="px-2 py-3">{row.date || "-"}</td>
+                            <td className="px-2 py-3">{row.checkIn || "-"}</td>
+                            <td className="px-2 py-3">{row.checkOut || "-"}</td>
+                            <td className="px-2 py-3">{row.workedHours}</td>
+                            <td className="px-2 py-3">{row.overtimeHours}</td>
+                            <td className="px-2 py-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {row.isLate ? <StatusBadge value="Late" className="bg-amber-100 text-amber-700" /> : null}
+                                {row.isUndertime ? <StatusBadge value="Undertime" className="bg-rose-100 text-rose-700" /> : null}
+                                {!row.isLate && !row.isUndertime ? <span className="text-xs text-slate-500">-</span> : null}
+                              </div>
+                            </td>
+                            <td className="px-2 py-3">
+                              <StatusBadge value={row.status || "-"} className={getStatusBadgeClass(row.status)} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {attendanceRows.length === 0 ? (
@@ -888,7 +1087,6 @@ export default function AttendanceManagementModule({ session }) {
                             <th className="px-2 py-3 font-medium">Clock Out</th>
                             <th className="px-2 py-3 font-medium">Status</th>
                             <th className="px-2 py-3 font-medium">Reason</th>
-                            <th className="px-2 py-3 font-medium text-right">Select</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -905,47 +1103,11 @@ export default function AttendanceManagementModule({ session }) {
                                 <StatusBadge value={row.status || "-"} />
                               </td>
                               <td className="px-2 py-3 text-xs text-slate-600">{row.reason || "-"}</td>
-                              <td className="px-2 py-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedAttendanceId(row.id)}
-                                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                                >
-                                  Select
-                                </button>
-                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-
-                    {section === "adjustments" ? (
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
-                          Attendance Adjustments
-                        </p>
-                        <p className="mt-1 text-xs text-slate-600">
-                          Selected record: {selectedAttendanceRecord ? `${selectedAttendanceRecord.employee} (${selectedAttendanceRecord.date})` : "None"}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <input
-                            value={adjustmentReason}
-                            onChange={(event) => setAdjustmentReason(event.target.value)}
-                            placeholder="Adjustment reason"
-                            className="h-9 min-w-[220px] rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={submitAdjustment}
-                            disabled={!selectedAttendanceRecord || isSubmitting}
-                            className="h-9 rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
-                          >
-                            Save Adjustment
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 )}
               </>

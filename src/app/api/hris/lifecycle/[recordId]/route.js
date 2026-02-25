@@ -158,6 +158,11 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ message: "Approval chain actions are disabled for lifecycle workflows." }, { status: 403 });
     }
 
+    const current = await getLifecycleRecordBackend(recordId);
+    if (!current) {
+      return NextResponse.json({ message: "Record not found." }, { status: 404 });
+    }
+
     const result = await updateLifecycleRecordBackend(recordId, body, session.email, session.role);
     const updated = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];

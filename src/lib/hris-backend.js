@@ -119,7 +119,43 @@ const LIFECYCLE_WORKFLOW_TEMPLATES = {
 const LIFECYCLE_PRIVILEGED_TARGET_ROLES = new Set(["SUPER_ADMIN", "GRC", "HR", "EA"]);
 const LIFECYCLE_ASSIGNABLE_BY_PRIVILEGED = new Set(["EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
 const LIFECYCLE_ASSIGNABLE_BY_GRC = new Set(["GRC", "HR", "EA", "EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
-const INCIDENT_SEVERITY_LEVELS = ["Low", "Medium", "High", "Critical"];
+const LIFECYCLE_REQUIRED_EVIDENCE_RULES = {
+  disciplinary: [
+    {
+      id: "incident-report",
+      label: "Incident Report",
+      keywords: ["incident", "report"],
+    },
+    {
+      id: "notice-to-explain",
+      label: "Notice to Explain / Written Explanation",
+      keywords: ["notice", "explain", "written explanation", "explanation"],
+    },
+    {
+      id: "decision-memo",
+      label: "Decision Memo",
+      keywords: ["decision", "memo"],
+    },
+  ],
+  offboarding: [
+    {
+      id: "resignation-termination",
+      label: "Resignation / Termination Document",
+      keywords: ["resignation", "termination", "termination notice"],
+    },
+    {
+      id: "clearance-form",
+      label: "Clearance Form",
+      keywords: ["clearance"],
+    },
+    {
+      id: "handover-exit",
+      label: "Handover / Exit Checklist",
+      keywords: ["handover", "exit checklist", "exit interview", "knowledge transfer"],
+    },
+  ],
+};
+const INCIDENT_SEVERITY_LEVELS = ["Low", "High"];
 const INCIDENT_STATUS_VALUES = ["Open", "Containment", "Investigating", "Escalated", "Regulatory Review", "Resolved", "Closed"];
 const INCIDENT_CONTAINMENT_STATUS_VALUES = ["Not Started", "In Progress", "Contained"];
 const INCIDENT_IMPACT_STATUS_VALUES = ["Pending", "In Progress", "Completed"];
@@ -878,6 +914,76 @@ function summarizeChecklistProgress(checklist) {
     completedRequired,
     totalRequired,
     percent: totalRequired === 0 ? 0 : Math.round((completedRequired / totalRequired) * 100),
+  };
+}
+
+function isLifecycleFinalStatusForEvidence(workflowType, statusValue) {
+  const workflow = normalizeText(workflowType);
+  const status = normalizeText(statusValue);
+  if (!workflow || !status) {
+    return false;
+  }
+
+  if (workflow === "disciplinary") {
+    return status.includes("approved") || status.includes("completed");
+  }
+
+  if (workflow === "offboarding") {
+    return (
+      status.includes("approved") ||
+      status.includes("completed") ||
+      status.includes("access revoked") ||
+      status.includes("revoked") ||
+      status.includes("resign") ||
+      status.includes("terminated")
+    );
+  }
+
+  return false;
+}
+
+function summarizeLifecycleRequiredEvidence(workflowType, evidenceItems = []) {
+  const normalizedWorkflowType = normalizeText(workflowType);
+  const requiredRules = asArray(LIFECYCLE_REQUIRED_EVIDENCE_RULES[normalizedWorkflowType]);
+  if (requiredRules.length === 0) {
+    return {
+      required: [],
+      matched: [],
+      missing: [],
+      complete: true,
+    };
+  }
+
+  const normalizedEvidence = asArray(evidenceItems).map((entry) => {
+    const source = asObject(entry, {});
+    return normalizeText([source.name, source.type, source.note].filter(Boolean).join(" "));
+  });
+
+  const matched = [];
+  const missing = [];
+
+  requiredRules.forEach((rule) => {
+    const keywords = asArray(rule?.keywords).map((item) => normalizeText(item)).filter(Boolean);
+    const isMatch = normalizedEvidence.some((evidenceText) => keywords.some((keyword) => evidenceText.includes(keyword)));
+    const detail = {
+      id: asString(rule?.id),
+      label: asString(rule?.label),
+    };
+    if (isMatch) {
+      matched.push(detail);
+    } else {
+      missing.push(detail);
+    }
+  });
+
+  return {
+    required: requiredRules.map((rule) => ({
+      id: asString(rule?.id),
+      label: asString(rule?.label),
+    })),
+    matched,
+    missing,
+    complete: missing.length === 0,
   };
 }
 
@@ -1651,15 +1757,23 @@ function normalizeLifecyclePayload(payload, actorEmail, actorRole, { base } = {}
 
   const requestedStatus = asString(payload?.status, asString(base?.status, "In Progress"));
   const status = requestedStatus;
+  const workflowType = asString(template.type, "onboarding");
+  const workflowActionType = normalizeText(action?.type);
+  const requiredEvidence = summarizeLifecycleRequiredEvidence(workflowType, withAction.evidence);
+  const mustEnforceRequiredEvidence = isLifecycleFinalStatusForEvidence(workflowType, status);
+  if (mustEnforceRequiredEvidence && requiredEvidence.missing.length > 0 && workflowActionType !== "add-evidence") {
+    throw new Error("lifecycle_required_evidence_missing");
+  }
 
   return {
     employeeEmail,
     employee: asString(payload?.employee, asString(base?.employee, employeeEmail || "Unknown Employee")),
     category,
-    workflowType: asString(template.type, "onboarding"),
+    workflowType,
     owner: asString(payload?.owner, asString(base?.owner, "HR Operations")),
     details,
     evidence: withAction.evidence,
+    requiredEvidence,
     workflow: withAction.workflow,
     status,
     createdAt: asString(base?.createdAt, timestamp),
@@ -2676,10 +2790,16 @@ export async function markExportAsCompletedBackend(recordId, actorEmail) {
   );
 }
 
-function normalizeIncidentSeverity(value, fallback = "Medium") {
+function normalizeIncidentSeverity(value, fallback = "Low") {
   const normalized = asString(value, fallback).toLowerCase();
+  if (normalized === "critical") {
+    return "High";
+  }
+  if (normalized === "medium") {
+    return "Low";
+  }
   const matched = INCIDENT_SEVERITY_LEVELS.find((entry) => entry.toLowerCase() === normalized);
-  return matched || "Medium";
+  return matched || "Low";
 }
 
 function normalizeIncidentStatus(value, fallback = "Open") {
@@ -2781,11 +2901,35 @@ function sanitizeIncidentEvidenceDocuments(value, actorEmail, fallbackNowIso) {
     .slice(0, MAX_INCIDENT_EVIDENCE_ITEMS);
 }
 
+function sanitizeIncidentAlertOccurrences(value) {
+  return asArray(value)
+    .map((entry) => {
+      const source = asObject(entry, {});
+      const at = toIsoOrEmpty(source.at || source.occurredAt || "");
+      if (!at) {
+        return null;
+      }
+      return {
+        at,
+        activityName: asString(source.activityName || source.action || "Activity"),
+        module: asString(source.module || "System"),
+        sourceEventId: asString(source.sourceEventId || source.eventId || ""),
+        sourceIp: asString(source.sourceIp || ""),
+        requestPath: asString(source.requestPath || ""),
+        requestMethod: asString(source.requestMethod || ""),
+        actorEmail: normalizeEmail(source.actorEmail || source.performedBy || ""),
+        targetEmployeeEmail: normalizeEmail(source.targetEmployeeEmail || source.employeeEmail || ""),
+      };
+    })
+    .filter(Boolean)
+    .slice(-40);
+}
+
 function resolveIncidentEscalationLevel({ severity, restrictedPiiInvolved, executiveNotificationRequired }) {
-  if (severity === "Critical" || executiveNotificationRequired) {
+  if (severity === "High" || executiveNotificationRequired) {
     return "Executive";
   }
-  if (severity === "High" || restrictedPiiInvolved) {
+  if (restrictedPiiInvolved) {
     return "GRC";
   }
   return "Operational";
@@ -2814,11 +2958,7 @@ function resolveIncidentRegulatoryStatus({
 function incidentSeverityRank(value) {
   const severity = normalizeIncidentSeverity(value);
   switch (severity) {
-    case "Critical":
-      return 3;
     case "High":
-      return 2;
-    case "Medium":
       return 1;
     default:
       return 0;
@@ -2881,6 +3021,16 @@ function normalizeIncidentForensicSample(row) {
     sourceIp: asString(row?.sourceIp || metadata?.sourceIp),
     userAgent: asString(row?.userAgent || metadata?.userAgent),
     device: asString(metadata?.device || ""),
+    recordRef: asString(metadata?.recordRef || metadata?.recordId),
+    resourceLabel: asString(metadata?.resourceLabel),
+    employeeEmail: asString(metadata?.employeeEmail),
+    targetEmployeeEmail: asString(metadata?.targetEmployeeEmail || metadata?.affectedEmployeeEmail),
+    viewedFields: asArray(metadata?.viewedFields, []),
+    viewedFieldCount: Number(metadata?.viewedFieldCount || 0),
+    accessedDocuments: asArray(metadata?.accessedDocuments, []),
+    accessedDocumentCount: Number(metadata?.accessedDocumentCount || 0),
+    updatedFields: asArray(metadata?.updatedFields, []),
+    changedFields: asArray(metadata?.changedFields, []),
   };
 }
 
@@ -2981,12 +3131,12 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
   }
 
   const detectedAt = toIsoOrEmpty(payload?.detectedAt || base?.detectedAt || timestamp) || timestamp;
-  const severity = normalizeIncidentSeverity(payload?.severity, asString(base?.severity, "Medium"));
+  const severity = normalizeIncidentSeverity(payload?.severity, asString(base?.severity, "Low"));
   const incidentType = normalizeIncidentType(payload?.incidentType, asString(base?.incidentType, "Other"));
   const restrictedPiiInvolved = asBoolean(payload?.restrictedPiiInvolved, asBoolean(base?.restrictedPiiInvolved, false));
   const executiveNotificationRequired = asBoolean(
     payload?.executiveNotificationRequired,
-    severity === "Critical" || asBoolean(base?.executiveNotificationRequired, false),
+    severity === "High" || asBoolean(base?.executiveNotificationRequired, false),
   );
   const escalationRequired = asBoolean(
     payload?.escalationRequired,
@@ -3069,6 +3219,27 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
   );
   const detectionWindowStart = toIsoOrEmpty(payload?.detectionWindowStart || base?.detectionWindowStart || "");
   const detectionWindowEnd = toIsoOrEmpty(payload?.detectionWindowEnd || base?.detectionWindowEnd || "");
+  const detectionCorrelationKey = asString(payload?.detectionCorrelationKey, asString(base?.detectionCorrelationKey));
+  const alertDescription = asString(payload?.alertDescription, asString(base?.alertDescription));
+  const alertOccurrences = sanitizeIncidentAlertOccurrences(payload?.alertOccurrences || base?.alertOccurrences);
+  const alertFirstObservedAt = toIsoOrEmpty(
+    payload?.alertFirstObservedAt || base?.alertFirstObservedAt || detectedAt || "",
+  );
+  const alertLastObservedAt = toIsoOrEmpty(
+    payload?.alertLastObservedAt || base?.alertLastObservedAt || detectedAt || "",
+  );
+  const defaultOccurrenceCount = alertOccurrences.length > 0 ? alertOccurrences.length : 1;
+  const alertOccurrenceCount = Math.max(
+    1,
+    Number.parseInt(
+      String(
+        payload?.alertOccurrenceCount ??
+          base?.alertOccurrenceCount ??
+          defaultOccurrenceCount,
+      ),
+      10,
+    ) || defaultOccurrenceCount,
+  );
   const alertRecipients = asArray(payload?.alertRecipients || base?.alertRecipients)
     .map((value) => normalizeEmail(value))
     .filter(Boolean)
@@ -3128,8 +3299,14 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
     autoGenerated: asBoolean(payload?.autoGenerated, asBoolean(base?.autoGenerated, false)),
     detectionRuleId: asString(payload?.detectionRuleId, asString(base?.detectionRuleId)),
     detectionFingerprint: asString(payload?.detectionFingerprint, asString(base?.detectionFingerprint)),
+    detectionCorrelationKey,
     detectionWindowStart,
     detectionWindowEnd,
+    alertDescription,
+    alertOccurrenceCount,
+    alertFirstObservedAt,
+    alertLastObservedAt,
+    alertOccurrences,
     sourceSystem: asString(payload?.sourceSystem, asString(base?.sourceSystem)),
     sourceEventId: asString(payload?.sourceEventId, asString(base?.sourceEventId)),
     sourceEventModule: asString(payload?.sourceEventModule, asString(base?.sourceEventModule)),

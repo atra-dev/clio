@@ -217,6 +217,12 @@ export function mapBackendError(reason, fallbackMessage) {
         status: 403,
         message: "Current role is not allowed to approve the active step.",
       };
+    case "lifecycle_required_evidence_missing":
+      return {
+        status: 409,
+        message:
+          "Required supporting documents are missing for this lifecycle category. Attach all required evidence before setting final status.",
+      };
     case "invalid_template_name":
       return { status: 400, message: "Template name is required." };
     case "invalid_export_dataset":

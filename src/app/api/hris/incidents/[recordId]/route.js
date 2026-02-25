@@ -13,6 +13,7 @@ import {
 import { buildIncidentUpdatedNotification } from "@/lib/incident-notification-text";
 import { validateIncidentEvidenceDocumentsStrict } from "@/lib/incident-evidence-security";
 import { drainSecurityDetectionRetryQueue } from "@/lib/security-detection";
+import { dispatchSecurityIncidentAlerts } from "@/lib/security-alert-delivery";
 import {
   logApiAudit,
   mapBackendError,
@@ -102,6 +103,56 @@ const INCIDENT_NOTIFICATION_TRIGGER_FIELDS = new Set([
   "grcAlertedAt",
   "executiveNotifiedAt",
 ]);
+
+function asString(value, fallback = "") {
+  const normalized = String(value || "").trim();
+  return normalized || fallback;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function resolveSourceIp(request) {
+  const fromForwarded = String(request.headers.get("x-forwarded-for") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .find(Boolean);
+  return fromForwarded || String(request.headers.get("x-real-ip") || "").trim() || "";
+}
+
+function buildIncidentUpdateDetection(updated, changedFields = []) {
+  return {
+    ruleId: "MANUAL_INCIDENT_UPDATE",
+    severity: asString(updated?.severity, "Medium"),
+    observedCount: Math.max(1, changedFields.length),
+    windowMinutes: 1,
+    summary:
+      changedFields.length > 0
+        ? `Incident updated (${changedFields.join(", ")})`
+        : asString(updated?.summary || updated?.title, "Incident updated"),
+  };
+}
+
+function buildIncidentUpdateSourceEvent({ request, session, updated, changedFields = [] }) {
+  return {
+    id: asString(updated?.id || updated?.recordId),
+    module: "Incident Management",
+    activityName: "Manual incident updated",
+    status: "Completed",
+    occurredAt: new Date().toISOString(),
+    performedBy: asString(session?.email),
+    requestMethod: request.method,
+    requestPath: request.nextUrl?.pathname || "/api/hris/incidents/:recordId",
+    sourceIp: resolveSourceIp(request),
+    metadata: {
+      sourceIp: resolveSourceIp(request),
+      requestPath: request.nextUrl?.pathname || "/api/hris/incidents/:recordId",
+      requestMethod: request.method,
+      changedFields,
+    },
+  };
+}
  
 function normalizeSeverityForNotification(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -294,6 +345,30 @@ export async function PATCH(request, { params }) {
           },
         })),
       );
+
+      const deliverySummary = await dispatchSecurityIncidentAlerts({
+        incident: {
+          ...updated,
+          actionUrl: incidentActionUrl,
+        },
+        detection: buildIncidentUpdateDetection(updated, changedFields),
+        sourceEvent: buildIncidentUpdateSourceEvent({ request, session, updated, changedFields }),
+        emailRecipients: recipients,
+        smsRecipients: [],
+      });
+      await updateIncidentRecordBackend(
+        updated.id || recordId,
+        {
+          alertRecipients: recipients,
+          alertDispatchSummary: deliverySummary,
+          lastAlertDispatchAt: new Date().toISOString(),
+          externalIntegrations: {
+            ...(updated?.externalIntegrations || {}),
+            manualDispatch: true,
+          },
+        },
+        session.email,
+      ).catch(() => null);
     }
 
     await logApiAudit({
@@ -315,6 +390,7 @@ export async function PATCH(request, { params }) {
         updatedFields: Object.keys(body || {}),
         changedFields,
         changedFieldCount: changedFields.length,
+        pushTriggered: changedFields.length > 0 && shouldNotifyIncidentUpdate(changedFields),
         auditNote:
           changedFields.length > 0
             ? `Updated incident fields: ${summarizeAuditFieldList(changedFields)}.`

@@ -12,9 +12,7 @@ export default async function AttendancePage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Attendance Management</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Time logs, leave workflows, approvals, balance calculations, and traceable attendance adjustments.
-        </p>
+        <p className="mt-1 text-sm text-slate-600">Time logs and attendance audit traceability.</p>
       </header>
 
       <AttendanceManagementModule session={session} />

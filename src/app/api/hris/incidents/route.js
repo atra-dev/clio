@@ -4,6 +4,7 @@ import { consumeRateLimit, enforceRateLimitByRequest } from "@/lib/api-rate-limi
 import {
   createIncidentRecordBackend,
   listIncidentRecordsBackend,
+  updateIncidentRecordBackend,
 } from "@/lib/hris-backend";
 import { hasPermission } from "@/lib/rbac";
 import {
@@ -13,6 +14,7 @@ import {
 import { buildIncidentCreatedNotification } from "@/lib/incident-notification-text";
 import { validateIncidentEvidenceDocumentsStrict } from "@/lib/incident-evidence-security";
 import { drainSecurityDetectionRetryQueue } from "@/lib/security-detection";
+import { dispatchSecurityIncidentAlerts } from "@/lib/security-alert-delivery";
 import {
   logApiAudit,
   mapBackendError,
@@ -103,6 +105,69 @@ function normalizeText(value) {
   return String(value || "")
     .trim()
     .toLowerCase();
+}
+
+function asString(value, fallback = "") {
+  const normalized = String(value || "").trim();
+  return normalized || fallback;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function parseSmsRecipientsFromPayload(payload) {
+  const list = [
+    ...asArray(payload?.alertSmsRecipients),
+    ...String(payload?.alertSmsRecipient || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ];
+  return Array.from(
+    new Set(
+      list
+        .map((item) => String(item || "").replace(/[^\d+]/g, "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function resolveSourceIp(request) {
+  const fromForwarded = String(request.headers.get("x-forwarded-for") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .find(Boolean);
+  return fromForwarded || String(request.headers.get("x-real-ip") || "").trim() || "";
+}
+
+function buildManualIncidentDetection(record) {
+  return {
+    ruleId: "MANUAL_INCIDENT_CREATE",
+    severity: asString(record?.severity, "Medium"),
+    observedCount: 1,
+    windowMinutes: 1,
+    summary: asString(record?.summary || record?.title, "Manual incident created"),
+  };
+}
+
+function buildManualIncidentSourceEvent({ request, session, record }) {
+  return {
+    id: asString(record?.id || record?.recordId),
+    module: "Incident Management",
+    activityName: "Manual incident created",
+    status: "Completed",
+    occurredAt: new Date().toISOString(),
+    performedBy: asString(session?.email),
+    requestMethod: request.method,
+    requestPath: request.nextUrl?.pathname || "/api/hris/incidents",
+    sourceIp: resolveSourceIp(request),
+    metadata: {
+      sourceIp: resolveSourceIp(request),
+      requestPath: request.nextUrl?.pathname || "/api/hris/incidents",
+      requestMethod: request.method,
+    },
+  };
 }
 
 function toTimeMs(value) {
@@ -376,6 +441,27 @@ export async function POST(request) {
       })),
     );
 
+    const smsRecipients = parseSmsRecipientsFromPayload(body);
+    const deliverySummary = await dispatchSecurityIncidentAlerts({
+      incident: {
+        ...created,
+        actionUrl: incidentActionUrl,
+      },
+      detection: buildManualIncidentDetection(created),
+      sourceEvent: buildManualIncidentSourceEvent({ request, session, record: created }),
+      emailRecipients: recipients,
+      smsRecipients,
+    });
+    await updateIncidentRecordBackend(created.id, {
+      alertRecipients: recipients,
+      alertDispatchSummary: deliverySummary,
+      lastAlertDispatchAt: new Date().toISOString(),
+      externalIntegrations: {
+        ...(created?.externalIntegrations || {}),
+        manualDispatch: true,
+      },
+    }, session.email).catch(() => null);
+
     await logApiAudit({
       request,
       module: "Incident Management",
@@ -392,6 +478,10 @@ export async function POST(request) {
         restrictedPiiInvolved: Boolean(created.restrictedPiiInvolved),
         changedFields,
         changedFieldCount: changedFields.length,
+        pushEmailStatus: asString(deliverySummary?.email?.status, "unknown"),
+        pushSmsStatus: asString(deliverySummary?.sms?.status, "unknown"),
+        pushWebhookStatus: asString(deliverySummary?.webhooks?.status, "unknown"),
+        pushSmsRecipients: asArray(deliverySummary?.smsRecipients).length,
         resourceType: "Incident Record",
         resourceLabel: created.title || created.incidentCode || created.id,
         auditNote: `Created incident with fields: ${summarizeAuditFieldList(

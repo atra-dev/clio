@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:turbo": "npm run clean:build-artifacts && next dev",
+    "dev:webpack": "npm run clean:build-artifacts && next dev --webpack",
     "build": "next build",
     "build:clean": "npm run clean:build-artifacts && next build",
     "start": "next start",

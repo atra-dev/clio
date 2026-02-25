@@ -8,6 +8,24 @@ import { normalizeRole } from "@/lib/hris";
 import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 
+export async function GET(request) {
+  const auth = await authorizeApiRequest(request, {
+    auditModule: "Authentication",
+    auditAction: "Session role check",
+  });
+  if (auth.error) {
+    return auth.error;
+  }
+
+  const { session } = auth;
+  return NextResponse.json({
+    ok: true,
+    email: session.email,
+    role: session.role,
+    sessionVersion: session.sessionVersion,
+  });
+}
+
 export async function POST(request) {
   const auth = await authorizeApiRequest(request, {
     allowedRoles: ["SUPER_ADMIN"],

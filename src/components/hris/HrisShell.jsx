@@ -321,20 +321,16 @@ function ModuleIcon({ moduleId, active }) {
 
 function SidebarCloseIcon({ className }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={className} aria-hidden="true">
-      <rect x="3.6" y="4.6" width="16.8" height="14.8" rx="2.2" />
-      <path d="M9 4.8v14.4" />
-      <path d="m14.9 9-2.7 3 2.7 3" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className={className} aria-hidden="true">
+      <path d="m15 5-7 7 7 7" />
     </svg>
   );
 }
 
 function SidebarOpenIcon({ className }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={className} aria-hidden="true">
-      <rect x="3.6" y="4.6" width="16.8" height="14.8" rx="2.2" />
-      <path d="M9 4.8v14.4" />
-      <path d="m13 9 2.8 3-2.8 3" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className={className} aria-hidden="true">
+      <path d="m9 5 7 7-7 7" />
     </svg>
   );
 }
@@ -1036,46 +1032,51 @@ export default function HrisShell({ children, session }) {
       <div
         className={cn(
           "grid h-full w-full gap-0 lg:transition-[grid-template-columns] lg:duration-500 lg:ease-[cubic-bezier(0.22,1,0.36,1)]",
-          isSidebarCollapsed ? "lg:grid-cols-[88px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]",
+          isSidebarCollapsed ? "lg:grid-cols-[88px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]",
         )}
       >
         <aside
           className={cn(
-            "h-full border-r border-slate-200 bg-[linear-gradient(180deg,#f8fbff_0%,#f2f7fc_45%,#eef3f8_100%)] p-5 lg:overflow-hidden lg:transition-[padding] lg:duration-500 lg:ease-[cubic-bezier(0.22,1,0.36,1)]",
-            isSidebarCollapsed ? "lg:px-3.5 lg:py-5" : "lg:p-6",
+            "relative h-full border-r border-slate-200 bg-[linear-gradient(180deg,#f8fbff_0%,#f2f7fc_45%,#eef3f8_100%)] lg:overflow-visible",
+            isSidebarCollapsed ? "px-2 py-4 lg:px-2 lg:py-4" : "p-0",
           )}
         >
           <div className="flex h-full min-h-0 flex-col">
             <div
               className={cn(
                 "flex transition-all duration-300 ease-out",
-                isSidebarCollapsed ? "flex-col items-center gap-2" : "items-center justify-between",
+                isSidebarCollapsed
+                  ? "flex-col items-center gap-2"
+                  : "items-stretch h-[92px] w-full",
               )}
             >
               <BrandMark href="/dashboard" iconOnly={isSidebarCollapsed} />
-
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900"
-                aria-label={isSidebarCollapsed ? "Open sidebar" : "Close sidebar"}
-                title={isSidebarCollapsed ? "Open sidebar" : "Close sidebar"}
-              >
-                {isSidebarCollapsed ? <SidebarOpenIcon className="h-4 w-4" /> : <SidebarCloseIcon className="h-4 w-4" />}
-              </button>
             </div>
 
-            <div className={cn("mt-7 min-h-0 flex-1", isSidebarCollapsed && "mt-6")}>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="absolute -right-4 top-1/2 z-30 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-sky-300 bg-white text-slate-600 shadow-sm transition hover:border-sky-400 hover:text-slate-900"
+              aria-label={isSidebarCollapsed ? "Open sidebar" : "Close sidebar"}
+              title={isSidebarCollapsed ? "Open sidebar" : "Close sidebar"}
+            >
+              {isSidebarCollapsed ? <SidebarOpenIcon className="h-5 w-5" /> : <SidebarCloseIcon className="h-5 w-5" />}
+            </button>
+
+            <div className={cn("mt-4 flex min-h-0 flex-1 flex-col px-2 lg:px-2.5", isSidebarCollapsed && "mt-5")}>
               <div
                 className={cn(
-                  "overflow-hidden px-1 transition-all duration-300 ease-out",
+                  "overflow-hidden px-0.5 transition-all duration-300 ease-out",
                   isSidebarCollapsed ? "max-h-0 opacity-0" : "max-h-6 opacity-100",
                 )}
               >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-700/80">Navigation</p>
               </div>
               <nav
-                className="mt-2 max-h-full space-y-1 overflow-y-auto pr-1 pb-3 [scrollbar-color:#bfdbfe_transparent] [scrollbar-width:thin]"
+                className={cn(
+                  "clio-sidebar-scroll mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-3 pr-2",
+                  isSidebarCollapsed ? "max-h-[calc(100dvh-8.75rem)]" : "max-h-[calc(100dvh-10rem)]",
+                )}
                 aria-label="Main navigation"
               >
                 {modules.map((module) => {
@@ -1090,7 +1091,7 @@ export default function HrisShell({ children, session }) {
                         title={isSidebarCollapsed ? moduleLabel : undefined}
                         className={cn(
                           "group flex items-center gap-2.5 rounded-lg border py-2 text-[13px] transition",
-                          isSidebarCollapsed ? "justify-center px-2.5" : "px-3",
+                          isSidebarCollapsed ? "justify-center px-2" : "px-2",
                           isActive
                             ? "border-sky-200 bg-white text-sky-700 shadow-[0_12px_28px_-20px_rgba(14,116,214,0.8)]"
                             : "border-transparent text-slate-700 hover:border-slate-200/90 hover:bg-white/75",
@@ -1098,8 +1099,8 @@ export default function HrisShell({ children, session }) {
                       >
                         <span
                           className={cn(
-                            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
-                            isActive ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white",
+                            "inline-flex h-7 w-7 shrink-0 items-center justify-center transition",
+                            isActive ? "text-sky-700" : "text-slate-500 group-hover:text-slate-700",
                           )}
                         >
                           <ModuleIcon moduleId={module.id} active={isActive} />
