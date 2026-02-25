@@ -21,7 +21,9 @@ export default function BrandMark({ href = "/", compact = false, iconOnly = fals
       </span>
       {!iconOnly ? (
         <span className="leading-tight">
-          <strong className="block font-semibold tracking-tight">Clio HRIS</strong>
+          <strong className="block text-[15px] font-semibold tracking-[0.28em] text-slate-900">
+            CLIO
+          </strong>
           <span className="text-xs text-slate-500">Corporate Workforce Portal</span>
         </span>
       ) : null}

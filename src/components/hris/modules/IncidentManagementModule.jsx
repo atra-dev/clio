@@ -42,6 +42,7 @@ const initialFilters = {
   incidentType: "all",
   regulatoryStatus: "all",
   restrictedPii: "all",
+  breachConfirmed: "all",
   page: 1,
   pageSize: 12,
 };
@@ -123,6 +124,9 @@ function mapDraft(record) {
     classificationStandard: String(record?.classificationStandard || "CLIO-IR-SEVERITY-V1"),
     forensicWindowStart: toLocalDateTimeInput(record?.forensicWindowStart),
     forensicWindowEnd: toLocalDateTimeInput(record?.forensicWindowEnd),
+    breachConfirmed: Boolean(record?.breachConfirmed),
+    breachConfirmedAt: String(record?.breachConfirmedAt || ""),
+    breachConfirmedBy: String(record?.breachConfirmedBy || ""),
   };
 }
 
@@ -326,6 +330,22 @@ export default function IncidentManagementModule({ session }) {
     await patchSelected({ [field]: nowIso(), ...extraPayload }, successMessage);
   };
 
+  const handleBreachConfirmation = async (shouldConfirm) => {
+    if (!canEdit || !selectedRecordId) return;
+    if (shouldConfirm) {
+      const ok = requestActionConfirmation("Mark this incident as a confirmed breach?");
+      if (!ok) return;
+    }
+    await patchSelected(
+      {
+        breachConfirmed: shouldConfirm,
+        breachConfirmedAt: shouldConfirm ? nowIso() : "",
+        breachConfirmedBy: shouldConfirm ? String(session?.email || "").trim().toLowerCase() : "",
+      },
+      shouldConfirm ? "Breach confirmation recorded." : "Breach confirmation cleared.",
+    );
+  };
+
   const handleEvidenceUpload = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -380,6 +400,16 @@ export default function IncidentManagementModule({ session }) {
     }
     return records;
   }, [records, section]);
+
+  const filteredByBreach = useMemo(() => {
+    if (filters.breachConfirmed === "yes") {
+      return filteredBySection.filter((row) => Boolean(row?.breachConfirmed));
+    }
+    if (filters.breachConfirmed === "no") {
+      return filteredBySection.filter((row) => !row?.breachConfirmed);
+    }
+    return filteredBySection;
+  }, [filteredBySection, filters.breachConfirmed]);
 
   const summaryCards = useMemo(() => {
     if (section === "regulatory-72-hour-notification") {
@@ -482,6 +512,11 @@ export default function IncidentManagementModule({ session }) {
             <option value="yes">PII: Yes</option>
             <option value="no">PII: No</option>
           </select>
+          <select value={filters.breachConfirmed} onChange={(event) => setFilter("breachConfirmed", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+            <option value="all">Breach: All</option>
+            <option value="yes">Breach: Confirmed</option>
+            <option value="no">Breach: Not Confirmed</option>
+          </select>
         </div>
 
         <div className="mt-4">
@@ -489,7 +524,7 @@ export default function IncidentManagementModule({ session }) {
             <div className="flex justify-center py-6">
               <span className="inline-flex h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
             </div>
-          ) : filteredBySection.length === 0 ? (
+          ) : filteredByBreach.length === 0 ? (
             <EmptyState title="No incident records found" subtitle="Create incidents or adjust filters to continue." />
           ) : (
             <div className="overflow-x-auto">
@@ -506,7 +541,7 @@ export default function IncidentManagementModule({ session }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBySection.map((record) => (
+                  {filteredByBreach.map((record) => (
                     <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
                       <td className="px-2 py-3">
                         <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
@@ -784,6 +819,51 @@ export default function IncidentManagementModule({ session }) {
                       <button type="button" onClick={() => markTimestampAction("regulatoryNotifiedAt", "Regulatory notification recorded.", { regulatoryNotificationRequired: true, status: "Regulatory Review" })} disabled={!canEdit || isSavingRecord} className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60">Mark Regulator Notified</button>
                       <button type="button" onClick={() => markTimestampAction("affectedIndividualsNotifiedAt", "Affected individuals notification recorded.")} disabled={!canEdit || isSavingRecord} className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60">Mark Affected Individuals</button>
                       <button type="button" onClick={() => patchSelected({ refreshForensicSnapshot: true }, "Forensic snapshot refreshed.")} disabled={!canEdit || isSavingRecord} className="inline-flex h-8 items-center justify-center rounded-md border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-60">Refresh Forensic</button>
+                    </div>
+                  </SurfaceCard>
+
+                  <SurfaceCard title="Breach Confirmation" subtitle="Manual confirmation required for declared breaches">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Status</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {recordDraft?.breachConfirmed ? "Confirmed breach" : "Not confirmed"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {recordDraft?.breachConfirmedAt ? `At ${formatDateTime(recordDraft.breachConfirmedAt)}` : "Awaiting confirmation"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Confirmed By</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {recordDraft?.breachConfirmedBy ? recordDraft.breachConfirmedBy : "-"}
+                        </p>
+                        <p className="text-xs text-slate-500">Requires GRC approval</p>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {recordDraft?.breachConfirmed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleBreachConfirmation(false)}
+                          disabled={!canEdit || isSavingRecord}
+                          className="inline-flex h-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                        >
+                          Revoke Confirmation
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleBreachConfirmation(true)}
+                          disabled={!canEdit || isSavingRecord}
+                          className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                        >
+                          Mark Breach Confirmed
+                        </button>
+                      )}
+                      {!canEdit ? (
+                        <p className="text-xs text-slate-500">View-only. GRC can confirm breaches.</p>
+                      ) : null}
                     </div>
                   </SurfaceCard>
                 </div>

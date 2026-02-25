@@ -3033,6 +3033,13 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
   const grcAlertedAt = escalationRequired
     ? toIsoOrEmpty(payload?.grcAlertedAt || base?.grcAlertedAt || timestamp) || timestamp
     : "";
+  const breachConfirmed = asBoolean(payload?.breachConfirmed, asBoolean(base?.breachConfirmed, false));
+  const breachConfirmedAt = breachConfirmed
+    ? toIsoOrEmpty(payload?.breachConfirmedAt || base?.breachConfirmedAt || timestamp) || timestamp
+    : "";
+  const breachConfirmedBy = breachConfirmed
+    ? normalizeEmail(payload?.breachConfirmedBy || base?.breachConfirmedBy || actorEmail)
+    : "";
 
   const containmentStartedAt =
     containmentStatus === "In Progress" || containmentStatus === "Contained"
@@ -3093,6 +3100,9 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
     documentationRetained,
     documentationRetainedAt,
     documentationLocation: asString(payload?.documentationLocation, asString(base?.documentationLocation)),
+    breachConfirmed,
+    breachConfirmedAt,
+    breachConfirmedBy,
     forensicWindowStart,
     forensicWindowEnd,
     evidenceDocuments,

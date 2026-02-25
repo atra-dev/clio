@@ -30,6 +30,7 @@ const DEFAULT_OTP_TTL_SECONDS = 300;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 const DEFAULT_OTP_RESEND_COOLDOWN_SECONDS = 60;
 const DEFAULT_LOGIN_MFA_CHALLENGE_TTL_SECONDS = 600;
+const MAX_KNOWN_DEVICES = 12;
 const LEGACY_LOCAL_ACCOUNT_EMAILS = new Set([
   "superadmin@clio.local",
   "temp.admin@clio.local",
@@ -294,6 +295,112 @@ function hashPhoneNumber(value) {
   return hashValue("phone", normalizePhoneNumber(value));
 }
 
+function resolveBrowser(userAgent) {
+  const ua = String(userAgent || "").toLowerCase();
+  if (!ua || ua === "unknown") {
+    return "Unknown Browser";
+  }
+  if (ua.includes("edg/")) return "Microsoft Edge";
+  if (ua.includes("opr/") || ua.includes("opera")) return "Opera";
+  if (ua.includes("firefox/")) return "Firefox";
+  if (ua.includes("safari/") && !ua.includes("chrome/")) return "Safari";
+  if (ua.includes("chrome/")) return "Chrome";
+  return "Browser";
+}
+
+function resolveOs(userAgent) {
+  const ua = String(userAgent || "").toLowerCase();
+  if (!ua || ua === "unknown") {
+    return "Unknown OS";
+  }
+  if (ua.includes("windows")) return "Windows";
+  if (ua.includes("mac os x") || ua.includes("macintosh")) return "macOS";
+  if (ua.includes("android")) return "Android";
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ios")) return "iOS";
+  if (ua.includes("linux")) return "Linux";
+  return "OS";
+}
+
+function summarizeDeviceLabel(userAgent) {
+  const ua = String(userAgent || "").trim();
+  if (!ua || ua === "unknown") {
+    return "Unknown device";
+  }
+  return `${resolveBrowser(ua)} on ${resolveOs(ua)}`;
+}
+
+function normalizeDeviceEntry(entry) {
+  const deviceId = String(entry?.deviceId || "").trim();
+  if (!deviceId) {
+    return null;
+  }
+
+  const firstSeenAt = normalizeIsoTimestamp(entry?.firstSeenAt) || nowIso();
+  const lastSeenAt = normalizeIsoTimestamp(entry?.lastSeenAt) || firstSeenAt;
+  const label = String(entry?.label || "").trim() || "Unknown device";
+  const userAgent = String(entry?.userAgent || "").trim() || "unknown";
+  const lastIp = String(entry?.lastIp || "").trim() || "unknown";
+  const trusted = Boolean(entry?.trusted);
+  const deniedAt = normalizeIsoTimestamp(entry?.deniedAt) || null;
+  const deniedReason = typeof entry?.deniedReason === "string" ? entry.deniedReason : null;
+
+  return {
+    deviceId,
+    label,
+    userAgent,
+    lastIp,
+    firstSeenAt,
+    lastSeenAt,
+    trusted,
+    deniedAt,
+    deniedReason,
+  };
+}
+
+function normalizeDeviceList(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map(normalizeDeviceEntry)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.lastSeenAt || 0).getTime() - new Date(a.lastSeenAt || 0).getTime())
+    .slice(0, MAX_KNOWN_DEVICES);
+}
+
+function buildDeviceFingerprint({
+  userAgent,
+  acceptLanguage,
+  secChUa,
+  secChUaPlatform,
+  secChUaMobile,
+} = {}) {
+  const fingerprintSource = [
+    String(userAgent || "").trim(),
+    String(acceptLanguage || "").trim(),
+    String(secChUa || "").trim(),
+    String(secChUaPlatform || "").trim(),
+    String(secChUaMobile || "").trim(),
+  ]
+    .filter(Boolean)
+    .join("|");
+  return hashValue("device", fingerprintSource || "unknown-device");
+}
+
+function buildDevicePayload({
+  userAgent,
+  ip,
+  acceptLanguage,
+  secChUa,
+  secChUaPlatform,
+  secChUaMobile,
+} = {}) {
+  const deviceId = buildDeviceFingerprint({ userAgent, acceptLanguage, secChUa, secChUaPlatform, secChUaMobile });
+  return {
+    deviceId,
+    label: summarizeDeviceLabel(userAgent),
+    userAgent: String(userAgent || "").trim() || "unknown",
+    lastIp: String(ip || "").trim() || "unknown",
+  };
+}
+
 function isValidOtpCode(value) {
   return /^\d{6}$/.test(String(value || "").trim());
 }
@@ -491,6 +598,7 @@ function normalizeUserRecord(user) {
         updatedAt: normalizeIsoTimestamp(rawLoginMfa?.updatedAt) || null,
       }
     : null;
+  const knownDevices = normalizeDeviceList(user?.knownDevices);
 
   return {
     id: typeof user?.id === "string" && user.id.trim().length > 0 ? user.id : email,
@@ -518,6 +626,7 @@ function normalizeUserRecord(user) {
     profilePhotoDataUrl,
     profilePhotoStoragePath,
     profileUpdatedAt: typeof user?.profileUpdatedAt === "string" ? user.profileUpdatedAt : null,
+    knownDevices,
     loginMfa,
     updatedAt,
     source: user?.source === "bootstrap" ? "bootstrap" : "invite",
@@ -1271,6 +1380,132 @@ async function markUserLoginInFile(email) {
   target.updatedAt = timestamp;
   await writeStore(store);
   return toPublicUser(target);
+}
+
+async function recordLoginDeviceInFile({ email, device }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const store = await loadStore();
+  const target = store.users.find((item) => item.email === normalizedEmail);
+  if (!target) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const devicePayload = normalizeDeviceEntry({
+    ...device,
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp,
+  });
+  if (!devicePayload) {
+    return null;
+  }
+
+  const existingDevices = normalizeDeviceList(target.knownDevices);
+  const existingIndex = existingDevices.findIndex((entry) => entry.deviceId === devicePayload.deviceId);
+  const updatedDevice =
+    existingIndex >= 0
+      ? {
+          ...existingDevices[existingIndex],
+          label: devicePayload.label || existingDevices[existingIndex].label,
+          userAgent: devicePayload.userAgent || existingDevices[existingIndex].userAgent,
+          lastIp: devicePayload.lastIp || existingDevices[existingIndex].lastIp,
+          lastSeenAt: timestamp,
+        }
+      : devicePayload;
+
+  const nextDevices = [...existingDevices];
+  if (existingIndex >= 0) {
+    nextDevices.splice(existingIndex, 1, updatedDevice);
+  } else {
+    nextDevices.push(updatedDevice);
+  }
+
+  target.knownDevices = normalizeDeviceList(nextDevices);
+  target.updatedAt = timestamp;
+  await writeStore(store);
+
+  return {
+    isNew: existingIndex < 0,
+    device: updatedDevice,
+  };
+}
+
+async function updateDeviceTrustInFirestore(db, { email, deviceId, trusted, deniedReason }) {
+  const userRef = doc(db, getUsersCollectionName(), email);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const current = normalizeFirestoreUser(snapshot.id, snapshot.data());
+  if (!current) {
+    return null;
+  }
+
+  const existingDevices = normalizeDeviceList(current.knownDevices);
+  const index = existingDevices.findIndex((entry) => entry.deviceId === deviceId);
+  if (index < 0) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const updatedDevice = {
+    ...existingDevices[index],
+    trusted: Boolean(trusted),
+    deniedAt: trusted ? null : timestamp,
+    deniedReason: trusted ? null : deniedReason || "user_reported",
+    lastSeenAt: timestamp,
+  };
+
+  const nextDevices = [...existingDevices];
+  nextDevices.splice(index, 1, updatedDevice);
+  const normalizedDevices = normalizeDeviceList(nextDevices);
+
+  await updateDoc(userRef, {
+    knownDevices: normalizedDevices,
+    updatedAt: timestamp,
+  });
+
+  return updatedDevice;
+}
+
+async function updateDeviceTrustInFile({ email, deviceId, trusted, deniedReason }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const store = await loadStore();
+  const target = store.users.find((item) => item.email === normalizedEmail);
+  if (!target) {
+    return null;
+  }
+
+  const existingDevices = normalizeDeviceList(target.knownDevices);
+  const index = existingDevices.findIndex((entry) => entry.deviceId === deviceId);
+  if (index < 0) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const updatedDevice = {
+    ...existingDevices[index],
+    trusted: Boolean(trusted),
+    deniedAt: trusted ? null : timestamp,
+    deniedReason: trusted ? null : deniedReason || "user_reported",
+    lastSeenAt: timestamp,
+  };
+
+  const nextDevices = [...existingDevices];
+  nextDevices.splice(index, 1, updatedDevice);
+  target.knownDevices = normalizeDeviceList(nextDevices);
+  target.updatedAt = timestamp;
+  await writeStore(store);
+  return updatedDevice;
 }
 
 async function revokeUserSessionsInFile({ userId }) {
@@ -2587,6 +2822,60 @@ async function completeLoginSmsVerificationInFirestore(db, { email, challengeTok
   return updated ? toPublicUser(updated) : null;
 }
 
+async function recordLoginDeviceInFirestore(db, { email, device }) {
+  const userRef = doc(db, getUsersCollectionName(), email);
+  const snapshot = await getDoc(userRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const current = normalizeFirestoreUser(snapshot.id, snapshot.data());
+  if (!current) {
+    return null;
+  }
+
+  const devicePayload = normalizeDeviceEntry({
+    ...device,
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp,
+  });
+  if (!devicePayload) {
+    return null;
+  }
+
+  const existingDevices = normalizeDeviceList(current.knownDevices);
+  const existingIndex = existingDevices.findIndex((entry) => entry.deviceId === devicePayload.deviceId);
+  const updatedDevice =
+    existingIndex >= 0
+      ? {
+          ...existingDevices[existingIndex],
+          label: devicePayload.label || existingDevices[existingIndex].label,
+          userAgent: devicePayload.userAgent || existingDevices[existingIndex].userAgent,
+          lastIp: devicePayload.lastIp || existingDevices[existingIndex].lastIp,
+          lastSeenAt: timestamp,
+        }
+      : devicePayload;
+
+  const nextDevices = [...existingDevices];
+  if (existingIndex >= 0) {
+    nextDevices.splice(existingIndex, 1, updatedDevice);
+  } else {
+    nextDevices.push(updatedDevice);
+  }
+
+  const sortedDevices = normalizeDeviceList(nextDevices);
+  await updateDoc(userRef, {
+    knownDevices: sortedDevices,
+    updatedAt: timestamp,
+  });
+
+  return {
+    isNew: existingIndex < 0,
+    device: updatedDevice,
+  };
+}
+
 async function completeLoginSmsVerificationInFile({ email, challengeToken, otpCode }) {
   const normalizedEmail = normalizeEmail(email);
   if (!isValidEmail(normalizedEmail)) {
@@ -3267,6 +3556,67 @@ export async function markUserLogin(email) {
   }
 
   return await markUserLoginInFile(normalizedEmail);
+}
+
+export async function recordLoginDevice({ email, userAgent, ip, acceptLanguage, secChUa, secChUaPlatform, secChUaMobile }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const device = buildDevicePayload({
+    userAgent,
+    ip,
+    acceptLanguage,
+    secChUa,
+    secChUaPlatform,
+    secChUaMobile,
+  });
+
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await recordLoginDeviceInFirestore(db, { email: normalizedEmail, device });
+    } catch {
+      return await recordLoginDeviceInFile({ email: normalizedEmail, device });
+    }
+  }
+
+  return await recordLoginDeviceInFile({ email: normalizedEmail, device });
+}
+
+export async function updateLoginDeviceTrust({ email, deviceId, trusted, deniedReason }) {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedDeviceId = String(deviceId || "").trim();
+  if (!normalizedEmail || !normalizedDeviceId) {
+    throw new Error("invalid_device");
+  }
+
+  const db = await getFirestoreStore();
+  if (db) {
+    try {
+      return await updateDeviceTrustInFirestore(db, {
+        email: normalizedEmail,
+        deviceId: normalizedDeviceId,
+        trusted,
+        deniedReason,
+      });
+    } catch {
+      return await updateDeviceTrustInFile({
+        email: normalizedEmail,
+        deviceId: normalizedDeviceId,
+        trusted,
+        deniedReason,
+      });
+    }
+  }
+
+  return await updateDeviceTrustInFile({
+    email: normalizedEmail,
+    deviceId: normalizedDeviceId,
+    trusted,
+    deniedReason,
+  });
 }
 
 export async function revokeUserSessions({ userId }) {

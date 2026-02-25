@@ -115,16 +115,10 @@ export const MODULES = [
     href: "/user-management",
     description: "Invite users, assign roles, and control account status",
   },
-  {
-    id: "settings",
-    label: "Settings",
-    href: "/settings",
-    description: "Manage account security and access preferences",
-  },
 ];
 
 export const MODULE_ACCESS = {
-  SUPER_ADMIN: ["dashboard", "activity-log", "user-management", "settings"],
+  SUPER_ADMIN: ["dashboard", "activity-log", "user-management"],
   GRC: [
     "dashboard",
     "employees",
@@ -137,7 +131,6 @@ export const MODULE_ACCESS = {
     "access-management",
     "retention-archive",
     "incident-management",
-    "settings",
   ],
   HR: [
     "dashboard",
@@ -147,7 +140,6 @@ export const MODULE_ACCESS = {
     "performance",
     "documents",
     "exports",
-    "settings",
   ],
   EA: [
     "dashboard",
@@ -157,7 +149,6 @@ export const MODULE_ACCESS = {
     "performance",
     "documents",
     "exports",
-    "settings",
   ],
   EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance"],
   EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance"],
