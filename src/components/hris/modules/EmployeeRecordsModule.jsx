@@ -1842,7 +1842,29 @@ export default function EmployeeRecordsModule({ session }) {
               </>
             ) : (
               <div className="space-y-3">
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <div className="space-y-2 sm:hidden">
+                  {[
+                    ["Employee ID", valueOrDash(masterDraft.employeeId)],
+                    ["Last Name", valueOrDash(masterDraft.lastName)],
+                    ["First Name", valueOrDash(masterDraft.firstName)],
+                    ["Middle Name", valueOrDash(masterDraft.middleName)],
+                    ["Suffix", valueOrDash(masterDraft.suffix)],
+                    ["Email", valueOrDash(masterDraft.email)],
+                    ["Department", valueOrDash(masterDraft.department)],
+                    ["Role", toLabel(selectedRow.role || "EMPLOYEE_L1")],
+                    ["Job Title", valueOrDash(masterDraft.jobTitle)],
+                    ["Employment Status", valueOrDash(employmentDraft.employmentStatus)],
+                    ["Record Status", valueOrDash(employmentDraft.status)],
+                    ["Start Date", valueOrDash(masterDraft.hireDate)],
+                    ["Emergency Contact", valueOrDash(contactDraft.emergencyContact)],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm text-slate-800">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto rounded-lg border border-slate-200 sm:block">
                   <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
