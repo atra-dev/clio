@@ -6,7 +6,7 @@ import { ROLES } from "@/features/hris/constants";
 
 const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
 const EMPLOYEE_ROLE_IDS = new Set(["EMPLOYEE", "EMPLOYEE_L1", "EMPLOYEE_L2", "EMPLOYEE_L3"]);
-const BASE_INVITE_ROLE_IDS = new Set(["SUPER_ADMIN", "GRC", "HR", "EA", EMPLOYEE_ACCOUNT_ROLE_ID]);
+const BASE_INVITE_ROLE_IDS = new Set(["GRC", "HR", "EA", EMPLOYEE_ACCOUNT_ROLE_ID]);
 const ROLE_LABEL_BY_ID = new Map(ROLES.map((role) => [role.id, role.label]));
 
 function normalizeAccountRoleId(roleId) {

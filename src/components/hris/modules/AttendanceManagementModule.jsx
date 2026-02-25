@@ -11,9 +11,6 @@ import { hrisApi } from "@/services/hris-api-client";
 
 const SECTION_TABS = [
   { id: "time-logs", label: "Time Logs" },
-  { id: "leave-requests", label: "Leave Requests" },
-  { id: "leave-approvals", label: "Leave Approvals" },
-  { id: "leave-balances", label: "Leave Balances" },
   { id: "adjustments", label: "Attendance Adjustments" },
   { id: "audit-logs", label: "Attendance Audit Logs" },
 ];
@@ -65,15 +62,6 @@ const initialAttendanceForm = {
   checkIn: "",
   checkOut: "",
   status: "Recorded",
-  reason: "",
-};
-
-const initialLeaveForm = {
-  employeeEmail: "",
-  employee: "",
-  leaveType: "Vacation Leave",
-  startDate: "",
-  endDate: "",
   reason: "",
 };
 
@@ -177,16 +165,6 @@ function formatDate(value) {
     day: "2-digit",
     year: "numeric",
   }).format(date);
-}
-
-function getLeaveDays(startDate, endDate) {
-  const start = new Date(startDate || "");
-  const end = new Date(endDate || "");
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
-    return 0;
-  }
-  const diff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-  return diff + 1;
 }
 
 function isWithinShiftWindow(minutes, shift) {
@@ -362,9 +340,7 @@ export default function AttendanceManagementModule({ session }) {
 
   const [section, setSection] = useState("time-logs");
   const [attendanceRows, setAttendanceRows] = useState([]);
-  const [leaveRows, setLeaveRows] = useState([]);
   const [attendanceForm, setAttendanceForm] = useState(initialAttendanceForm);
-  const [leaveForm, setLeaveForm] = useState(initialLeaveForm);
   const [selectedAttendanceId, setSelectedAttendanceId] = useState("");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -389,13 +365,6 @@ export default function AttendanceManagementModule({ session }) {
     try {
       const attendancePayload = await hrisApi.attendance.list(employeeRole ? { employeeEmail: actorEmail } : {});
       setAttendanceRows(Array.isArray(attendancePayload.records) ? attendancePayload.records : []);
-
-      if (employeeRole) {
-        setLeaveRows([]);
-      } else {
-        const leavePayload = await hrisApi.leave.list({});
-        setLeaveRows(Array.isArray(leavePayload.records) ? leavePayload.records : []);
-      }
     } catch (error) {
       setErrorMessage(error.message || "Unable to load attendance records.");
     } finally {
@@ -406,37 +375,6 @@ export default function AttendanceManagementModule({ session }) {
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  const leaveBalanceRows = useMemo(() => {
-    const grouped = new Map();
-    leaveRows.forEach((row) => {
-      const email = String(row.employeeEmail || "").trim().toLowerCase();
-      if (!email) {
-        return;
-      }
-      const current = grouped.get(email) || {
-        employeeEmail: row.employeeEmail,
-        employee: row.employee || row.employeeEmail,
-        usedDays: 0,
-        approvedCount: 0,
-      };
-      if (String(row.status || "").trim().toLowerCase() === "approved") {
-        current.approvedCount += 1;
-        current.usedDays += getLeaveDays(row.startDate, row.endDate);
-      }
-      grouped.set(email, current);
-    });
-
-    return Array.from(grouped.values()).map((item) => {
-      const allocated = 15;
-      const remaining = Math.max(0, allocated - item.usedDays);
-      return {
-        ...item,
-        allocated,
-        remaining,
-      };
-    });
-  }, [leaveRows]);
 
   const selectedAttendanceRecord = useMemo(
     () => attendanceRows.find((row) => row.id === selectedAttendanceId) || null,
@@ -481,13 +419,6 @@ export default function AttendanceManagementModule({ session }) {
     }));
   };
 
-  const handleLeaveField = (field) => (event) => {
-    setLeaveForm((current) => ({
-      ...current,
-      [field]: event.target.value,
-    }));
-  };
-
   const submitAttendance = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
@@ -505,49 +436,6 @@ export default function AttendanceManagementModule({ session }) {
       await loadData();
     } catch (error) {
       setErrorMessage(error.message || "Unable to save attendance entry.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const submitLeave = async (event) => {
-    event.preventDefault();
-    setIsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = {
-        ...leaveForm,
-        employeeEmail: employeeRole ? actorEmail : leaveForm.employeeEmail,
-        employee: employeeRole ? actorEmail : leaveForm.employee,
-      };
-      await hrisApi.leave.create(payload);
-      setLeaveForm(initialLeaveForm);
-      setSuccessMessage("Leave request submitted.");
-      await loadData();
-    } catch (error) {
-      setErrorMessage(error.message || "Unable to submit leave request.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleLeaveApproval = async (recordId, approved) => {
-    if (!recordId || !canManage) {
-      return;
-    }
-    setIsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await hrisApi.leave.approve(recordId, {
-        approved,
-        approvalNote: approved ? "Approved by workflow owner" : "Rejected by workflow owner",
-      });
-      setSuccessMessage(approved ? "Leave request approved." : "Leave request rejected.");
-      await loadData();
-    } catch (error) {
-      setErrorMessage(error.message || "Unable to process leave approval.");
     } finally {
       setIsSubmitting(false);
     }
@@ -925,197 +813,19 @@ export default function AttendanceManagementModule({ session }) {
         </SurfaceCard>
       )}
 
-      {(section === "leave-requests" || section === "leave-approvals") && (
-        <SurfaceCard title="Leave Request Workflow" subtitle="Requests, approvals, and leave balance impact">
-          <form className="grid gap-2 md:grid-cols-4" onSubmit={submitLeave}>
-            {!employeeRole ? (
-              <>
-                <input
-                  required
-                  value={leaveForm.employeeEmail}
-                  onChange={handleLeaveField("employeeEmail")}
-                  placeholder="Employee email"
-                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-                <input
-                  value={leaveForm.employee}
-                  onChange={handleLeaveField("employee")}
-                  placeholder="Employee name"
-                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-                />
-              </>
-            ) : null}
-            <select
-              value={leaveForm.leaveType}
-              onChange={handleLeaveField("leaveType")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            >
-              <option>Vacation Leave</option>
-              <option>Sick Leave</option>
-              <option>Emergency Leave</option>
-            </select>
-            <input
-              type="date"
-              required
-              value={leaveForm.startDate}
-              onChange={handleLeaveField("startDate")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <input
-              type="date"
-              required
-              value={leaveForm.endDate}
-              onChange={handleLeaveField("endDate")}
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <input
-              value={leaveForm.reason}
-              onChange={handleLeaveField("reason")}
-              placeholder="Reason"
-              className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
-            />
-            <div className="md:col-span-4">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="inline-flex h-9 items-center justify-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-              >
-                {isSubmitting ? "Submitting..." : "Submit Leave Request"}
-              </button>
-            </div>
-          </form>
-        </SurfaceCard>
-      )}
-
       <SurfaceCard
         title={
-          section === "leave-balances"
-            ? "Leave Balances"
-            : section === "audit-logs"
-              ? "Attendance Audit Logs"
-              : "Attendance Records"
+          section === "audit-logs"
+            ? "Attendance Audit Logs"
+            : "Attendance Records"
         }
-        subtitle="Time logs, leave workflow, and modification traceability"
+        subtitle="Time logs and modification traceability"
       >
         {isLoading ? (
           <p className="text-sm text-slate-600">Loading attendance data...</p>
         ) : (
           <>
-            {section === "leave-balances" ? (
-              leaveBalanceRows.length === 0 ? (
-                <EmptyState title="No leave balance data yet" subtitle="Approved leave requests will update balances automatically." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                        <th className="px-2 py-3 font-medium">Employee</th>
-                        <th className="px-2 py-3 font-medium">Allocated</th>
-                        <th className="px-2 py-3 font-medium">Used</th>
-                        <th className="px-2 py-3 font-medium">Remaining</th>
-                        <th className="px-2 py-3 font-medium">Approved Requests</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leaveBalanceRows.map((row) => (
-                        <tr key={row.employeeEmail} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                          <td className="px-2 py-3 font-medium text-slate-900">{row.employee}</td>
-                          <td className="px-2 py-3">{row.allocated}</td>
-                          <td className="px-2 py-3">{row.usedDays}</td>
-                          <td className="px-2 py-3">{row.remaining}</td>
-                          <td className="px-2 py-3">{row.approvedCount}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            ) : section === "leave-requests" || section === "leave-approvals" ? (
-              leaveRows.length === 0 ? (
-                <EmptyState title="No leave requests yet" subtitle="Submitted leave requests will appear in this table." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                        <th className="px-2 py-3 font-medium">Employee</th>
-                        <th className="px-2 py-3 font-medium">Leave Type</th>
-                        <th className="px-2 py-3 font-medium">Date Range</th>
-                        <th className="px-2 py-3 font-medium">Status</th>
-                        <th className="px-2 py-3 font-medium">Approver</th>
-                        <th className="px-2 py-3 font-medium text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leaveRows.map((row) => (
-                        <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                          <td className="px-2 py-3">
-                            <p className="font-medium text-slate-900">{row.employee || "-"}</p>
-                            <p className="text-xs text-slate-500">{row.employeeEmail || "-"}</p>
-                          </td>
-                          <td className="px-2 py-3">{row.leaveType || "-"}</td>
-                          <td className="px-2 py-3">
-                            {formatDate(row.startDate)} - {formatDate(row.endDate)}
-                          </td>
-                          <td className="px-2 py-3">
-                            <StatusBadge value={row.status || "-"} />
-                          </td>
-                          <td className="px-2 py-3">
-                            {row.approver || row.approverName ? (
-                              <div className="flex items-center gap-2">
-                                <Image
-                                  src={getActorAvatar(row.approverAvatar)}
-                                  alt={`${getActorDisplayName(row.approverName, row.approverEmail || row.approver, "Approver")} profile`}
-                                  width={28}
-                                  height={28}
-                                  className="h-7 w-7 rounded-full border border-slate-200 bg-white object-cover"
-                                />
-                                <div className="min-w-0">
-                                  <p className="truncate text-xs font-medium text-slate-800">
-                                    {getActorDisplayName(row.approverName, row.approverEmail || row.approver, "-")}
-                                  </p>
-                                  {getActorEmail(row.approverEmail || row.approver) ? (
-                                    <p className="truncate text-[11px] text-slate-500">
-                                      {getActorEmail(row.approverEmail || row.approver)}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              </div>
-                            ) : (
-                              "-"
-                            )}
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            {canManage ? (
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleLeaveApproval(row.id, true)}
-                                  disabled={isSubmitting}
-                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleLeaveApproval(row.id, false)}
-                                  disabled={isSubmitting}
-                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-slate-500">View only</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            ) : section === "audit-logs" ? (
+            {section === "audit-logs" ? (
               attendanceRows.length === 0 ? (
                 <EmptyState title="No attendance audit logs yet" subtitle="Modification trails will appear after updates." />
               ) : (

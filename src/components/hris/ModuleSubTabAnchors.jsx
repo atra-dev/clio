@@ -10,7 +10,6 @@ const MODULE_SUBTABS = {
     { id: "profile", label: "Employee Profile" },
     { id: "compliance", label: "Government & Compliance IDs" },
     { id: "payroll", label: "Payroll Information" },
-    { id: "access", label: "Access & Role Assignment" },
     { id: "documents", label: "Employee Attached Documents" },
     { id: "activity", label: "Recent Activity" },
   ],

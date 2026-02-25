@@ -20,7 +20,6 @@ const DETAIL_TABS = [
   { id: "profile", label: "Employee Profile" },
   { id: "compliance", label: "Government & Compliance IDs" },
   { id: "payroll", label: "Payroll Information" },
-  { id: "access", label: "Access & Role Assignment" },
   { id: "documents", label: "Employee Attached Documents" },
   { id: "activity", label: "Recent Activity" },
 ];
@@ -1670,7 +1669,7 @@ export default function EmployeeRecordsModule({ session }) {
       ) : (
         <div className="space-y-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-base font-semibold text-slate-900">
                   {valueOrDash(
@@ -1689,7 +1688,7 @@ export default function EmployeeRecordsModule({ session }) {
                   {valueOrDash(selectedRow.employeeId)} | {valueOrDash(selectedRow.email)}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge value={selectedRow.status || "-"} />
                 <span className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">
                   Restricted PII
@@ -1701,7 +1700,7 @@ export default function EmployeeRecordsModule({ session }) {
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             {canManageRecords ? (
               <>
-                <div className="grid gap-2 md:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   <input
                     value={masterDraft.employeeId}
                     onChange={(event) => setMasterDraft((current) => ({ ...current, employeeId: event.target.value }))}
@@ -1829,7 +1828,7 @@ export default function EmployeeRecordsModule({ session }) {
                   />
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-slate-500">You can update full profile info in one action.</p>
                   <button
                     type="button"
@@ -1879,7 +1878,7 @@ export default function EmployeeRecordsModule({ session }) {
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Editable Contact Details</p>
-                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     <label className="space-y-1">
                       <span className="text-[11px] font-medium text-slate-600">Contact Number</span>
                       <input
@@ -1900,7 +1899,7 @@ export default function EmployeeRecordsModule({ session }) {
                     </label>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-slate-500">
                     All employment details are shown above. You can update contact details here.
                   </p>
@@ -1933,7 +1932,7 @@ export default function EmployeeRecordsModule({ session }) {
         />
       ) : (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Attached Files</p>
               <p className="mt-1 text-xs text-slate-600">
@@ -2255,17 +2254,17 @@ export default function EmployeeRecordsModule({ session }) {
     !selectedRow ? (
       <EmptyState
         title="No employee selected"
-        subtitle="Open an employee from the directory to view profile, compliance, payroll, and access role details."
+        subtitle="Open an employee from the directory to view profile, compliance, and payroll details."
       />
     ) : (
       <>
         {!employeeRole ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
             <ModuleTabs
               tabs={detailTabs}
               value={detailTab}
               onChange={setDetailTab}
-              className="min-w-[220px] flex-1"
+              className="min-w-0 flex-1"
             />
             <button
               type="button"
@@ -2282,7 +2281,6 @@ export default function EmployeeRecordsModule({ session }) {
         {detailTab === "profile" ? renderProfile() : null}
         {!employeeRole && detailTab === "compliance" ? renderCompliance() : null}
         {!employeeRole && detailTab === "payroll" ? renderPayroll() : null}
-        {!employeeRole && detailTab === "access" ? renderAccess() : null}
         {detailTab === "documents" ? renderAttachedDocuments() : null}
         {!employeeRole && detailTab === "activity" ? renderRecentActivitySection() : null}
       </>
