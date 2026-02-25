@@ -118,7 +118,7 @@ export const MODULES = [
 ];
 
 export const MODULE_ACCESS = {
-  SUPER_ADMIN: ["dashboard", "activity-log", "user-management"],
+  SUPER_ADMIN: ["dashboard", "activity-log", "user-management", "settings"],
   GRC: [
     "dashboard",
     "employees",
@@ -128,9 +128,10 @@ export const MODULE_ACCESS = {
     "documents",
     "activity-log",
     "exports",
-    "access-management",
+    "user-management",
     "retention-archive",
     "incident-management",
+    "settings",
   ],
   HR: [
     "dashboard",
@@ -140,6 +141,7 @@ export const MODULE_ACCESS = {
     "performance",
     "documents",
     "exports",
+    "settings",
   ],
   EA: [
     "dashboard",
@@ -149,6 +151,7 @@ export const MODULE_ACCESS = {
     "performance",
     "documents",
     "exports",
+    "settings",
   ],
   EMPLOYEE_L1: ["dashboard", "employees", "attendance", "performance"],
   EMPLOYEE_L2: ["dashboard", "employees", "attendance", "performance"],

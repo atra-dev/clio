@@ -369,6 +369,8 @@ export default function HrisShell({ children, session }) {
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isMarkingNotifications, setIsMarkingNotifications] = useState(false);
+  const [notificationsLimit, setNotificationsLimit] = useState(16);
+  const [notificationFilter, setNotificationFilter] = useState("all");
   const [deviceActionState, setDeviceActionState] = useState({});
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -463,12 +465,13 @@ export default function HrisShell({ children, session }) {
     };
   }, [toast, userEmail]);
 
-  const loadNotifications = useCallback(async ({ quiet = false } = {}) => {
+  const loadNotifications = useCallback(async ({ quiet = false, limit } = {}) => {
     if (!quiet) {
       setIsLoadingNotifications(true);
     }
     try {
-      const response = await fetch("/api/notifications?status=all&limit=16", {
+      const resolvedLimit = typeof limit === "number" ? limit : notificationsLimit;
+      const response = await fetch(`/api/notifications?status=all&limit=${resolvedLimit}`, {
         method: "GET",
         cache: "no-store",
       });
@@ -487,7 +490,7 @@ export default function HrisShell({ children, session }) {
         setIsLoadingNotifications(false);
       }
     }
-  }, [toast]);
+  }, [notificationsLimit, toast]);
 
   useEffect(() => {
     loadNotifications().catch(() => null);
@@ -554,23 +557,10 @@ export default function HrisShell({ children, session }) {
   ]);
 
   const modules = useMemo(() => getModulesForRole(role), [role]);
-  const [currentDateTime, setCurrentDateTime] = useState(() => {
-    try {
-      return new Intl.DateTimeFormat("en-US", {
-        dateStyle: "medium",
-        timeStyle: "medium",
-        timeZone: "Asia/Manila",
-        timeZoneName: "short",
-      }).format(new Date());
-    } catch {
-      return new Intl.DateTimeFormat("en-US", {
-        dateStyle: "medium",
-        timeStyle: "medium",
-      }).format(new Date());
-    }
-  });
+  const [currentDateTime, setCurrentDateTime] = useState("");
   const accountRoleLabel = formatRoleLabel(profileInsights.role || role);
   const employmentRoleLabel = formatEmployeeRoleLabel(profileInsights.employmentRole || profileInsights.role || role);
+  const canOpenSettings = canAccessModule(role, "settings");
   const canOpenNotificationTarget = useCallback(
     (notification) => {
       const notificationType = String(notification?.type || "").trim().toLowerCase();
@@ -591,6 +581,24 @@ export default function HrisShell({ children, session }) {
     },
     [role],
   );
+  const filteredNotifications = useMemo(() => {
+    if (notificationFilter === "all") {
+      return notifications;
+    }
+    if (notificationFilter === "unread") {
+      return notifications.filter(
+        (item) => String(item?.status || "").trim().toLowerCase() !== "read",
+      );
+    }
+    if (notificationFilter === "read") {
+      return notifications.filter(
+        (item) => String(item?.status || "").trim().toLowerCase() === "read",
+      );
+    }
+    return notifications.filter(
+      (item) => String(item?.severity || "").trim().toLowerCase() === notificationFilter,
+    );
+  }, [notificationFilter, notifications]);
 
   useEffect(() => {
     modules.forEach((module) => {
@@ -1073,7 +1081,9 @@ export default function HrisShell({ children, session }) {
           <header className="shrink-0 flex flex-col gap-3 border-b border-slate-200 bg-white/90 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-8">
             <div>
               <p className="text-sm font-medium text-slate-900">Clio Workspace</p>
-              <p className="text-xs text-slate-500">Today: {currentDateTime}</p>
+              <p className="text-xs text-slate-500" suppressHydrationWarning>
+                Today: {currentDateTime || "—"}
+              </p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -1108,7 +1118,7 @@ export default function HrisShell({ children, session }) {
                     isNotificationsOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0",
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">Notifications</p>
                       <p className="text-[11px] text-slate-500">
@@ -1117,14 +1127,39 @@ export default function HrisShell({ children, session }) {
                           : "No unread alerts"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={markAllNotificationsAsRead}
-                      disabled={isMarkingNotifications || notificationUnreadCount === 0}
-                      className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-                    >
-                      Mark all read
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotificationsLimit(120);
+                          loadNotifications({ quiet: false, limit: 120 }).catch(() => null);
+                        }}
+                        className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        View all
+                      </button>
+                      <select
+                        value={notificationFilter}
+                        onChange={(event) => setNotificationFilter(event.target.value)}
+                        className="h-7 rounded-md border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700"
+                      >
+                        <option value="all">All</option>
+                        <option value="unread">Unread</option>
+                        <option value="read">Read</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsAsRead}
+                        disabled={isMarkingNotifications || notificationUnreadCount === 0}
+                        className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Mark all read
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-2">
@@ -1132,13 +1167,13 @@ export default function HrisShell({ children, session }) {
                       <div className="flex justify-center py-6">
                         <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
                       </div>
-                    ) : notifications.length === 0 ? (
+                    ) : filteredNotifications.length === 0 ? (
                       <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
-                        No notifications yet.
+                        No notifications found for this filter.
                       </p>
                     ) : (
                       <ul className="space-y-2">
-                        {notifications.map((item) => {
+                        {filteredNotifications.map((item) => {
                           const itemId = String(item?.id || item?.recordId || "").trim() || `${item?.title}-${item?.createdAt}`;
                           const unread = String(item?.status || "").trim().toLowerCase() !== "read";
                           const notificationType = String(item?.type || "").trim().toLowerCase();
@@ -1235,17 +1270,19 @@ export default function HrisShell({ children, session }) {
                 </div>
               </div>
 
-              <Link
-                href="/settings"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/60"
-                aria-label="Open settings"
-                title="Settings"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4.5 w-4.5" aria-hidden="true">
-                  <path d="M9.9 4.8h4.2l.7 2 2.1.9 1.9-1.1 2.1 3.6-1.6 1.4v2.4l1.6 1.4-2.1 3.6-1.9-1.1-2.1.9-.7 2H9.9l-.7-2-2.1-.9-1.9 1.1-2.1-3.6 1.6-1.4v-2.4l-1.6-1.4 2.1-3.6 1.9 1.1 2.1-.9.7-2Z" />
-                  <circle cx="12" cy="12" r="2.7" />
-                </svg>
-              </Link>
+              {canOpenSettings ? (
+                <Link
+                  href="/settings"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/60"
+                  aria-label="Open settings"
+                  title="Settings"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4.5 w-4.5" aria-hidden="true">
+                    <path d="M9.9 4.8h4.2l.7 2 2.1.9 1.9-1.1 2.1 3.6-1.6 1.4v2.4l1.6 1.4-2.1 3.6-1.9-1.1-2.1.9-.7 2H9.9l-.7-2-2.1-.9-1.9 1.1-2.1-3.6 1.6-1.4v-2.4l-1.6-1.4 2.1-3.6 1.9 1.1 2.1-.9.7-2Z" />
+                    <circle cx="12" cy="12" r="2.7" />
+                  </svg>
+                </Link>
+              ) : null}
 
               <div className="relative">
                 <button
