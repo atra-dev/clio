@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ActivityLogTable from "@/components/hris/ActivityLogTable";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
@@ -32,33 +32,69 @@ export default function ActivityLogModule() {
   const [searchText, setSearchText] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [debouncedFrom, setDebouncedFrom] = useState("");
+  const [debouncedTo, setDebouncedTo] = useState("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const cacheRef = useRef(new Map());
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchText);
+      setDebouncedFrom(fromDate);
+      setDebouncedTo(toDate);
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fromDate, searchText, toDate]);
 
   const loadRows = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const payload = await hrisApi.activityLogs.list({
+      const cacheKey = JSON.stringify({
         category,
-        q: searchText,
-        from: fromDate,
-        to: toDate,
+        q: debouncedSearch,
+        from: debouncedFrom,
+        to: debouncedTo,
         page,
         pageSize: 120,
       });
-      setRows(Array.isArray(payload.records) ? payload.records : []);
+      const cached = cacheRef.current.get(cacheKey);
+      if (cached && Date.now() - cached.at < 60000) {
+        setRows(cached.rows);
+        setPagination(cached.pagination || null);
+        setIsLoading(false);
+        return;
+      }
+      const payload = await hrisApi.activityLogs.list({
+        category,
+        q: debouncedSearch,
+        from: debouncedFrom,
+        to: debouncedTo,
+        page,
+        pageSize: 120,
+      });
+      const nextRows = Array.isArray(payload.records) ? payload.records : [];
+      setRows(nextRows);
       setPagination(payload.pagination || null);
+      cacheRef.current.set(cacheKey, {
+        rows: nextRows,
+        pagination: payload.pagination || null,
+        at: Date.now(),
+      });
     } catch (error) {
       setErrorMessage(error.message || "Unable to load activity logs.");
     } finally {
       setIsLoading(false);
     }
-  }, [category, fromDate, page, searchText, toDate]);
+  }, [category, debouncedFrom, debouncedSearch, debouncedTo, page]);
 
   useEffect(() => {
     loadRows();

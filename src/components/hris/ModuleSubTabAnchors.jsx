@@ -6,13 +6,7 @@ import { toSubTabAnchor } from "@/lib/subtab-anchor";
 import { cn } from "@/lib/utils";
 
 const MODULE_SUBTABS = {
-  employees: [
-    { id: "profile", label: "Employee Profile" },
-    { id: "compliance", label: "Government & Compliance IDs" },
-    { id: "payroll", label: "Payroll Information" },
-    { id: "documents", label: "Employee Attached Documents" },
-    { id: "activity", label: "Recent Activity" },
-  ],
+  employees: [],
   "employment-lifecycle": [
     { id: "workflow-status-tracking", label: "Workflow Status Tracking" },
     { id: "onboarding", label: "Onboarding" },

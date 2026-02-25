@@ -354,6 +354,7 @@ export default function HrisShell({ children, session }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const userEmail = session?.email ?? "user@gmail.com";
+  const [isSessionReady, setIsSessionReady] = useState(false);
   const [profile, setProfile] = useState(null);
   const [profileDraft, setProfileDraft] = useState({
     firstName: "",
@@ -426,8 +427,50 @@ export default function HrisShell({ children, session }) {
 
   useEffect(() => {
     let isMounted = true;
+    let attempts = 0;
+    const maxAttempts = 4;
+    const delays = [0, 300, 700, 1200];
+
+    const confirmSession = async () => {
+      if (!isMounted) {
+        return;
+      }
+      attempts += 1;
+      try {
+        const response = await fetch("/api/auth/role", { method: "GET", cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Session not ready.");
+        }
+        await response.json().catch(() => ({}));
+        if (isMounted) {
+          setIsSessionReady(true);
+        }
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        if (attempts < maxAttempts) {
+          const delay = delays[Math.min(attempts, delays.length - 1)];
+          window.setTimeout(confirmSession, delay);
+        } else {
+          setIsSessionReady(true);
+        }
+      }
+    };
+
+    confirmSession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
 
     async function loadProfile() {
+      if (!isSessionReady) {
+        return;
+      }
       setIsProfileLoading(true);
       try {
         const response = await fetch("/api/auth/profile", { method: "GET", cache: "no-store" });
@@ -463,9 +506,12 @@ export default function HrisShell({ children, session }) {
     return () => {
       isMounted = false;
     };
-  }, [toast, userEmail]);
+  }, [isSessionReady, toast, userEmail]);
 
   const loadNotifications = useCallback(async ({ quiet = false, limit } = {}) => {
+    if (!isSessionReady) {
+      return;
+    }
     if (!quiet) {
       setIsLoadingNotifications(true);
     }
@@ -490,9 +536,12 @@ export default function HrisShell({ children, session }) {
         setIsLoadingNotifications(false);
       }
     }
-  }, [notificationsLimit, toast]);
+  }, [isSessionReady, notificationsLimit, toast]);
 
   useEffect(() => {
+    if (!isSessionReady) {
+      return;
+    }
     loadNotifications().catch(() => null);
     const timer = window.setInterval(() => {
       loadNotifications({ quiet: true }).catch(() => null);
@@ -501,7 +550,7 @@ export default function HrisShell({ children, session }) {
     return () => {
       window.clearInterval(timer);
     };
-  }, [loadNotifications]);
+  }, [isSessionReady, loadNotifications]);
 
   useEffect(() => {
     if ((!isProfileModalOpen && !isNotificationsOpen) || typeof window === "undefined") {
@@ -672,7 +721,9 @@ export default function HrisShell({ children, session }) {
     });
     setIsNotificationsOpen(false);
     setIsProfileModalOpen(true);
-    loadProfileInsights();
+    if (isSessionReady) {
+      loadProfileInsights();
+    }
   };
 
   const closeProfileEditor = () => {
@@ -802,6 +853,9 @@ export default function HrisShell({ children, session }) {
   };
 
   const loadProfileInsights = async () => {
+    if (!isSessionReady) {
+      return;
+    }
     setIsLoadingProfileInsights(true);
     try {
       const response = await fetch("/api/auth/profile/activity", { method: "GET", cache: "no-store" });

@@ -542,6 +542,7 @@ export default function EmployeeRecordsModule({ session }) {
   const [records, setRecords] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -561,6 +562,8 @@ export default function EmployeeRecordsModule({ session }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const detailsPanelRef = useRef(null);
   const documentInputRef = useRef(null);
+  const selectedIdRef = useRef("");
+  const recordCacheRef = useRef(new Map());
   const detailTabs = useMemo(
     () => (employeeRole ? DETAIL_TABS.filter((tab) => tab.id === "profile" || tab.id === "documents") : DETAIL_TABS),
     [employeeRole],
@@ -617,6 +620,19 @@ export default function EmployeeRecordsModule({ session }) {
   }, [showCreateForm]);
 
   useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  useEffect(() => {
     if (employeeRole) {
       setReferenceCatalog({
         roles: DEFAULT_ROLE_OPTIONS,
@@ -656,7 +672,7 @@ export default function EmployeeRecordsModule({ session }) {
     setIsLoading(true);
     try {
       const payload = await hrisApi.employees.list({
-        q: query,
+        q: debouncedQuery,
         status: statusFilter,
         role: roleFilter,
         page,
@@ -673,16 +689,16 @@ export default function EmployeeRecordsModule({ session }) {
       setPagination(payload.pagination || null);
       if (employeeRole) {
         const ownRecordId = rows[0]?.id || "";
-        if (selectedId !== ownRecordId) {
+        if (selectedIdRef.current !== ownRecordId) {
           setSelectedId(ownRecordId);
         }
         setShowDetailsPanel(Boolean(ownRecordId));
         return;
       }
-      if (!selectedId && rows[0]?.id) {
+      if (!selectedIdRef.current && rows[0]?.id) {
         setSelectedId(rows[0].id);
       }
-      if (selectedId && !rows.some((item) => item.id === selectedId)) {
+      if (selectedIdRef.current && !rows.some((item) => item.id === selectedIdRef.current)) {
         setSelectedId(rows[0]?.id || "");
       }
     } catch (error) {
@@ -690,7 +706,7 @@ export default function EmployeeRecordsModule({ session }) {
     } finally {
       setIsLoading(false);
     }
-  }, [employeeRole, page, query, roleFilter, selectedId, statusFilter, toast]);
+  }, [debouncedQuery, employeeRole, page, roleFilter, statusFilter, toast]);
 
   const loadSelectedRecord = useCallback(async () => {
     const targetRecordId = normalizeRecordId(selectedId);
@@ -700,14 +716,23 @@ export default function EmployeeRecordsModule({ session }) {
     }
 
     try {
+      const cached = recordCacheRef.current.get(targetRecordId);
+      if (cached && Date.now() - cached.at < 60000) {
+        setSelectedRecord(cached.record);
+        return;
+      }
       const payload = await hrisApi.employees.get(targetRecordId);
       const record = payload.record ? { ...payload.record, name: composeRecordDisplayName(payload.record) } : null;
       setSelectedRecord(record);
+      if (record) {
+        recordCacheRef.current.set(targetRecordId, { record, at: Date.now() });
+      }
     } catch (error) {
       if (String(error?.message || "").toLowerCase().includes("invalid record identifier")) {
         setSelectedId("");
         setShowDetailsPanel(false);
       }
+      recordCacheRef.current.delete(targetRecordId);
       setSelectedRecord(null);
       toast.error(error.message || "Unable to load employee profile.");
     }
