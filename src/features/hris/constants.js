@@ -115,12 +115,6 @@ export const MODULES = [
     href: "/user-management",
     description: "Invite users, assign roles, and control account status",
   },
-  {
-    id: "settings",
-    label: "Settings",
-    href: "/settings",
-    description: "Manage account security and access preferences",
-  },
 ];
 
 export const MODULE_ACCESS = {
@@ -134,7 +128,7 @@ export const MODULE_ACCESS = {
     "documents",
     "activity-log",
     "exports",
-    "access-management",
+    "user-management",
     "retention-archive",
     "incident-management",
     "settings",

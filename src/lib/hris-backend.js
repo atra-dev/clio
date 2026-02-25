@@ -2868,6 +2868,7 @@ function isIncidentAdministrativeEvent(row) {
 }
 
 function normalizeIncidentForensicSample(row) {
+  const metadata = asObject(row?.metadata, {});
   return {
     id: asString(row?.id),
     activityName: asString(row?.activityName),
@@ -2877,6 +2878,9 @@ function normalizeIncidentForensicSample(row) {
     performedBy: asString(row?.performedBy),
     requestMethod: asString(row?.requestMethod),
     requestPath: asString(row?.requestPath),
+    sourceIp: asString(row?.sourceIp || metadata?.sourceIp),
+    userAgent: asString(row?.userAgent || metadata?.userAgent),
+    device: asString(metadata?.device || ""),
   };
 }
 
@@ -3033,6 +3037,13 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
   const grcAlertedAt = escalationRequired
     ? toIsoOrEmpty(payload?.grcAlertedAt || base?.grcAlertedAt || timestamp) || timestamp
     : "";
+  const breachConfirmed = asBoolean(payload?.breachConfirmed, asBoolean(base?.breachConfirmed, false));
+  const breachConfirmedAt = breachConfirmed
+    ? toIsoOrEmpty(payload?.breachConfirmedAt || base?.breachConfirmedAt || timestamp) || timestamp
+    : "";
+  const breachConfirmedBy = breachConfirmed
+    ? normalizeEmail(payload?.breachConfirmedBy || base?.breachConfirmedBy || actorEmail)
+    : "";
 
   const containmentStartedAt =
     containmentStatus === "In Progress" || containmentStatus === "Contained"
@@ -3062,6 +3073,10 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
     .map((value) => normalizeEmail(value))
     .filter(Boolean)
     .slice(0, 40);
+  const involvedEmployees = asArray(payload?.involvedEmployees || base?.involvedEmployees)
+    .map((value) => normalizeEmail(value))
+    .filter(Boolean)
+    .slice(0, 40);
 
   return {
     incidentCode: asString(base?.incidentCode, buildIncidentCode(detectedAt)),
@@ -3073,6 +3088,8 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
     restrictedPiiInvolved,
     affectedEmployeeEmail: normalizeEmail(payload?.affectedEmployeeEmail || base?.affectedEmployeeEmail),
     ownerEmail: normalizeEmail(payload?.ownerEmail || base?.ownerEmail || actorEmail),
+    department: asString(payload?.department, asString(base?.department)),
+    involvedEmployees,
     escalationRequired,
     escalationLevel,
     executiveNotificationRequired,
@@ -3093,6 +3110,15 @@ function normalizeIncidentWritePayload(payload, actorEmail, { base } = {}) {
     documentationRetained,
     documentationRetainedAt,
     documentationLocation: asString(payload?.documentationLocation, asString(base?.documentationLocation)),
+    breachConfirmed,
+    breachConfirmedAt,
+    breachConfirmedBy,
+    correctiveActions: asString(payload?.correctiveActions, asString(base?.correctiveActions)),
+    disciplinaryActions: asString(payload?.disciplinaryActions, asString(base?.disciplinaryActions)),
+    resolutionNotes: asString(payload?.resolutionNotes, asString(base?.resolutionNotes)),
+    closureApprovalStatus: asString(payload?.closureApprovalStatus, asString(base?.closureApprovalStatus, "Pending Approval")),
+    closureApprovedBy: asString(payload?.closureApprovedBy, asString(base?.closureApprovedBy)),
+    closureApprovedAt: toIsoOrEmpty(payload?.closureApprovedAt || base?.closureApprovedAt || ""),
     forensicWindowStart,
     forensicWindowEnd,
     evidenceDocuments,

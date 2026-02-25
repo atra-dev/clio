@@ -152,6 +152,10 @@ function getDetectionConfig() {
     exportSpikeWindowMinutes: parseIntegerEnv("CLIO_IDS_EXPORT_SPIKE_WINDOW_MINUTES", 20, { min: 1, max: 180 }),
     piiAccessSpikeThreshold: parseIntegerEnv("CLIO_IDS_PII_ACCESS_SPIKE_THRESHOLD", 12, { min: 4, max: 80 }),
     piiAccessSpikeWindowMinutes: parseIntegerEnv("CLIO_IDS_PII_ACCESS_SPIKE_WINDOW_MINUTES", 15, { min: 1, max: 180 }),
+    breachWindowMinutes: parseIntegerEnv("CLIO_IDS_BREACH_WINDOW_MINUTES", 30, { min: 5, max: 240 }),
+    breachExportThreshold: parseIntegerEnv("CLIO_IDS_BREACH_EXPORT_THRESHOLD", 2, { min: 1, max: 50 }),
+    breachPiiThreshold: parseIntegerEnv("CLIO_IDS_BREACH_PII_THRESHOLD", 6, { min: 1, max: 120 }),
+    breachDeniedThreshold: parseIntegerEnv("CLIO_IDS_BREACH_DENIED_THRESHOLD", 2, { min: 0, max: 50 }),
     incidentCooldownMinutes: parseIntegerEnv("CLIO_IDS_INCIDENT_COOLDOWN_MINUTES", 15, { min: 1, max: 360 }),
     maxRecipientCount: parseIntegerEnv("CLIO_IDS_MAX_RECIPIENTS", 20, { min: 1, max: 100 }),
     systemActorEmail: normalizeEmail(process.env.CLIO_IDS_SYSTEM_ACTOR_EMAIL) || DEFAULT_SYSTEM_ACTOR,
@@ -186,6 +190,18 @@ function incrementCounterWindow(key, timestampMs, windowMs) {
   const existing = EVENT_COUNTER_WINDOWS.get(normalizedKey) || [];
   const pruned = pruneCounterWindow(existing, safeTimestamp, windowMs);
   pruned.push(safeTimestamp);
+  EVENT_COUNTER_WINDOWS.set(normalizedKey, pruned);
+  return pruned.length;
+}
+
+function getCounterCount(key, timestampMs, windowMs) {
+  const normalizedKey = asString(key);
+  if (!normalizedKey) {
+    return 0;
+  }
+  const safeTimestamp = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+  const existing = EVENT_COUNTER_WINDOWS.get(normalizedKey) || [];
+  const pruned = pruneCounterWindow(existing, safeTimestamp, windowMs);
   EVENT_COUNTER_WINDOWS.set(normalizedKey, pruned);
   return pruned.length;
 }
@@ -419,12 +435,72 @@ function detectPiiAccessSpike(entry, context, config) {
   };
 }
 
+function detectPotentialBreach(entry, context, config) {
+  const windowMs = config.breachWindowMinutes * 60 * 1000;
+  const actorKey = context.actorEmail || context.sourceIp || "unknown";
+
+  const isExportActivity =
+    context.moduleName.includes("export") ||
+    context.requestPath.includes("/api/hris/exports") ||
+    context.activityName.includes("export");
+  const isExportCompleted =
+    isExportActivity && (context.status === "approved" || context.status === "completed");
+  if (isExportCompleted) {
+    incrementCounterWindow(`breach-export:${actorKey}`, context.occurredAtMs, windowMs);
+  }
+
+  const isPiiRead =
+    context.sensitivity === "sensitive" &&
+    context.moduleName.includes("employee records") &&
+    (context.activityName.includes("view") || context.activityName.includes("list")) &&
+    (context.status === "completed" || context.status === "approved");
+  if (isPiiRead) {
+    incrementCounterWindow(`breach-pii:${actorKey}`, context.occurredAtMs, windowMs);
+  }
+
+  const isPermissionDenied =
+    isDeniedStatus(context.status) &&
+    (PERMISSION_DENIED_REASONS.has(context.reason) ||
+      context.activityName.includes("permission") ||
+      context.activityName.includes("ownership") ||
+      context.activityName.includes("forbidden"));
+  if (isPermissionDenied) {
+    incrementCounterWindow(`breach-denied:${actorKey}`, context.occurredAtMs, windowMs);
+  }
+
+  const exportCount = getCounterCount(`breach-export:${actorKey}`, context.occurredAtMs, windowMs);
+  const piiCount = getCounterCount(`breach-pii:${actorKey}`, context.occurredAtMs, windowMs);
+  const deniedCount = getCounterCount(`breach-denied:${actorKey}`, context.occurredAtMs, windowMs);
+
+  const meetsExport = exportCount >= config.breachExportThreshold;
+  const meetsPii = piiCount >= config.breachPiiThreshold;
+  const meetsDenied = config.breachDeniedThreshold <= 0 || deniedCount >= config.breachDeniedThreshold;
+  if (!(meetsExport && meetsPii && meetsDenied)) {
+    return null;
+  }
+
+  const severity = chooseSeverity("high", exportCount + piiCount + deniedCount, Math.max(1, config.breachExportThreshold));
+  return {
+    ruleId: "POTENTIAL_BREACH_SIGNAL",
+    incidentType: "Data Exposure",
+    severity,
+    restrictedPiiInvolved: true,
+    observedCount: exportCount + piiCount + deniedCount,
+    windowMinutes: config.breachWindowMinutes,
+    affectedEmployeeEmail: context.targetEmployeeEmail || context.actorEmail,
+    title: "Potential breach indicators detected",
+    summary: `Detected ${exportCount} export action(s), ${piiCount} PII access event(s), and ${deniedCount} access denial(s) for ${actorKey} within ${config.breachWindowMinutes} minute(s).`,
+    tags: ["breach-signal", "export", "pii", "ids"],
+  };
+}
+
 function detectSuspiciousEvent(entry, context, config) {
   const rules = [
     detectAuthFailureSpike,
     detectPermissionDeniedSpike,
     detectExportSpike,
     detectPiiAccessSpike,
+    detectPotentialBreach,
   ];
 
   for (const detect of rules) {

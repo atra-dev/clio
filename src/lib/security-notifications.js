@@ -181,6 +181,31 @@ export async function createInAppNotificationsBulk(payloads) {
   return created;
 }
 
+export async function getInAppNotificationForRecipient(recordId, recipientEmail) {
+  const db = getFirestoreStore();
+  if (!db) {
+    return null;
+  }
+
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    throw new Error("invalid_record_id");
+  }
+
+  const ref = doc(db, getNotificationsCollectionName(), normalizedId);
+  const snapshot = await getDoc(ref);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const current = toNotificationRecord(snapshot);
+  if (!isVisibleNotification(current, recipientEmail)) {
+    throw new Error("forbidden_notification_access");
+  }
+
+  return current;
+}
+
 export async function listInAppNotifications({
   recipientEmail,
   status = "all",
@@ -322,7 +347,6 @@ export async function resolveIncidentStakeholderRecipients({
   const baseRecipients = [
     normalizeEmail(process.env.CLIO_GRC_ALERT_EMAIL),
     ...parseEmailList(process.env.GRC_EMAILS),
-    ...parseEmailList(process.env.SUPER_ADMIN_EMAILS),
     normalizeEmail(ownerEmail),
   ];
 
@@ -341,8 +365,29 @@ export async function resolveIncidentStakeholderRecipients({
       .filter((user) => normalizeText(user?.status) === "active")
       .filter((user) => {
         const role = String(user?.role || "").trim().toUpperCase();
-        return role === "GRC" || role === "SUPER_ADMIN";
+        return role === "GRC";
       })
+      .map((user) => normalizeEmail(user?.email));
+  } catch {
+    dynamicRoleRecipients = [];
+  }
+
+  return resolveNotificationRecipients([...baseRecipients, ...dynamicRoleRecipients]);
+}
+
+export async function resolveGrcRecipients() {
+  const baseRecipients = [
+    normalizeEmail(process.env.CLIO_GRC_ALERT_EMAIL),
+    ...parseEmailList(process.env.GRC_EMAILS),
+  ];
+
+  let dynamicRoleRecipients = [];
+  try {
+    const users = await listUserAccounts();
+    dynamicRoleRecipients = asArray(users)
+      .filter((user) => normalizeEmail(user?.email))
+      .filter((user) => normalizeText(user?.status) === "active")
+      .filter((user) => String(user?.role || "").trim().toUpperCase() === "GRC")
       .map((user) => normalizeEmail(user?.email));
   } catch {
     dynamicRoleRecipients = [];

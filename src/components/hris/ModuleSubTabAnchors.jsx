@@ -22,9 +22,10 @@ const MODULE_SUBTABS = {
     { id: "offboarding-access-revocation", label: "Offboarding + Access Revocation" },
   ],
   "incident-management": [
-    { id: "escalation-plan", label: "Escalation Plan" },
-    { id: "regulatory-72-hour-notification", label: "72-Hour Notification" },
-    { id: "forensic-logging", label: "Forensic Logging" },
+    { id: "incident-dashboard", label: "Incident Dashboard" },
+    { id: "report-incident", label: "Report Incident" },
+    { id: "incident-list", label: "Case Management" },
+    { id: "reports-analytics", label: "Reports & Analytics" },
   ],
 };
 

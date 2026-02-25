@@ -20,6 +20,8 @@ export default function LoginCard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [isVerifyingAccess, setIsVerifyingAccess] = useState(false);
+  const finalizingLoginRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [mfaState, setMfaState] = useState({
@@ -307,6 +309,7 @@ export default function LoginCard() {
     }
 
     setIsSendingOtp(true);
+    setIsVerifyingAccess(true);
     setErrorMessage("");
     setInfoMessage("");
 
@@ -342,6 +345,7 @@ export default function LoginCard() {
       confirmationResultRef.current = null;
     } finally {
       setIsSendingOtp(false);
+      setIsVerifyingAccess(false);
     }
   };
 
@@ -351,6 +355,7 @@ export default function LoginCard() {
     }
 
     setIsVerifyingOtp(true);
+    setIsVerifyingAccess(true);
     setErrorMessage("");
     setInfoMessage("");
 
@@ -380,6 +385,7 @@ export default function LoginCard() {
       }
     } finally {
       setIsVerifyingOtp(false);
+      setIsVerifyingAccess(false);
     }
   };
 
@@ -414,9 +420,11 @@ export default function LoginCard() {
 
         if (redirectUser) {
           setIsSubmitting(true);
+          setIsVerifyingAccess(true);
           setErrorMessage("");
           clearRedirectPending();
           await completeWorkspaceLogin(auth, redirectUser);
+          finalizingLoginRef.current = true;
           router.replace("/dashboard");
           router.refresh();
           return;
@@ -437,8 +445,9 @@ export default function LoginCard() {
           setErrorMessage(mapLoginError(error));
         }
       } finally {
-        if (active) {
+        if (active && !finalizingLoginRef.current) {
           setIsSubmitting(false);
+          setIsVerifyingAccess(false);
         }
       }
     };
@@ -466,7 +475,9 @@ export default function LoginCard() {
       const popupResult = await signInWithPopup(auth, provider);
       if (popupResult?.user) {
         clearRedirectPending();
+        setIsVerifyingAccess(true);
         await completeWorkspaceLogin(auth, popupResult.user);
+        finalizingLoginRef.current = true;
         router.replace("/dashboard");
         router.refresh();
         return;
@@ -502,40 +513,60 @@ export default function LoginCard() {
         setErrorMessage(mapLoginError(error));
       }
     } finally {
-      setIsSubmitting(false);
+      if (!finalizingLoginRef.current) {
+        setIsSubmitting(false);
+        setIsVerifyingAccess(false);
+      }
     }
   };
 
+  const showVerifyingOverlay =
+    isVerifyingAccess || isSendingOtp || isVerifyingOtp || finalizingLoginRef.current;
+
   return (
     <section className="w-full">
-      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border border-[#d7e5f5] bg-white p-8 shadow-[0_20px_45px_-32px_rgba(15,23,42,0.55)] sm:p-10">
-        <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full bg-[#dbeafe]" />
-        <div className="pointer-events-none absolute -bottom-14 -left-14 h-44 w-44 rounded-full bg-[#ecfeff]" />
+      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border border-[#e6dcc7] bg-[#fffdf7] p-8 shadow-[0_28px_60px_-44px_rgba(15,23,42,0.55)] sm:p-10">
+        <div className="pointer-events-none absolute left-0 right-0 top-0 h-1.5 bg-[linear-gradient(90deg,#0f766e_0%,#0284c7_45%,#f97316_100%)]" />
+        <div className="pointer-events-none absolute -top-20 -right-20 h-56 w-56 rounded-full bg-[#f1f5f9]" />
+        <div className="pointer-events-none absolute -bottom-20 -left-20 h-56 w-56 rounded-full bg-[#ffe8c7]" />
+        {showVerifyingOverlay ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/75 backdrop-blur-[2px]">
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 px-5 py-3 text-sm font-semibold text-slate-700 shadow-[0_12px_30px_-20px_rgba(15,23,42,0.45)]">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M12 3a5 5 0 0 0-5 5v2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1V8a5 5 0 0 0-5-5zm-3 7V8a3 3 0 1 1 6 0v2H9z"
+                  />
+                </svg>
+              </span>
+              <span className="flex flex-col text-left">
+                <span className="text-[13px] font-semibold text-slate-900">Verifying access</span>
+                <span className="text-[11px] font-medium text-slate-500">Securing your session</span>
+              </span>
+              <span className="inline-flex w-6 justify-start">
+                <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.2s]" />
+                <span className="ml-1 inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.1s]" />
+                <span className="ml-1 inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500" />
+              </span>
+            </div>
+          </div>
+        ) : null}
         <div className="relative space-y-7">
           <BrandMark compact />
-          <div className="space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#0f6bcf]">
-              Clio Human Resource Information System
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#0f766e]">
+              Clio Workspace
             </p>
             <h1 className="max-w-xl text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-              Attendance and employee data, secured and easy to access.
+              Secure access to your workspace.
             </h1>
             <p className="max-w-lg text-base text-slate-600">
-              Built for GRC, HR, and EA teams with centralized records, activity logs, export control,
-              and document workflows.
+              Sign in with your verified work account to continue.
             </p>
           </div>
 
-          <div className="space-y-2 pt-1">
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
-              {mfaState.challengeToken ? "Set Up SMS Authentication" : "Log in to Clio"}
-            </h2>
-            <p className="text-sm text-slate-600">
-              {mfaState.challengeToken
-                ? "Register your phone number and complete OTP verification to continue."
-                : "Sign in with your invited and verified work account through Google."}
-            </p>
-          </div>
+          <div className="pt-1" />
 
           <div className="space-y-5 pt-2">
             {!mfaState.challengeToken ? (

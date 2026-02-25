@@ -369,6 +369,9 @@ export default function HrisShell({ children, session }) {
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isMarkingNotifications, setIsMarkingNotifications] = useState(false);
+  const [notificationsLimit, setNotificationsLimit] = useState(16);
+  const [notificationFilter, setNotificationFilter] = useState("all");
+  const [deviceActionState, setDeviceActionState] = useState({});
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isLoadingProfileInsights, setIsLoadingProfileInsights] = useState(false);
@@ -462,12 +465,13 @@ export default function HrisShell({ children, session }) {
     };
   }, [toast, userEmail]);
 
-  const loadNotifications = useCallback(async ({ quiet = false } = {}) => {
+  const loadNotifications = useCallback(async ({ quiet = false, limit } = {}) => {
     if (!quiet) {
       setIsLoadingNotifications(true);
     }
     try {
-      const response = await fetch("/api/notifications?status=all&limit=16", {
+      const resolvedLimit = typeof limit === "number" ? limit : notificationsLimit;
+      const response = await fetch(`/api/notifications?status=all&limit=${resolvedLimit}`, {
         method: "GET",
         cache: "no-store",
       });
@@ -486,7 +490,7 @@ export default function HrisShell({ children, session }) {
         setIsLoadingNotifications(false);
       }
     }
-  }, [toast]);
+  }, [notificationsLimit, toast]);
 
   useEffect(() => {
     loadNotifications().catch(() => null);
@@ -553,14 +557,16 @@ export default function HrisShell({ children, session }) {
   ]);
 
   const modules = useMemo(() => getModulesForRole(role), [role]);
-  const currentDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date());
+  const [currentDateTime, setCurrentDateTime] = useState("");
   const accountRoleLabel = formatRoleLabel(profileInsights.role || role);
   const employmentRoleLabel = formatEmployeeRoleLabel(profileInsights.employmentRole || profileInsights.role || role);
-  const recentAccountActivity = Array.isArray(profileInsights.recentActivity)
-    ? profileInsights.recentActivity.slice(0, 5)
-    : [];
+  const canOpenSettings = canAccessModule(role, "settings");
   const canOpenNotificationTarget = useCallback(
     (notification) => {
+      const notificationType = String(notification?.type || "").trim().toLowerCase();
+      if (notificationType === "device-login") {
+        return false;
+      }
       const actionUrl = String(notification?.actionUrl || "").trim();
       if (!actionUrl) {
         return false;
@@ -575,12 +581,51 @@ export default function HrisShell({ children, session }) {
     },
     [role],
   );
+  const filteredNotifications = useMemo(() => {
+    if (notificationFilter === "all") {
+      return notifications;
+    }
+    if (notificationFilter === "unread") {
+      return notifications.filter(
+        (item) => String(item?.status || "").trim().toLowerCase() !== "read",
+      );
+    }
+    if (notificationFilter === "read") {
+      return notifications.filter(
+        (item) => String(item?.status || "").trim().toLowerCase() === "read",
+      );
+    }
+    return notifications.filter(
+      (item) => String(item?.severity || "").trim().toLowerCase() === notificationFilter,
+    );
+  }, [notificationFilter, notifications]);
 
   useEffect(() => {
     modules.forEach((module) => {
       router.prefetch(module.href);
     });
   }, [modules, router]);
+
+  useEffect(() => {
+    let formatter;
+    try {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "medium",
+        timeZone: "Asia/Manila",
+        timeZoneName: "short",
+      });
+    } catch {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      });
+    }
+    const tick = () => setCurrentDateTime(formatter.format(new Date()));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
@@ -706,6 +751,9 @@ export default function HrisShell({ children, session }) {
   };
 
   const openNotificationTarget = async (notification) => {
+    if (String(notification?.type || "").trim().toLowerCase() === "device-login") {
+      return;
+    }
     if (!canOpenNotificationTarget(notification)) {
       return;
     }
@@ -715,6 +763,41 @@ export default function HrisShell({ children, session }) {
     if (actionUrl) {
       setIsNotificationsOpen(false);
       router.push(actionUrl);
+    }
+  };
+
+  const handleDeviceVerification = async (notification, decision) => {
+    const recordId = String(notification?.id || notification?.recordId || "").trim();
+    if (!recordId) {
+      return;
+    }
+    setDeviceActionState((current) => ({ ...current, [recordId]: true }));
+    try {
+      const response = await fetch("/api/auth/device-verification", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ notificationId: recordId, decision }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Unable to submit device verification.");
+      }
+
+      setNotifications((current) =>
+        current.map((item) =>
+          String(item?.id || item?.recordId || "").trim() === recordId
+            ? { ...item, status: "read", readAt: new Date().toISOString() }
+            : item,
+        ),
+      );
+      setNotificationUnreadCount((current) => Math.max(0, current - 1));
+      loadNotifications({ quiet: true }).catch(() => null);
+    } catch (error) {
+      toast.error(error.message || "Unable to submit device verification.");
+    } finally {
+      setDeviceActionState((current) => ({ ...current, [recordId]: false }));
     }
   };
 
@@ -997,8 +1080,10 @@ export default function HrisShell({ children, session }) {
         <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="shrink-0 flex flex-col gap-3 border-b border-slate-200 bg-white/90 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-8">
             <div>
-              <p className="text-sm font-medium text-slate-900">Clio HRIS Workspace</p>
-              <p className="text-xs text-slate-500">Today: {currentDate}</p>
+              <p className="text-sm font-medium text-slate-900">Clio Workspace</p>
+              <p className="text-xs text-slate-500" suppressHydrationWarning>
+                Today: {currentDateTime || "—"}
+              </p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -1033,7 +1118,7 @@ export default function HrisShell({ children, session }) {
                     isNotificationsOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0",
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">Notifications</p>
                       <p className="text-[11px] text-slate-500">
@@ -1042,14 +1127,39 @@ export default function HrisShell({ children, session }) {
                           : "No unread alerts"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={markAllNotificationsAsRead}
-                      disabled={isMarkingNotifications || notificationUnreadCount === 0}
-                      className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-                    >
-                      Mark all read
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotificationsLimit(120);
+                          loadNotifications({ quiet: false, limit: 120 }).catch(() => null);
+                        }}
+                        className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        View all
+                      </button>
+                      <select
+                        value={notificationFilter}
+                        onChange={(event) => setNotificationFilter(event.target.value)}
+                        className="h-7 rounded-md border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700"
+                      >
+                        <option value="all">All</option>
+                        <option value="unread">Unread</option>
+                        <option value="read">Read</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsAsRead}
+                        disabled={isMarkingNotifications || notificationUnreadCount === 0}
+                        className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Mark all read
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-2">
@@ -1057,49 +1167,100 @@ export default function HrisShell({ children, session }) {
                       <div className="flex justify-center py-6">
                         <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
                       </div>
-                    ) : notifications.length === 0 ? (
+                    ) : filteredNotifications.length === 0 ? (
                       <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
-                        No notifications yet.
+                        No notifications found for this filter.
                       </p>
                     ) : (
                       <ul className="space-y-2">
-                        {notifications.map((item) => {
+                        {filteredNotifications.map((item) => {
                           const itemId = String(item?.id || item?.recordId || "").trim() || `${item?.title}-${item?.createdAt}`;
                           const unread = String(item?.status || "").trim().toLowerCase() !== "read";
-                          const canOpen = canOpenNotificationTarget(item);
+                          const notificationType = String(item?.type || "").trim().toLowerCase();
+                          const isDeviceVerification = notificationType === "device-login";
+                          const canOpen = !isDeviceVerification && canOpenNotificationTarget(item);
+                          const deviceLabel = String(item?.metadata?.deviceLabel || "").trim();
+                          const sourceIp = String(item?.metadata?.sourceIp || "").trim();
+                          const isActionLoading = Boolean(deviceActionState[itemId]);
+
+                          const content = (
+                            <>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-xs font-semibold text-slate-900">{String(item?.title || "Security notification")}</p>
+                                <span
+                                  className={cn(
+                                    "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold capitalize",
+                                    notificationSeverityClass(item?.severity),
+                                  )}
+                                >
+                                  {String(item?.severity || "medium")}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-slate-600">{String(item?.message || "")}</p>
+                              {isDeviceVerification ? (
+                                <div className="mt-1 text-[10px] text-slate-500">
+                                  {deviceLabel ? `Device: ${deviceLabel}` : "Device: Unknown"}
+                                  {sourceIp ? ` • IP: ${sourceIp}` : ""}
+                                </div>
+                              ) : null}
+                              {!canOpen && !isDeviceVerification ? (
+                                <p className="mt-1 text-[10px] font-medium text-slate-500">Read-only alert for visibility.</p>
+                              ) : null}
+                              {isDeviceVerification ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeviceVerification(item, "confirm")}
+                                    disabled={isActionLoading}
+                                    className="inline-flex h-7 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                                  >
+                                    It's me
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeviceVerification(item, "deny")}
+                                    disabled={isActionLoading}
+                                    className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                                  >
+                                    Not me
+                                  </button>
+                                </div>
+                              ) : null}
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                {formatNotificationRelativeTime(item?.createdAt)} | {String(item?.module || "System")}
+                              </p>
+                            </>
+                          );
+
                           return (
                             <li key={itemId}>
-                              <button
-                                type="button"
-                                onClick={() => openNotificationTarget(item)}
-                                disabled={!canOpen}
-                                aria-disabled={!canOpen}
-                                title={canOpen ? "Open notification" : "You do not have access to open this notification target."}
-                                className={cn(
-                                  "w-full rounded-lg border px-2.5 py-2 text-left transition",
-                                  canOpen ? "hover:bg-slate-50" : "cursor-default",
-                                  unread ? "border-sky-200 bg-sky-50/50" : "border-slate-200 bg-white",
-                                )}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <p className="text-xs font-semibold text-slate-900">{String(item?.title || "Security notification")}</p>
-                                  <span
-                                    className={cn(
-                                      "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold capitalize",
-                                      notificationSeverityClass(item?.severity),
-                                    )}
-                                  >
-                                    {String(item?.severity || "medium")}
-                                  </span>
+                              {isDeviceVerification ? (
+                                <div
+                                  className={cn(
+                                    "w-full rounded-lg border px-2.5 py-2 text-left transition",
+                                    unread ? "border-sky-200 bg-sky-50/50" : "border-slate-200 bg-white",
+                                  )}
+                                >
+                                  {content}
                                 </div>
-                                <p className="mt-1 text-[11px] text-slate-600">{String(item?.message || "")}</p>
-                                {!canOpen ? (
-                                  <p className="mt-1 text-[10px] font-medium text-slate-500">Read-only alert for visibility.</p>
-                                ) : null}
-                                <p className="mt-1 text-[10px] text-slate-500">
-                                  {formatNotificationRelativeTime(item?.createdAt)} | {String(item?.module || "System")}
-                                </p>
-                              </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => openNotificationTarget(item)}
+                                  disabled={!canOpen}
+                                  aria-disabled={!canOpen}
+                                  title={
+                                    canOpen ? "Open notification" : "You do not have access to open this notification target."
+                                  }
+                                  className={cn(
+                                    "w-full rounded-lg border px-2.5 py-2 text-left transition",
+                                    canOpen ? "hover:bg-slate-50" : "cursor-default",
+                                    unread ? "border-sky-200 bg-sky-50/50" : "border-slate-200 bg-white",
+                                  )}
+                                >
+                                  {content}
+                                </button>
+                              )}
                             </li>
                           );
                         })}
@@ -1109,35 +1270,47 @@ export default function HrisShell({ children, session }) {
                 </div>
               </div>
 
+              {canOpenSettings ? (
+                <Link
+                  href="/settings"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/60"
+                  aria-label="Open settings"
+                  title="Settings"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-4.5 w-4.5" aria-hidden="true">
+                    <path d="M9.9 4.8h4.2l.7 2 2.1.9 1.9-1.1 2.1 3.6-1.6 1.4v2.4l1.6 1.4-2.1 3.6-1.9-1.1-2.1.9-.7 2H9.9l-.7-2-2.1-.9-1.9 1.1-2.1-3.6 1.6-1.4v-2.4l-1.6-1.4 2.1-3.6 1.9 1.1 2.1-.9.7-2Z" />
+                    <circle cx="12" cy="12" r="2.7" />
+                  </svg>
+                </Link>
+              ) : null}
+
               <div className="relative">
                 <button
                   ref={profileButtonRef}
                   type="button"
                   onClick={toggleProfileEditor}
                   disabled={isProfileLoading}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-left transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-wait disabled:opacity-70"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-wait disabled:opacity-70"
                   aria-label="Open account profile"
                   title="Account profile"
                   aria-expanded={isProfileModalOpen}
                 >
                   {userAvatar ? (
                     <span className="inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                      <Image src={userAvatar} alt="Profile picture" width={32} height={32} className="h-full w-full object-cover" unoptimized />
+                      <Image
+                        src={userAvatar}
+                        alt="Profile picture"
+                        width={32}
+                        height={32}
+                        className="h-full w-full object-cover"
+                        unoptimized
+                      />
                     </span>
                   ) : (
                     <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
                       {userInitials}
                     </span>
                   )}
-                  <span className="hidden text-left sm:block">
-                    <p className="max-w-[12rem] truncate text-xs font-semibold text-slate-900">{userName}</p>
-                    <p className="max-w-[12rem] truncate text-[11px] text-slate-500">{userEmail}</p>
-                  </span>
-                  <span className="inline-flex h-5 w-5 items-center justify-center text-slate-400">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5" aria-hidden="true">
-                      <path d="m6.7 9.3 5.3 5.4 5.3-5.4" />
-                    </svg>
-                  </span>
                 </button>
 
                 <div
@@ -1297,34 +1470,6 @@ export default function HrisShell({ children, session }) {
                     </div>
                   </section>
 
-                  <section className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                        Recent Account Activity
-                      </p>
-                      {isLoadingProfileInsights ? (
-                        <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-                      ) : null}
-                    </div>
-                    {isLoadingProfileInsights ? (
-                      <div className="flex justify-center py-3">
-                        <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-                      </div>
-                    ) : recentAccountActivity.length === 0 ? (
-                      <p className="mt-2 text-xs text-slate-500">No recent account activity.</p>
-                    ) : (
-                      <ul className="mt-2 space-y-2">
-                        {recentAccountActivity.map((item) => (
-                          <li key={item.id || `${item.activityName}-${item.loggedAt}`} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
-                            <p className="text-xs font-medium text-slate-800">{item.activityName}</p>
-                            <p className="mt-0.5 text-[11px] text-slate-500">
-                              {item.module} | {item.status} | {item.relativeTime || item.loggedAt}
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2">

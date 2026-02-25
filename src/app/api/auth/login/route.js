@@ -4,7 +4,8 @@ import { enforceRateLimitByRequest, consumeRateLimit } from "@/lib/api-rate-limi
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
 import { syncFirebaseCustomClaimsForUser } from "@/lib/firebase-custom-claims";
-import { createLoginSmsChallenge, getLoginAccount, markUserLogin } from "@/lib/user-accounts";
+import { createLoginSmsChallenge, getLoginAccount, markUserLogin, recordLoginDevice } from "@/lib/user-accounts";
+import { createInAppNotification } from "@/lib/security-notifications";
 
 function applyRateLimitHeaders(response, rateLimitResult) {
   if (!rateLimitResult?.headers || typeof rateLimitResult.headers !== "object") {
@@ -425,6 +426,47 @@ export async function POST(request) {
     const response = jsonResponse({ ok: true }, { rateLimit: activeRateLimit });
     response.cookies.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt));
     await markUserLogin(normalizedEmail);
+
+    try {
+      const forwardedFor = request.headers.get("x-forwarded-for");
+      const clientIp = forwardedFor ? forwardedFor.split(",")[0]?.trim() : request.headers.get("x-real-ip") || "unknown";
+      const userAgent = request.headers.get("user-agent") || "unknown";
+      const acceptLanguage = request.headers.get("accept-language") || "";
+      const secChUa = request.headers.get("sec-ch-ua") || "";
+      const secChUaPlatform = request.headers.get("sec-ch-ua-platform") || "";
+      const secChUaMobile = request.headers.get("sec-ch-ua-mobile") || "";
+
+      const deviceResult = await recordLoginDevice({
+        email: normalizedEmail,
+        userAgent,
+        ip: clientIp,
+        acceptLanguage,
+        secChUa,
+        secChUaPlatform,
+        secChUaMobile,
+      });
+
+      if (deviceResult?.isNew && deviceResult?.device?.deviceId) {
+        await createInAppNotification({
+          title: "New device sign-in detected",
+          message: `New sign-in from ${deviceResult.device.label}. Confirm if this was you.`,
+          severity: "medium",
+          type: "device-login",
+          module: "Authentication",
+          actionUrl: "",
+          recipientEmail: normalizedEmail,
+          metadata: {
+            deviceId: deviceResult.device.deviceId,
+            deviceLabel: deviceResult.device.label,
+            sourceIp: deviceResult.device.lastIp,
+            userAgent: deviceResult.device.userAgent,
+          },
+          createdBy: normalizedEmail,
+        });
+      }
+    } catch {
+      // Ignore device tracking failures so login flow is never blocked.
+    }
 
     await recordAuditEvent({
       activityName: `User login successful (${account.role})`,

@@ -31,6 +31,8 @@ const ROLE_PERMISSIONS = {
     "retention_archive:manage",
     "incident_management:view",
     "incident_management:edit",
+    "user_management:view",
+    "user_management:manage",
     "settings:view",
     "audit:write:nonsensitive",
     "auth:logout",

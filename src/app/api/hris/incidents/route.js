@@ -222,6 +222,8 @@ export async function GET(request) {
           record?.severity,
           record?.status,
           record?.affectedEmployeeEmail,
+          record?.department,
+          Array.isArray(record?.involvedEmployees) ? record.involvedEmployees.join(" ") : record?.involvedEmployees,
           record?.ownerEmail,
           record?.escalationLevel,
           record?.regulatoryStatus,

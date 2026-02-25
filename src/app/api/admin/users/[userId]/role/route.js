@@ -10,7 +10,7 @@ async function getUserId(paramsPromise) {
 
 export async function PATCH(request, { params }) {
   const auth = await authorizeApiRequest(request, {
-    allowedRoles: ["SUPER_ADMIN"],
+    allowedRoles: ["SUPER_ADMIN", "GRC"],
     requiredPermissions: ["user_management:manage"],
     auditModule: "User Management",
     auditAction: "User role update request",

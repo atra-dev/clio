@@ -36,7 +36,7 @@ function isEmailDeliveryRequired() {
 
 export async function GET(request) {
   const auth = await authorizeApiRequest(request, {
-    allowedRoles: ["SUPER_ADMIN"],
+    allowedRoles: ["SUPER_ADMIN", "GRC"],
     requiredPermissions: ["user_management:view"],
     auditModule: "User Management",
     auditAction: "User directory access",
@@ -53,7 +53,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   const auth = await authorizeApiRequest(request, {
-    allowedRoles: ["SUPER_ADMIN"],
+    allowedRoles: ["SUPER_ADMIN", "GRC"],
     requiredPermissions: ["user_management:manage"],
     auditModule: "User Management",
     auditAction: "User invitation request",

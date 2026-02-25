@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
-import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { useToast } from "@/components/ui/ToastProvider";
 import { toSubTabAnchor } from "@/lib/subtab-anchor";
@@ -13,17 +12,15 @@ import {
   uploadIncidentEvidenceToStorage,
 } from "@/services/firebase-storage-client";
 
-const SECTION_TABS = [
-  { id: "escalation-plan", label: "Escalation Plan" },
-  { id: "regulatory-72-hour-notification", label: "72-Hour Notification" },
-  { id: "forensic-logging", label: "Forensic Logging" },
-];
-
 const SEVERITY_OPTIONS = ["Low", "Medium", "High", "Critical"];
 const STATUS_OPTIONS = ["Open", "Containment", "Investigating", "Escalated", "Regulatory Review", "Resolved", "Closed"];
 const CONTAINMENT_OPTIONS = ["Not Started", "In Progress", "Contained"];
 const IMPACT_OPTIONS = ["Pending", "In Progress", "Completed"];
 const INCIDENT_TYPE_OPTIONS = [
+  "Security",
+  "Compliance",
+  "HR",
+  "IT Operations",
   "Unauthorized Access",
   "Data Exposure",
   "Credential Compromise",
@@ -34,6 +31,7 @@ const INCIDENT_TYPE_OPTIONS = [
   "Other",
 ];
 const REGULATORY_STATUS_OPTIONS = ["Not Required", "Pending", "Notified", "Overdue"];
+const CLOSURE_STATUS_OPTIONS = ["Pending Approval", "Approved", "Rejected"];
 
 const initialFilters = {
   q: "",
@@ -42,6 +40,10 @@ const initialFilters = {
   incidentType: "all",
   regulatoryStatus: "all",
   restrictedPii: "all",
+  breachConfirmed: "all",
+  department: "all",
+  dateFrom: "",
+  dateTo: "",
   page: 1,
   pageSize: 12,
 };
@@ -54,6 +56,8 @@ const initialCreateForm = {
   detectedAt: "",
   ownerEmail: "",
   affectedEmployeeEmail: "",
+  department: "",
+  involvedEmployees: "",
   restrictedPiiInvolved: false,
   executiveNotificationRequired: false,
   regulatoryNotificationRequired: false,
@@ -114,6 +118,8 @@ function mapDraft(record) {
     impactSummary: String(record?.impactSummary || ""),
     ownerEmail: String(record?.ownerEmail || ""),
     affectedEmployeeEmail: String(record?.affectedEmployeeEmail || ""),
+    department: String(record?.department || ""),
+    involvedEmployees: Array.isArray(record?.involvedEmployees) ? record.involvedEmployees.join(", ") : String(record?.involvedEmployees || ""),
     restrictedPiiInvolved: Boolean(record?.restrictedPiiInvolved),
     executiveNotificationRequired: Boolean(record?.executiveNotificationRequired),
     regulatoryNotificationRequired: Boolean(record?.regulatoryNotificationRequired),
@@ -123,6 +129,15 @@ function mapDraft(record) {
     classificationStandard: String(record?.classificationStandard || "CLIO-IR-SEVERITY-V1"),
     forensicWindowStart: toLocalDateTimeInput(record?.forensicWindowStart),
     forensicWindowEnd: toLocalDateTimeInput(record?.forensicWindowEnd),
+    breachConfirmed: Boolean(record?.breachConfirmed),
+    breachConfirmedAt: String(record?.breachConfirmedAt || ""),
+    breachConfirmedBy: String(record?.breachConfirmedBy || ""),
+    correctiveActions: String(record?.correctiveActions || ""),
+    disciplinaryActions: String(record?.disciplinaryActions || ""),
+    resolutionNotes: String(record?.resolutionNotes || ""),
+    closureApprovalStatus: String(record?.closureApprovalStatus || "Pending Approval"),
+    closureApprovedAt: String(record?.closureApprovedAt || ""),
+    closureApprovedBy: String(record?.closureApprovedBy || ""),
   };
 }
 
@@ -135,8 +150,8 @@ export default function IncidentManagementModule({ session }) {
   const toast = useToast();
   const actorRole = String(session?.role || "").trim().toUpperCase();
   const canEdit = actorRole === "GRC" || actorRole === "SUPER_ADMIN";
+  const [section, setSection] = useState("incident-dashboard");
 
-  const [section, setSection] = useState("escalation-plan");
   const [filters, setFilters] = useState(initialFilters);
   const [records, setRecords] = useState([]);
   const [summary, setSummary] = useState({
@@ -163,7 +178,9 @@ export default function IncidentManagementModule({ session }) {
   const [isLoadingRecord, setIsLoadingRecord] = useState(false);
   const [isSavingRecord, setIsSavingRecord] = useState(false);
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+  const [createAttachments, setCreateAttachments] = useState([]);
   const evidenceInputRef = useRef(null);
+  const createEvidenceInputRef = useRef(null);
 
   const loadRecords = useCallback(async () => {
     setIsLoading(true);
@@ -216,12 +233,23 @@ export default function IncidentManagementModule({ session }) {
   }, [selectedRecordId, loadSelectedRecord]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") {
+      return;
+    }
     const syncFromHash = (rawHash = window.location.hash) => {
       const hash = String(rawHash || "").replace(/^#/, "").trim().toLowerCase();
-      if (!hash) return;
-      const matched = SECTION_TABS.find((tab) => toSubTabAnchor(tab.id) === hash);
-      if (matched) setSection(matched.id);
+      if (!hash) {
+        return;
+      }
+      const match = [
+        "incident-dashboard",
+        "report-incident",
+        "incident-list",
+        "reports-analytics",
+      ].find((tab) => toSubTabAnchor(tab) === hash);
+      if (match) {
+        setSection(match);
+      }
     };
     const onAnchor = (event) => {
       if (event?.detail?.moduleId && event.detail.moduleId !== "incident-management") return;
@@ -239,15 +267,6 @@ export default function IncidentManagementModule({ session }) {
     };
   }, []);
 
-  const handleSectionChange = (nextSection) => {
-    setSection(nextSection);
-    if (typeof window !== "undefined") {
-      const anchor = toSubTabAnchor(nextSection);
-      window.history.pushState(null, "", `${window.location.pathname}#${anchor}`);
-      window.dispatchEvent(new CustomEvent("clio:subtab-anchor", { detail: { moduleId: "incident-management", anchor } }));
-    }
-  };
-
   const setFilter = (field, value) => {
     setFilters((current) => ({ ...current, [field]: value, page: 1 }));
   };
@@ -258,6 +277,7 @@ export default function IncidentManagementModule({ session }) {
       ownerEmail: String(session?.email || "").trim().toLowerCase(),
       detectedAt: toLocalDateTimeInput(nowIso()),
     });
+    setCreateAttachments([]);
     setIsCreateModalOpen(true);
   };
 
@@ -293,6 +313,11 @@ export default function IncidentManagementModule({ session }) {
         detectedAt: toIsoFromLocalDateTime(createForm.detectedAt) || nowIso(),
         ownerEmail: String(createForm.ownerEmail || "").trim().toLowerCase(),
         affectedEmployeeEmail: String(createForm.affectedEmployeeEmail || "").trim().toLowerCase(),
+        department: String(createForm.department || "").trim(),
+        involvedEmployees: String(createForm.involvedEmployees || "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
       };
       const response = await hrisApi.incidents.create(payload);
       toast.success("Incident record created.");
@@ -300,6 +325,37 @@ export default function IncidentManagementModule({ session }) {
       await loadRecords();
       if (response?.record?.id) {
         setSelectedRecordId(response.record.id);
+      }
+
+      if (response?.record?.id && createAttachments.length > 0) {
+        const recordId = response.record.id;
+        const affectedEmail = String(payload.affectedEmployeeEmail || "").trim().toLowerCase();
+        const uploadedDocs = [];
+        for (const file of createAttachments) {
+          const uploaded = await uploadIncidentEvidenceToStorage({
+            file,
+            incidentRecordId: recordId,
+            affectedEmployeeEmail: affectedEmail,
+          });
+          uploadedDocs.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name: file.name || "Incident Evidence",
+            type: "Incident Evidence",
+            ref: uploaded.downloadUrl,
+            storagePath: uploaded.storagePath,
+            contentType: uploaded.contentType || file.type || "",
+            fileExtension: String(file.name || "").split(".").pop() || "",
+            sizeBytes: uploaded.sizeBytes,
+            uploadedAt: nowIso(),
+            uploadedBy: String(session?.email || "").trim().toLowerCase(),
+          });
+        }
+        if (uploadedDocs.length > 0) {
+          await hrisApi.incidents.update(recordId, {
+            evidenceDocuments: uploadedDocs,
+            documentationRetained: true,
+          });
+        }
       }
     } catch (error) {
       toast.error(error.message || "Unable to create incident.");
@@ -317,6 +373,10 @@ export default function IncidentManagementModule({ session }) {
         affectedEmployeeEmail: String(recordDraft.affectedEmployeeEmail || "").trim().toLowerCase(),
         forensicWindowStart: toIsoFromLocalDateTime(recordDraft.forensicWindowStart),
         forensicWindowEnd: toIsoFromLocalDateTime(recordDraft.forensicWindowEnd),
+        involvedEmployees: String(recordDraft.involvedEmployees || "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
       },
       "Incident workflow updated.",
     );
@@ -324,6 +384,22 @@ export default function IncidentManagementModule({ session }) {
 
   const markTimestampAction = async (field, successMessage, extraPayload = {}) => {
     await patchSelected({ [field]: nowIso(), ...extraPayload }, successMessage);
+  };
+
+  const handleBreachConfirmation = async (shouldConfirm) => {
+    if (!canEdit || !selectedRecordId) return;
+    if (shouldConfirm) {
+      const ok = requestActionConfirmation("Mark this incident as a confirmed breach?");
+      if (!ok) return;
+    }
+    await patchSelected(
+      {
+        breachConfirmed: shouldConfirm,
+        breachConfirmedAt: shouldConfirm ? nowIso() : "",
+        breachConfirmedBy: shouldConfirm ? String(session?.email || "").trim().toLowerCase() : "",
+      },
+      shouldConfirm ? "Breach confirmation recorded." : "Breach confirmation cleared.",
+    );
   };
 
   const handleEvidenceUpload = async (event) => {
@@ -371,38 +447,46 @@ export default function IncidentManagementModule({ session }) {
     }
   };
 
-  const filteredBySection = useMemo(() => {
-    if (section === "regulatory-72-hour-notification") {
-      return records.filter((row) => Boolean(row?.regulatoryNotificationRequired) || Boolean(row?.restrictedPiiInvolved));
-    }
-    if (section === "forensic-logging") {
-      return records.filter((row) => Number(row?.forensicSummary?.totalScopedLogs || 0) > 0 || Boolean(row?.forensicSnapshot));
-    }
-    return records;
-  }, [records, section]);
+  const filteredBySection = useMemo(() => records, [records]);
 
-  const summaryCards = useMemo(() => {
-    if (section === "regulatory-72-hour-notification") {
-      return [
-        { key: "total", label: "Total Incidents", value: summary.total || 0 },
-        { key: "due", label: "Due Within 72h", value: summary.dueWithin72Hours || 0 },
-        { key: "overdue", label: "Overdue Notifications", value: summary.overdue72HourNotifications || 0 },
-      ];
+  const filteredByBreach = useMemo(() => {
+    if (filters.breachConfirmed === "yes") {
+      return filteredBySection.filter((row) => Boolean(row?.breachConfirmed));
     }
-    if (section === "forensic-logging") {
-      return [
-        { key: "total", label: "Total Incidents", value: summary.total || 0 },
-        { key: "logs", label: "Selected Scoped Logs", value: Number(selectedRecord?.forensicSummary?.totalScopedLogs || 0) },
-        { key: "deletions", label: "Selected Deletion Logs", value: Number(selectedRecord?.forensicSummary?.deletionActivitiesCount || 0) },
-      ];
+    if (filters.breachConfirmed === "no") {
+      return filteredBySection.filter((row) => !row?.breachConfirmed);
     }
-    return [
+    return filteredBySection;
+  }, [filteredBySection, filters.breachConfirmed]);
+
+  const filteredByAdvanced = useMemo(() => {
+    let scoped = filteredByBreach;
+    const departmentFilter = String(filters.department || "").trim().toLowerCase();
+    if (departmentFilter && departmentFilter !== "all") {
+      scoped = scoped.filter((row) => String(row?.department || "").trim().toLowerCase() === departmentFilter);
+    }
+    const from = filters.dateFrom ? new Date(filters.dateFrom) : null;
+    const to = filters.dateTo ? new Date(filters.dateTo) : null;
+    if (from && !Number.isNaN(from.getTime())) {
+      scoped = scoped.filter((row) => new Date(row?.detectedAt || row?.createdAt || "").getTime() >= from.getTime());
+    }
+    if (to && !Number.isNaN(to.getTime())) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      scoped = scoped.filter((row) => new Date(row?.detectedAt || row?.createdAt || "").getTime() <= end.getTime());
+    }
+    return scoped;
+  }, [filteredByBreach, filters.department, filters.dateFrom, filters.dateTo]);
+
+  const summaryCards = useMemo(
+    () => [
       { key: "total", label: "Total Incidents", value: summary.total || 0 },
       { key: "open", label: "Open Cases", value: summary.openCases || 0 },
       { key: "critical", label: "Critical Open", value: summary.criticalOpen || 0 },
       { key: "containment", label: "Containment Pending", value: summary.containmentPending || 0 },
-    ];
-  }, [section, summary, selectedRecord]);
+    ],
+    [summary],
+  );
 
   const pageStart = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
   const pageEnd = Math.min(pagination.total || 0, pagination.page * pagination.pageSize);
@@ -416,15 +500,103 @@ export default function IncidentManagementModule({ session }) {
     { key: "deletionActivities", label: "Deletion Activities" },
   ];
 
+  const primaryForensicSample = useMemo(() => {
+    if (!selectedRecord?.forensicSnapshot) {
+      return null;
+    }
+    const snapshot = selectedRecord.forensicSnapshot;
+    const buckets = [
+      snapshot.accessLogs,
+      snapshot.exportLogs,
+      snapshot.administrativeActions,
+      snapshot.deletionActivities,
+    ];
+    for (const bucket of buckets) {
+      if (Array.isArray(bucket) && bucket.length > 0) {
+        return bucket[0];
+      }
+    }
+    return null;
+  }, [selectedRecord]);
+  const forensicContextRows = useMemo(() => {
+    const sample = primaryForensicSample || {};
+    const requestLine =
+      sample.requestMethod && sample.requestPath
+        ? `${sample.requestMethod} ${sample.requestPath}`
+        : sample.requestPath || "";
+    return [
+      { label: "Performed By", value: sample.performedBy || selectedRecord?.ownerEmail || "-" },
+      { label: "Activity", value: sample.activityName || selectedRecord?.incidentType || "-" },
+      { label: "Module", value: sample.module || "-" },
+      { label: "Request", value: requestLine || "-" },
+      { label: "Source IP", value: sample.sourceIp || "-" },
+      { label: "Device", value: sample.device || "-" },
+      { label: "User Agent", value: sample.userAgent || "-" },
+      { label: "Occurred At", value: formatDateTime(sample.occurredAt) },
+    ];
+  }, [primaryForensicSample, selectedRecord]);
+
+  const statusSummary = useMemo(() => {
+    const summaryMap = { Open: 0, "In Progress": 0, Resolved: 0, Closed: 0 };
+    records.forEach((record) => {
+      const status = String(record?.status || "").trim();
+      if (status === "Containment" || status === "Investigating" || status === "Escalated" || status === "Regulatory Review") {
+        summaryMap["In Progress"] += 1;
+        return;
+      }
+      if (status === "Resolved") {
+        summaryMap.Resolved += 1;
+        return;
+      }
+      if (status === "Closed") {
+        summaryMap.Closed += 1;
+        return;
+      }
+      summaryMap.Open += 1;
+    });
+    return summaryMap;
+  }, [records]);
+
+  const severityDistribution = useMemo(() => {
+    const buckets = { Low: 0, Medium: 0, High: 0, Critical: 0 };
+    records.forEach((record) => {
+      const severity = String(record?.severity || "").trim();
+      if (buckets[severity] != null) {
+        buckets[severity] += 1;
+      }
+    });
+    return buckets;
+  }, [records]);
+
+  const recentIncidents = useMemo(() => {
+    return [...records]
+      .sort((a, b) => new Date(b?.updatedAt || b?.createdAt || 0).getTime() - new Date(a?.updatedAt || a?.createdAt || 0).getTime())
+      .slice(0, 6);
+  }, [records]);
+
+  const typeDistribution = useMemo(() => {
+    const tally = {};
+    records.forEach((record) => {
+      const type = String(record?.incidentType || "Other").trim() || "Other";
+      tally[type] = (tally[type] || 0) + 1;
+    });
+    return Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  }, [records]);
+
+  const departmentDistribution = useMemo(() => {
+    const tally = {};
+    records.forEach((record) => {
+      const dept = String(record?.department || "Unassigned").trim() || "Unassigned";
+      tally[dept] = (tally[dept] || 0) + 1;
+    });
+    return Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  }, [records]);
+
   return (
     <div className="space-y-4">
-      <ModuleTabs tabs={SECTION_TABS} value={section} onChange={handleSectionChange} />
-
-      <SurfaceCard
-        title={section === "escalation-plan" ? "Defined Escalation Plan" : section === "regulatory-72-hour-notification" ? "72-Hour Regulatory Notification" : "Forensic Logging"}
-        subtitle={section === "escalation-plan" ? "Severity-based escalation and containment prioritization." : section === "regulatory-72-hour-notification" ? "PII breach notification window and compliance timeline." : "Access/export/admin/deletion traces for incident investigation."}
-      >
-        <div className={`grid gap-3 ${summaryCards.length > 3 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"}`}>
+      {section === "incident-dashboard" ? (
+        <SurfaceCard title="Incident Dashboard" subtitle="Overview of active and historical incidents">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {summaryCards.map((card) => (
             <div key={card.key} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{card.label}</p>
@@ -432,119 +604,383 @@ export default function IncidentManagementModule({ session }) {
             </div>
           ))}
         </div>
-      </SurfaceCard>
+        </SurfaceCard>
+      ) : null}
 
-      <SurfaceCard
-        title="Incident Records"
-        subtitle="Response workflow, escalation actions, and forensic-ready incident traceability."
+      {section === "incident-dashboard" ? (
+        <div className="grid gap-3 lg:grid-cols-2">
+        <SurfaceCard title="Status Summary" subtitle="Open, in progress, resolved, and closed">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Object.entries(statusSummary).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
+                <p className="text-sm font-semibold text-slate-900">{value}</p>
+              </div>
+            ))}
+          </div>
+        </SurfaceCard>
+        <SurfaceCard title="Severity Distribution" subtitle="Incident mix by severity">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Object.entries(severityDistribution).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
+                <p className="text-sm font-semibold text-slate-900">{value}</p>
+              </div>
+            ))}
+          </div>
+        </SurfaceCard>
+        </div>
+      ) : null}
+
+      {section === "incident-dashboard" ? (
+        <SurfaceCard title="Recent Activity" subtitle="Latest incident updates">
+        {recentIncidents.length === 0 ? (
+          <EmptyState title="No incidents yet" subtitle="Once incidents are logged, they will appear here." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                  <th className="px-2 py-3 font-medium">Incident</th>
+                  <th className="px-2 py-3 font-medium">Status</th>
+                  <th className="px-2 py-3 font-medium">Severity</th>
+                  <th className="px-2 py-3 font-medium">Updated</th>
+                  <th className="px-2 py-3 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentIncidents.map((record) => (
+                  <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                    <td className="px-2 py-3">
+                      <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
+                      <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
+                    </td>
+                    <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
+                    <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
+                    <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
+                    <td className="px-2 py-3 text-right">
+                      <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                        Open
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        </SurfaceCard>
+      ) : null}
+
+      {section === "report-incident" ? (
+        <SurfaceCard
+        title="Report Incident / Create Case"
+        subtitle="Log a new incident, assign severity, and attach evidence."
         action={
-          <div className="flex items-center gap-2">
-            {canEdit ? (
-              <button
+          canEdit ? (
+            <button
                 type="button"
                 onClick={openCreateModal}
                 className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700"
               >
-                Create Incident
+                Open Full Form
               </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={loadRecords}
-              disabled={isLoading}
-              className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-            >
-              Refresh
-            </button>
-          </div>
-        }
-      >
-        <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-6">
-          <input value={filters.q} onChange={(event) => setFilter("q", event.target.value)} placeholder="Search incident" className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none md:col-span-2" />
-          <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
-            <option value="all">All Status</option>
-            {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>
-          <select value={filters.severity} onChange={(event) => setFilter("severity", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
-            <option value="all">All Severity</option>
-            {SEVERITY_OPTIONS.map((severity) => <option key={severity} value={severity}>{severity}</option>)}
-          </select>
-          <select value={filters.incidentType} onChange={(event) => setFilter("incidentType", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
-            <option value="all">All Types</option>
-            {INCIDENT_TYPE_OPTIONS.map((type) => <option key={type} value={type}>{type}</option>)}
-          </select>
-          <select value={filters.regulatoryStatus} onChange={(event) => setFilter("regulatoryStatus", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
-            <option value="all">All Regulatory</option>
-            {REGULATORY_STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>
-          <select value={filters.restrictedPii} onChange={(event) => setFilter("restrictedPii", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
-            <option value="all">PII: All</option>
-            <option value="yes">PII: Yes</option>
-            <option value="no">PII: No</option>
-          </select>
-        </div>
-
-        <div className="mt-4">
-          {isLoading ? (
-            <div className="flex justify-center py-6">
-              <span className="inline-flex h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
+            ) : null
+          }
+        >
+          <form className="space-y-3" onSubmit={submitCreateIncident}>
+            <div className="grid gap-2 md:grid-cols-2">
+              <input
+                required
+                value={createForm.title}
+                onChange={(event) => setCreateForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="Incident title"
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
+              />
+              <select
+                value={createForm.incidentType}
+                onChange={(event) => setCreateForm((current) => ({ ...current, incidentType: event.target.value }))}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+              >
+                {INCIDENT_TYPE_OPTIONS.map((type) => (
+                  <option key={`inline-type-${type}`} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={createForm.severity}
+                onChange={(event) => setCreateForm((current) => ({ ...current, severity: event.target.value }))}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+              >
+                {SEVERITY_OPTIONS.map((severity) => (
+                  <option key={`inline-sev-${severity}`} value={severity}>
+                    {severity}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="datetime-local"
+                value={createForm.detectedAt}
+                onChange={(event) => setCreateForm((current) => ({ ...current, detectedAt: event.target.value }))}
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+              />
+              <input
+                value={createForm.department}
+                onChange={(event) => setCreateForm((current) => ({ ...current, department: event.target.value }))}
+                placeholder="Department (optional)"
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+              />
+              <input
+                value={createForm.affectedEmployeeEmail}
+                onChange={(event) => setCreateForm((current) => ({ ...current, affectedEmployeeEmail: event.target.value }))}
+                placeholder="Involved employee email"
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+              />
+              <input
+                value={createForm.involvedEmployees}
+                onChange={(event) => setCreateForm((current) => ({ ...current, involvedEmployees: event.target.value }))}
+                placeholder="Additional involved employees (comma separated)"
+                className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
+              />
+              <textarea
+                value={createForm.summary}
+                onChange={(event) => setCreateForm((current) => ({ ...current, summary: event.target.value }))}
+                placeholder="Incident description"
+                rows={3}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
+              />
             </div>
-          ) : filteredBySection.length === 0 ? (
-            <EmptyState title="No incident records found" subtitle="Create incidents or adjust filters to continue." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                    <th className="px-2 py-3 font-medium">Incident</th>
-                    <th className="px-2 py-3 font-medium">Severity</th>
-                    <th className="px-2 py-3 font-medium">Status</th>
-                    <th className="px-2 py-3 font-medium">Escalation</th>
-                    <th className="px-2 py-3 font-medium">Regulatory</th>
-                    <th className="px-2 py-3 font-medium">Updated</th>
-                    <th className="px-2 py-3 font-medium text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredBySection.map((record) => (
-                    <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                      <td className="px-2 py-3">
-                        <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
-                        <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
-                      </td>
-                      <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
-                      <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
-                      <td className="px-2 py-3 text-xs">
-                        <p className="font-medium text-slate-800">{String(record?.escalationLevel || "-")}</p>
-                        <p className="text-slate-500">GRC: {record?.grcAlertedAt ? "Yes" : "No"}</p>
-                      </td>
-                      <td className="px-2 py-3 text-xs">
-                        <p className="font-medium text-slate-800">{String(record?.regulatoryStatus || "Not Required")}</p>
-                        <p className="text-slate-500">Due: {formatDateTime(record?.regulatoryDueAt)}</p>
-                      </td>
-                      <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
-                      <td className="px-2 py-3 text-right">
-                        <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
-                          Open
-                        </button>
-                      </td>
-                    </tr>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <input type="checkbox" checked={createForm.restrictedPiiInvolved} onChange={(event) => setCreateForm((current) => ({ ...current, restrictedPiiInvolved: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+                <span className="text-xs text-slate-700">Restricted PII involved</span>
+              </label>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <input type="checkbox" checked={createForm.regulatoryNotificationRequired} onChange={(event) => setCreateForm((current) => ({ ...current, regulatoryNotificationRequired: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+                <span className="text-xs text-slate-700">Regulatory notification required</span>
+              </label>
+            </div>
+
+            <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-slate-900">Attachments</p>
+                  <p className="text-[11px] text-slate-500">Upload initial evidence (optional).</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => createEvidenceInputRef.current?.click()}
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Add Files
+                </button>
+              </div>
+              <input ref={createEvidenceInputRef} type="file" className="hidden" multiple onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                event.target.value = "";
+                if (files.length === 0) return;
+                setCreateAttachments((current) => [...current, ...files]);
+              }} />
+              {createAttachments.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                  {createAttachments.map((file, index) => (
+                    <li key={`${file.name}-${index}`} className="flex items-center justify-between">
+                      <span>{file.name}</span>
+                      <button type="button" onClick={() => setCreateAttachments((current) => current.filter((_, idx) => idx !== index))} className="text-rose-500">Remove</button>
+                    </li>
                   ))}
-                </tbody>
-              </table>
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">No files attached.</p>
+              )}
             </div>
-          )}
-        </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <p>Showing {pageStart}-{pageEnd} of {pagination.total || 0} records</p>
+            <div className="flex items-center justify-end gap-2">
+              <button type="submit" disabled={!canEdit || isSubmittingCreate} className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60">
+                {isSubmittingCreate ? "Submitting..." : "Submit Incident"}
+              </button>
+            </div>
+          </form>
+        </SurfaceCard>
+      ) : null}
+
+      {section === "incident-list" ? (
+        <SurfaceCard
+        title="Incident List / Case Management"
+        subtitle="Track cases, assign handling, and monitor status updates."
+        action={
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setFilters((current) => ({ ...current, page: Math.max(1, current.page - 1) }))} disabled={(pagination.page || 1) <= 1 || isLoading} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60">Previous</button>
-            <span>Page {pagination.page || 1} of {Math.max(1, pagination.totalPages || 1)}</span>
-            <button type="button" onClick={() => setFilters((current) => ({ ...current, page: Math.min(Math.max(1, pagination.totalPages || 1), current.page + 1) }))} disabled={(pagination.page || 1) >= (pagination.totalPages || 1) || isLoading} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60">Next</button>
+            {canEdit ? (
+                <button
+                  type="button"
+                  onClick={openCreateModal}
+                  className="inline-flex h-9 items-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700"
+                >
+                  Create Incident
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={loadRecords}
+                disabled={isLoading}
+                className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                Refresh
+              </button>
+            </div>
+          }
+        >
+          <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-6">
+            <input value={filters.q} onChange={(event) => setFilter("q", event.target.value)} placeholder="Search incident" className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none md:col-span-2" />
+            <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">All Status</option>
+              {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <select value={filters.severity} onChange={(event) => setFilter("severity", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">All Severity</option>
+              {SEVERITY_OPTIONS.map((severity) => <option key={severity} value={severity}>{severity}</option>)}
+            </select>
+            <select value={filters.incidentType} onChange={(event) => setFilter("incidentType", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">All Types</option>
+              {INCIDENT_TYPE_OPTIONS.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <select value={filters.regulatoryStatus} onChange={(event) => setFilter("regulatoryStatus", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">All Regulatory</option>
+              {REGULATORY_STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <select value={filters.restrictedPii} onChange={(event) => setFilter("restrictedPii", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">PII: All</option>
+              <option value="yes">PII: Yes</option>
+              <option value="no">PII: No</option>
+            </select>
+            <select value={filters.breachConfirmed} onChange={(event) => setFilter("breachConfirmed", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none">
+              <option value="all">Breach: All</option>
+              <option value="yes">Breach: Confirmed</option>
+              <option value="no">Breach: Not Confirmed</option>
+            </select>
+            <input value={filters.department} onChange={(event) => setFilter("department", event.target.value)} placeholder="Department" className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none" />
+            <input type="date" value={filters.dateFrom} onChange={(event) => setFilter("dateFrom", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none" />
+            <input type="date" value={filters.dateTo} onChange={(event) => setFilter("dateTo", event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none" />
           </div>
+
+          <div className="mt-4">
+            {isLoading ? (
+              <div className="flex justify-center py-6">
+                <span className="inline-flex h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
+              </div>
+            ) : filteredByAdvanced.length === 0 ? (
+              <EmptyState title="No incident records found" subtitle="Create incidents or adjust filters to continue." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                      <th className="px-2 py-3 font-medium">Incident</th>
+                      <th className="px-2 py-3 font-medium">Severity</th>
+                      <th className="px-2 py-3 font-medium">Status</th>
+                      <th className="px-2 py-3 font-medium">Escalation</th>
+                      <th className="px-2 py-3 font-medium">Regulatory</th>
+                      <th className="px-2 py-3 font-medium">Updated</th>
+                      <th className="px-2 py-3 font-medium text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredByAdvanced.map((record) => (
+                      <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                        <td className="px-2 py-3">
+                          <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
+                          <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
+                        </td>
+                        <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
+                        <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
+                        <td className="px-2 py-3 text-xs">
+                          <p className="font-medium text-slate-800">{String(record?.escalationLevel || "-")}</p>
+                          <p className="text-slate-500">GRC: {record?.grcAlertedAt ? "Yes" : "No"}</p>
+                        </td>
+                        <td className="px-2 py-3 text-xs">
+                          <p className="font-medium text-slate-800">{String(record?.regulatoryStatus || "Not Required")}</p>
+                          <p className="text-slate-500">Due: {formatDateTime(record?.regulatoryDueAt)}</p>
+                        </td>
+                        <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
+                        <td className="px-2 py-3 text-right">
+                          <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p>Showing {pageStart}-{pageEnd} of {pagination.total || 0} records</p>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setFilters((current) => ({ ...current, page: Math.max(1, current.page - 1) }))} disabled={(pagination.page || 1) <= 1 || isLoading} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60">Previous</button>
+              <span>Page {pagination.page || 1} of {Math.max(1, pagination.totalPages || 1)}</span>
+              <button type="button" onClick={() => setFilters((current) => ({ ...current, page: Math.min(Math.max(1, pagination.totalPages || 1), current.page + 1) }))} disabled={(pagination.page || 1) >= (pagination.totalPages || 1) || isLoading} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60">Next</button>
+            </div>
+          </div>
+        </SurfaceCard>
+      ) : null}
+
+
+      {section === "reports-analytics" ? (
+        <SurfaceCard title="Reports & Analytics" subtitle="Trends, department risk, and recurring issues">
+        <div className="grid gap-3 lg:grid-cols-3">
+          <SurfaceCard title="Incident Trends" subtitle="Volume by type">
+            {typeDistribution.length === 0 ? (
+              <EmptyState title="No data yet" subtitle="Incident trends will appear after cases are logged." />
+            ) : (
+                <ul className="space-y-2 text-xs text-slate-600">
+                  {typeDistribution.map(([type, count]) => (
+                    <li key={type} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <span>{type}</span>
+                      <span className="font-semibold text-slate-900">{count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SurfaceCard>
+            <SurfaceCard title="Department Risk" subtitle="Incidents by department">
+              {departmentDistribution.length === 0 ? (
+                <EmptyState title="No department data" subtitle="Add department information to incident reports." />
+              ) : (
+                <ul className="space-y-2 text-xs text-slate-600">
+                  {departmentDistribution.map(([dept, count]) => (
+                    <li key={dept} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <span>{dept}</span>
+                      <span className="font-semibold text-slate-900">{count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SurfaceCard>
+            <SurfaceCard title="Recurring Issues" subtitle="Severity spread overview">
+              <ul className="space-y-2 text-xs text-slate-600">
+                {Object.entries(severityDistribution).map(([label, value]) => (
+                  <li key={label} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <span>{label}</span>
+                    <span className="font-semibold text-slate-900">{value}</span>
+                  </li>
+                ))}
+              </ul>
+            </SurfaceCard>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+              Export PDF
+            </button>
+            <button type="button" className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+              Export Excel
+          </button>
         </div>
-      </SurfaceCard>
+        </SurfaceCard>
+      ) : null}
 
       {isCreateModalOpen ? (
         <div
@@ -625,6 +1061,18 @@ export default function IncidentManagementModule({ session }) {
                   placeholder="Affected employee email"
                   className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
                 />
+                <input
+                  value={createForm.department}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, department: event.target.value }))}
+                  placeholder="Department (optional)"
+                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={createForm.involvedEmployees}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, involvedEmployees: event.target.value }))}
+                  placeholder="Additional involved employees (comma separated)"
+                  className="h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
+                />
                 <textarea
                   rows={3}
                   value={createForm.summary}
@@ -662,6 +1110,40 @@ export default function IncidentManagementModule({ session }) {
                   />
                   <span className="text-xs text-slate-700">Regulatory Notice</span>
                 </label>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-900">Attachments</p>
+                    <p className="text-[11px] text-slate-500">Upload initial evidence (optional).</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => createEvidenceInputRef.current?.click()}
+                    className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Add Files
+                  </button>
+                </div>
+                <input ref={createEvidenceInputRef} type="file" className="hidden" multiple onChange={(event) => {
+                  const files = Array.from(event.target.files || []);
+                  event.target.value = "";
+                  if (files.length === 0) return;
+                  setCreateAttachments((current) => [...current, ...files]);
+                }} />
+                {createAttachments.length > 0 ? (
+                  <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                    {createAttachments.map((file, index) => (
+                      <li key={`${file.name}-${index}`} className="flex items-center justify-between">
+                        <span>{file.name}</span>
+                        <button type="button" onClick={() => setCreateAttachments((current) => current.filter((_, idx) => idx !== index))} className="text-rose-500">Remove</button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No files attached.</p>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
@@ -786,6 +1268,51 @@ export default function IncidentManagementModule({ session }) {
                       <button type="button" onClick={() => patchSelected({ refreshForensicSnapshot: true }, "Forensic snapshot refreshed.")} disabled={!canEdit || isSavingRecord} className="inline-flex h-8 items-center justify-center rounded-md border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-60">Refresh Forensic</button>
                     </div>
                   </SurfaceCard>
+
+                  <SurfaceCard title="Breach Confirmation" subtitle="Manual confirmation required for declared breaches">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Status</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {recordDraft?.breachConfirmed ? "Confirmed breach" : "Not confirmed"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {recordDraft?.breachConfirmedAt ? `At ${formatDateTime(recordDraft.breachConfirmedAt)}` : "Awaiting confirmation"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Confirmed By</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {recordDraft?.breachConfirmedBy ? recordDraft.breachConfirmedBy : "-"}
+                        </p>
+                        <p className="text-xs text-slate-500">Requires GRC approval</p>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {recordDraft?.breachConfirmed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleBreachConfirmation(false)}
+                          disabled={!canEdit || isSavingRecord}
+                          className="inline-flex h-8 items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                        >
+                          Revoke Confirmation
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleBreachConfirmation(true)}
+                          disabled={!canEdit || isSavingRecord}
+                          className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                        >
+                          Mark Breach Confirmed
+                        </button>
+                      )}
+                      {!canEdit ? (
+                        <p className="text-xs text-slate-500">View-only. GRC can confirm breaches.</p>
+                      ) : null}
+                    </div>
+                  </SurfaceCard>
                 </div>
 
                 <SurfaceCard title="Incident Evidence" subtitle="Retained case documents and attachments">
@@ -835,6 +1362,37 @@ export default function IncidentManagementModule({ session }) {
                         </tbody>
                       </table>
                     </div>
+                  )}
+                </SurfaceCard>
+
+                <SurfaceCard title="Audit Trail / Activity Logs" subtitle="Change history, actions, and compliance traceability">
+                  {Array.isArray(selectedRecord?.traceability) && selectedRecord.traceability.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                            <th className="px-2 py-3 font-medium">When</th>
+                            <th className="px-2 py-3 font-medium">By</th>
+                            <th className="px-2 py-3 font-medium">Action</th>
+                            <th className="px-2 py-3 font-medium">Status</th>
+                            <th className="px-2 py-3 font-medium">Severity</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedRecord.traceability.map((entry, index) => (
+                            <tr key={`${entry?.at || "audit"}-${index}`} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                              <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(entry?.at)}</td>
+                              <td className="px-2 py-3 text-xs">{String(entry?.by || "-")}</td>
+                              <td className="px-2 py-3 text-xs">{String(entry?.action || "-")}</td>
+                              <td className="px-2 py-3 text-xs">{String(entry?.status || "-")}</td>
+                              <td className="px-2 py-3 text-xs">{String(entry?.severity || "-")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <EmptyState title="No audit trail entries" subtitle="Updates will appear here as actions occur." />
                   )}
                 </SurfaceCard>
 
@@ -889,14 +1447,29 @@ export default function IncidentManagementModule({ session }) {
                   </div>
                 </SurfaceCard>
 
-                <SurfaceCard title="Notes" subtitle="Additional incident context">
-                  <textarea
-                    value={recordDraft.notes}
-                    onChange={(event) => setRecordDraft((current) => ({ ...current, notes: event.target.value }))}
-                    rows={3}
-                    disabled={!canEdit || isSavingRecord}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
-                  />
+                <SurfaceCard title="Notes" subtitle="Additional incident context and forensic details">
+                  <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                    <textarea
+                      value={recordDraft.notes}
+                      onChange={(event) => setRecordDraft((current) => ({ ...current, notes: event.target.value }))}
+                      rows={8}
+                      disabled={!canEdit || isSavingRecord}
+                      className="min-h-[180px] w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-sky-400 focus:outline-none disabled:bg-slate-100"
+                    />
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Investigation Context
+                      </p>
+                      <div className="mt-2 space-y-2 text-xs text-slate-700">
+                        {forensicContextRows.map((row) => (
+                          <div key={row.label} className="flex flex-col gap-0.5">
+                            <span className="text-[11px] uppercase tracking-[0.08em] text-slate-500">{row.label}</span>
+                            <span className="font-medium text-slate-900">{row.value || "-"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </SurfaceCard>
 
                 {canEdit ? (
