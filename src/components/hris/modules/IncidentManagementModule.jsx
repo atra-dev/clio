@@ -673,6 +673,62 @@ export default function IncidentManagementModule({ session }) {
     }));
   }, [severityDistribution]);
 
+  const alertDeliverySummary = useMemo(() => {
+    let successCount = 0;
+    let failedCount = 0;
+    let incidentsWithDispatch = 0;
+
+    records.forEach((record) => {
+      const dispatch = record?.alertDispatchSummary;
+      if (!dispatch || typeof dispatch !== "object") {
+        return;
+      }
+      incidentsWithDispatch += 1;
+
+      const email = dispatch?.email && typeof dispatch.email === "object" ? dispatch.email : {};
+      const emailRecipients = Math.max(0, Number(email?.recipientCount || 0));
+      const emailStatus = String(email?.status || "").trim().toLowerCase();
+      if (emailRecipients > 0) {
+        if (emailStatus === "sent" || emailStatus === "simulated") {
+          successCount += emailRecipients;
+        } else if (emailStatus === "failed") {
+          failedCount += emailRecipients;
+        } else if (emailStatus === "partial") {
+          successCount += Math.max(0, emailRecipients - 1);
+          failedCount += 1;
+        }
+      }
+
+      const sms = dispatch?.sms && typeof dispatch.sms === "object" ? dispatch.sms : {};
+      const smsDelivered = Math.max(0, Number(sms?.deliveredCount || 0));
+      const smsRecipients = Math.max(0, Number(sms?.recipientCount || 0));
+      const smsFailedList = Array.isArray(sms?.failed) ? sms.failed.length : 0;
+      successCount += smsDelivered;
+      if (smsFailedList > 0) {
+        failedCount += smsFailedList;
+      } else if (String(sms?.status || "").trim().toLowerCase() === "failed" && smsRecipients > smsDelivered) {
+        failedCount += Math.max(0, smsRecipients - smsDelivered);
+      }
+
+      const webhooks = dispatch?.webhooks && typeof dispatch.webhooks === "object" ? dispatch.webhooks : {};
+      const webhookTargets = Array.isArray(webhooks?.targets) ? webhooks.targets.length : 0;
+      const webhookSuccess = Math.max(0, Number(webhooks?.successCount || 0));
+      successCount += webhookSuccess;
+      if (webhookTargets > webhookSuccess) {
+        failedCount += webhookTargets - webhookSuccess;
+      }
+    });
+
+    const totalDispatchEvents = successCount + failedCount;
+    return {
+      successCount,
+      failedCount,
+      totalDispatchEvents,
+      incidentsWithDispatch,
+      successRate: totalDispatchEvents > 0 ? Math.round((successCount / totalDispatchEvents) * 100) : 0,
+    };
+  }, [records]);
+
   return (
     <div className="space-y-4">
       {section === "incident-dashboard" ? (
@@ -1074,6 +1130,33 @@ export default function IncidentManagementModule({ session }) {
               </div>
             </SurfaceCard>
           </div>
+
+          <SurfaceCard title="Alert Delivery Status" subtitle="Incident alert dispatch outcomes">
+            {alertDeliverySummary.incidentsWithDispatch <= 0 ? (
+              <EmptyState title="No alert dispatch data" subtitle="Alert success and failed counts appear after incident notifications run." />
+            ) : (
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-emerald-700">Success</p>
+                    <p className="mt-1 text-lg font-semibold text-emerald-900">{alertDeliverySummary.successCount}</p>
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-rose-700">Failed</p>
+                    <p className="mt-1 text-lg font-semibold text-rose-900">{alertDeliverySummary.failedCount}</p>
+                  </div>
+                  <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-sky-700">Success Rate</p>
+                    <p className="mt-1 text-lg font-semibold text-sky-900">{alertDeliverySummary.successRate}%</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-600">
+                  Based on incident alert dispatch logs (Email, SMS, and Webhook channels).
+                </p>
+              </div>
+            )}
+          </SurfaceCard>
+
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
               Export PDF

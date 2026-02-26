@@ -664,6 +664,7 @@ export default function EmployeeRecordsModule({ session }) {
         role: roleFilter,
         page,
         pageSize: 10,
+        includeDocuments: employeeRole ? true : undefined,
       });
       const rows = ensureArray(payload.records)
         .map((record) => ({
@@ -2061,8 +2062,12 @@ export default function EmployeeRecordsModule({ session }) {
 
   const renderAttachedDocuments = () => (
     <SurfaceCard
-      title="Employee Attached Documents"
-      subtitle="All documents currently attached to this employee record"
+      title={employeeRole ? "My Attached Documents" : "Employee Attached Documents"}
+      subtitle={
+        employeeRole
+          ? "Documents linked to your own employee profile."
+          : "All documents currently attached to this employee record"
+      }
     >
       {!selectedRow ? (
         <EmptyState
@@ -2100,8 +2105,12 @@ export default function EmployeeRecordsModule({ session }) {
 
           {ensureArray(selectedRow.documents).length === 0 ? (
             <EmptyState
-              title="No attached documents yet"
-              subtitle="Upload employee files to build this document list."
+              title={employeeRole ? "No documents available yet" : "No attached documents yet"}
+              subtitle={
+                employeeRole
+                  ? "HR or onboarding uploads will appear here once attached to your record."
+                  : "Upload employee files to build this document list."
+              }
             />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-slate-200">

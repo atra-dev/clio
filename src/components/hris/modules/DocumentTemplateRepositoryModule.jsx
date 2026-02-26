@@ -15,6 +15,7 @@ const SECTION_TABS = [
   { id: "versions", label: "Version History" },
   { id: "upload-audit", label: "Upload Audit Logs" },
 ];
+const EMPLOYEE_SECTION_TABS = [{ id: "employee-docs", label: "My Documents" }];
 
 const initialTemplateForm = {
   templateName: "",
@@ -80,7 +81,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
   const employeeRole = isEmployeeRole(actorRole);
   const canManageTemplates = !employeeRole;
 
-  const [section, setSection] = useState("library");
+  const [section, setSection] = useState(employeeRole ? "employee-docs" : "library");
   const [templates, setTemplates] = useState([]);
   const [employeeRecords, setEmployeeRecords] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -89,6 +90,17 @@ export default function DocumentTemplateRepositoryModule({ session }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const visibleSectionTabs = useMemo(
+    () => (employeeRole ? EMPLOYEE_SECTION_TABS : SECTION_TABS),
+    [employeeRole],
+  );
+
+  useEffect(() => {
+    if (visibleSectionTabs.some((tab) => tab.id === section)) {
+      return;
+    }
+    setSection(visibleSectionTabs[0]?.id || "employee-docs");
+  }, [section, visibleSectionTabs]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -236,7 +248,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
 
   return (
     <div className="space-y-4">
-      <ModuleTabs tabs={SECTION_TABS} value={section} onChange={setSection} />
+      <ModuleTabs tabs={visibleSectionTabs} value={section} onChange={setSection} />
 
       {errorMessage ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMessage}</p>
@@ -307,7 +319,9 @@ export default function DocumentTemplateRepositoryModule({ session }) {
       <SurfaceCard
         title={
           section === "employee-docs"
-            ? "Employee Documents"
+            ? employeeRole
+              ? "My Documents"
+              : "Employee Documents"
             : section === "contracts"
               ? "Contracts & Agreements"
               : section === "versions"
@@ -316,13 +330,24 @@ export default function DocumentTemplateRepositoryModule({ session }) {
                   ? "Upload Audit Logs"
                   : "Templates Library"
         }
-        subtitle="Permission-based template and document access"
+        subtitle={
+          employeeRole
+            ? "Own attached files from your employee record."
+            : "Permission-based template and document access"
+        }
       >
         {isLoading ? (
           <p className="text-sm text-slate-600">Loading template repository...</p>
         ) : section === "employee-docs" ? (
           employeeDocuments.length === 0 ? (
-            <EmptyState title="No employee documents yet" subtitle="Uploaded employee documents will appear here." />
+            <EmptyState
+              title={employeeRole ? "No documents yet" : "No employee documents yet"}
+              subtitle={
+                employeeRole
+                  ? "Your attached employee files will appear here once uploaded."
+                  : "Uploaded employee documents will appear here."
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">

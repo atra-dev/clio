@@ -6,24 +6,7 @@ function createEmployeeDashboardContent(tierLabel) {
       { id: "my-attendance", label: "My Attendance", value: "96.4%", trend: "+1.0% this month" },
       { id: "work-hours", label: "Work Hours", value: "160h", trend: "Month-to-date" },
       { id: "kpi-progress", label: "KPI Progress", value: "87%", trend: "Q1 in progress" },
-      { id: "requests-open", label: "Open Requests", value: "2", trend: "1 pending approval" },
     ],
-    priorities: [
-      "Keep personal profile fields updated for emergency communications.",
-      "Keep clock in and clock out entries accurate each workday.",
-      "Submit leave and document requests from the Requests module.",
-    ],
-    table: {
-      title: "My Current Work Items",
-      subtitle: "Self-service tasks aligned to access limits",
-      actionLabel: "Open my profile",
-      columns: ["Item", "Category", "Due", "Status"],
-      rows: [
-        ["Emergency Contact Update", "Personal Info", "Today", "Pending"],
-        ["Q1 KPI Evidence Upload", "Performance", "Feb 28", "In Progress"],
-        ["Clock-In Adjustment Review", "Attendance", "Feb 22", "Under Review"],
-      ],
-    },
   };
 }
 

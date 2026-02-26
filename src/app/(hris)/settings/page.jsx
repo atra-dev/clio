@@ -1,4 +1,3 @@
-import SurfaceCard from "@/components/hris/SurfaceCard";
 import SettingsMfaModule from "@/components/hris/modules/SettingsMfaModule";
 import SettingsReferenceDataModule from "@/components/hris/modules/SettingsReferenceDataModule";
 import SettingsRecentActivityPanel from "@/components/hris/modules/SettingsRecentActivityPanel";
@@ -15,8 +14,6 @@ export default async function SettingsPage() {
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isGrc = role === "GRC";
   const isHr = role === "HR";
-  const isEa = role === "EA";
-  const isEmployee = role.startsWith("EMPLOYEE");
   const canManageReferenceData = isSuperAdmin || isGrc || isHr;
   const roleLabel =
     role === "SUPER_ADMIN"
@@ -58,39 +55,11 @@ export default async function SettingsPage() {
 
           {canManageReferenceData ? (
             <SettingsReferenceDataModule />
-          ) : (
-            <SurfaceCard title="Reference Data" subtitle="Roles and departments are managed by GRC/HR">
-              <p className="text-sm text-slate-600">
-                You have view-only access for governance catalog values. Contact GRC or HR for updates.
-              </p>
-            </SurfaceCard>
-          )}
+          ) : null}
         </div>
 
         <div className="space-y-6">
           <SettingsRecentActivityPanel />
-
-          <SurfaceCard title="Security Notes" subtitle="Operational reminders">
-            <div className="space-y-2 text-sm text-slate-700">
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                Enable MFA only after your mobile number is verified during sign-in.
-              </p>
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                Changes to reference data affect role and department selections across HR modules.
-              </p>
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                Review account activity regularly to detect unexpected login behavior.
-              </p>
-            </div>
-          </SurfaceCard>
-
-          {isEmployee || isEa ? (
-            <SurfaceCard title="Account Preferences" subtitle="Personal access scope">
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                You can manage your own MFA preference. Governance-wide security policies remain managed by HR/GRC.
-              </p>
-            </SurfaceCard>
-          ) : null}
         </div>
       </section>
     </div>
