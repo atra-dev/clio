@@ -1908,7 +1908,9 @@ async function triggerOnboardingInvite(record, actorEmail, actorRole) {
     message:
       delivery?.status === "failed"
         ? "Onboarding invite was created. Email delivery failed in test mode."
-        : "Onboarding invite sent. User can verify email and activate access.",
+        : delivery?.provider === "firebase"
+          ? "Onboarding invite sent via Firebase email-link template. User must verify email to open the CLIO account, then complete SMS OTP."
+          : "Onboarding invite sent. User must verify email to open the CLIO account, then complete SMS OTP.",
     inviteId: result.invite.id,
     inviteStatus: result.invite.status,
     role: result.user.role,

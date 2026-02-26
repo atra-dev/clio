@@ -111,7 +111,7 @@ export async function POST(request) {
 
       const failureMessage =
         deliveryReason === "email_provider_not_configured"
-          ? "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and NEXT_PUBLIC_FIREBASE_API_KEY."
+          ? "Email provider is not configured. For branded account-opening invites, set CLIO_EMAIL_PROVIDER=resend, RESEND_API_KEY, and CLIO_EMAIL_FROM."
           : deliveryReason === "firebase_api_key_not_configured"
             ? "Firebase API key is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY."
             : deliveryReason === "firebase_email_provider_not_enabled"

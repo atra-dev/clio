@@ -164,8 +164,12 @@ export default function UserManagementPanel() {
         setSuccessMessage(
           warning || `Invite created for ${payload.user.email}. Email delivery failed.`,
         );
+      } else if (payload?.delivery?.provider === "firebase") {
+        setSuccessMessage(
+          `Invite sent to ${payload.user.email}. User must verify email to open a CLIO account, but current email text uses Firebase's default template.`,
+        );
       } else {
-        setSuccessMessage(`Invitation email with verification link sent to ${payload.user.email}.`);
+        setSuccessMessage(`Account opening email sent to ${payload.user.email}. Ask the user to verify email first to open their CLIO account.`);
       }
       setInvitePreview(payload.invite || null);
       setInviteForm(initialInviteForm);
@@ -273,7 +277,7 @@ export default function UserManagementPanel() {
     <div className="space-y-4">
       <SurfaceCard
         title="Invite User"
-        subtitle="No sign-up form. Invited users must complete invite phone OTP verification before Google sign-in."
+        subtitle="No sign-up form. Send an invite so the user can verify email, complete SMS OTP, and open a CLIO account."
       >
         <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]" onSubmit={handleInviteSubmit}>
           <label className="space-y-1">
@@ -314,9 +318,10 @@ export default function UserManagementPanel() {
 
         {invitePreview ? (
           <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800">
-            <p className="font-semibold">Invite recorded</p>
+            <p className="font-semibold">Invite recorded for account opening</p>
             <p className="mt-1">Invite ID: {invitePreview.id || "-"}</p>
             <p className="mt-1">Expires: {formatDate(invitePreview.expiresAt)}</p>
+            <p className="mt-1">Next step: User must verify email from invite email before Google login.</p>
           </div>
         ) : null}
 

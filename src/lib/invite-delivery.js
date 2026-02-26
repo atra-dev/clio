@@ -3,7 +3,7 @@ function normalizeEmailProvider(rawValue) {
     .trim()
     .toLowerCase();
   if (!raw) {
-    return "firebase";
+    return "";
   }
 
   if (raw === "firebase" || raw.includes("firebase")) {
@@ -22,7 +22,19 @@ function normalizeEmailProvider(rawValue) {
 }
 
 function getEmailProvider() {
-  return normalizeEmailProvider(process.env.CLIO_EMAIL_PROVIDER);
+  const configured = normalizeEmailProvider(process.env.CLIO_EMAIL_PROVIDER);
+  if (configured) {
+    return configured;
+  }
+
+  const hasResendConfig =
+    String(process.env.RESEND_API_KEY || "").trim().startsWith("re_") &&
+    String(process.env.CLIO_EMAIL_FROM || "").trim().length > 0;
+  if (hasResendConfig) {
+    return "resend";
+  }
+
+  return "firebase";
 }
 
 function isConsoleEmailAllowed() {
@@ -112,17 +124,18 @@ function buildEmailContent({ role, invitedBy, verifyUrl, loginUrl, expiresAt }) 
         minute: "2-digit",
       });
 
-  const subject = "You are invited to CLIO HRIS";
+  const subject = "Verify your email to open your CLIO account";
   const text = [
-    "You were invited to access CLIO HRIS.",
+    "You were invited to open a CLIO account.",
     `Assigned role: ${role}`,
     `Invited by: ${invitedBy}`,
-    `Verify your email: ${verifyUrl}`,
+    `Verify your email to open your account: ${verifyUrl}`,
     `Sign-in page: ${loginUrl}`,
     `Invitation expires: ${readableExpiration}`,
     "",
     "Step 1: Open the verification link and complete email verification.",
-    "Step 2: After verification, sign in using Google with the same invited work email.",
+    "Step 2: Complete SMS OTP on the verification page.",
+    "Step 3: Sign in with Google using the same invited work email.",
     "Only invited accounts can access the workspace.",
   ].join("\n");
 
@@ -130,13 +143,13 @@ function buildEmailContent({ role, invitedBy, verifyUrl, loginUrl, expiresAt }) 
     subject,
     text,
     html: [
-      "<p>You were invited to access <strong>CLIO HRIS</strong>.</p>",
+      "<p>You were invited to open your <strong>CLIO</strong> account.</p>",
       `<p><strong>Assigned role:</strong> ${role}<br/>`,
       `<strong>Invited by:</strong> ${invitedBy}<br/>`,
       `<strong>Invitation expires:</strong> ${readableExpiration}</p>`,
-      `<p><a href="${verifyUrl}">Verify your email</a></p>`,
+      `<p><a href="${verifyUrl}">Verify your email to open your CLIO account</a></p>`,
       `<p><a href="${loginUrl}">Open CLIO sign-in</a></p>`,
-      "<p>After verification, sign in using Google with the same invited work email.</p>",
+      "<p>After email + SMS verification, sign in using Google with the same invited work email.</p>",
     ].join(""),
   };
 }
