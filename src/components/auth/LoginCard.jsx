@@ -309,7 +309,6 @@ export default function LoginCard() {
     }
 
     setIsSendingOtp(true);
-    setIsVerifyingAccess(true);
     setErrorMessage("");
     setInfoMessage("");
 
@@ -345,7 +344,6 @@ export default function LoginCard() {
       confirmationResultRef.current = null;
     } finally {
       setIsSendingOtp(false);
-      setIsVerifyingAccess(false);
     }
   };
 
@@ -510,7 +508,7 @@ export default function LoginCard() {
   };
 
   const showVerifyingOverlay =
-    isVerifyingAccess || isSendingOtp || isVerifyingOtp || finalizingLoginRef.current;
+    isVerifyingAccess || isVerifyingOtp || finalizingLoginRef.current;
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
   const hasMfaChallenge = Boolean(mfaState.challengeToken);
 
