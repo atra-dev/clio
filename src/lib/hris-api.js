@@ -307,6 +307,12 @@ export function mapBackendError(reason, fallbackMessage) {
         message:
           "Firebase continue URL is invalid. Check NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN (or CLIO_APP_BASE_URL override) and authorize the domain in Firebase Authentication.",
       };
+    case "unsafe_app_base_url_for_production":
+      return {
+        status: 502,
+        message:
+          "Invite base URL is unsafe for production (localhost). Remove CLIO_APP_BASE_URL/NEXT_PUBLIC_APP_URL localhost overrides and use NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN.",
+      };
     case "unsupported_email_provider":
       return {
         status: 502,

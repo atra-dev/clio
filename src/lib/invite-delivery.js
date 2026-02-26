@@ -56,14 +56,40 @@ function normalizeBaseUrl(value) {
   return `https://${raw.replace(/^\/+/, "").replace(/\/+$/, "")}`;
 }
 
+function assertSafeProductionBaseUrl(baseUrl) {
+  if (process.env.NODE_ENV !== "production") {
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error("app_base_url_not_configured");
+  }
+
+  const hostname = String(parsed.hostname || "").trim().toLowerCase();
+  const isLocalHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.endsWith(".local");
+
+  if (isLocalHost) {
+    throw new Error("unsafe_app_base_url_for_production");
+  }
+}
+
 function getAppBaseUrl() {
   const configured = normalizeBaseUrl(process.env.CLIO_APP_BASE_URL);
   if (configured) {
+    assertSafeProductionBaseUrl(configured);
     return configured;
   }
 
   const publicSiteUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
   if (publicSiteUrl) {
+    assertSafeProductionBaseUrl(publicSiteUrl);
     return publicSiteUrl;
   }
 
@@ -71,6 +97,7 @@ function getAppBaseUrl() {
     process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN,
   );
   if (firebaseAuthDomain) {
+    assertSafeProductionBaseUrl(firebaseAuthDomain);
     return firebaseAuthDomain;
   }
 
@@ -78,6 +105,7 @@ function getAppBaseUrl() {
     process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL,
   );
   if (vercelUrl) {
+    assertSafeProductionBaseUrl(vercelUrl);
     return vercelUrl;
   }
 
