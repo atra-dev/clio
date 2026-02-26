@@ -15,7 +15,7 @@ const SECTION_TABS = [
   { id: "versions", label: "Version History" },
   { id: "upload-audit", label: "Upload Audit Logs" },
 ];
-const EMPLOYEE_SECTION_TABS = [{ id: "employee-docs", label: "My Documents" }];
+const EMPLOYEE_SECTION_TABS = [{ id: "employee-docs", label: "Documents" }];
 
 const initialTemplateForm = {
   templateName: "",
@@ -320,7 +320,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
         title={
           section === "employee-docs"
             ? employeeRole
-              ? "My Documents"
+              ? "Documents"
               : "Employee Documents"
             : section === "contracts"
               ? "Contracts & Agreements"
@@ -332,7 +332,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
         }
         subtitle={
           employeeRole
-            ? "Own attached files from your employee record."
+            ? "Attached files from your employee record."
             : "Permission-based template and document access"
         }
       >
@@ -341,10 +341,10 @@ export default function DocumentTemplateRepositoryModule({ session }) {
         ) : section === "employee-docs" ? (
           employeeDocuments.length === 0 ? (
             <EmptyState
-              title={employeeRole ? "No documents yet" : "No employee documents yet"}
+              title={employeeRole ? "No files yet" : "No employee documents yet"}
               subtitle={
                 employeeRole
-                  ? "Your attached employee files will appear here once uploaded."
+                  ? "Files attached to your profile will appear here."
                   : "Uploaded employee documents will appear here."
               }
             />
@@ -353,28 +353,47 @@ export default function DocumentTemplateRepositoryModule({ session }) {
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                    <th className="px-2 py-3 font-medium">Employee</th>
+                    {!employeeRole ? <th className="px-2 py-3 font-medium">Employee</th> : null}
                     <th className="px-2 py-3 font-medium">Document</th>
                     <th className="px-2 py-3 font-medium">Type</th>
                     <th className="px-2 py-3 font-medium">Uploaded</th>
-                    <th className="px-2 py-3 font-medium">Uploaded By</th>
+                    {!employeeRole ? <th className="px-2 py-3 font-medium">Uploaded By</th> : null}
+                    <th className="px-2 py-3 font-medium text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {employeeDocuments.map((row) => (
                     <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                      <td className="px-2 py-3">
-                        <p className="font-medium text-slate-900">{row.employee}</p>
-                        <p className="text-xs text-slate-500">{row.employeeEmail}</p>
-                      </td>
+                      {!employeeRole ? (
+                        <td className="px-2 py-3">
+                          <p className="font-medium text-slate-900">{row.employee}</p>
+                          <p className="text-xs text-slate-500">{row.employeeEmail}</p>
+                        </td>
+                      ) : null}
                       <td className="px-2 py-3">{row.name}</td>
                       <td className="px-2 py-3">{row.type}</td>
                       <td className="px-2 py-3">{formatDate(row.uploadedAt)}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600">
-                        <p className="font-medium text-slate-800">{formatActorName(row.uploadedByName, row.uploadedBy)}</p>
-                        {formatActorEmail(row.uploadedByEmail || row.uploadedBy) ? (
-                          <p className="truncate text-[11px] text-slate-500">{formatActorEmail(row.uploadedByEmail || row.uploadedBy)}</p>
-                        ) : null}
+                      {!employeeRole ? (
+                        <td className="px-2 py-3 text-xs text-slate-600">
+                          <p className="font-medium text-slate-800">{formatActorName(row.uploadedByName, row.uploadedBy)}</p>
+                          {formatActorEmail(row.uploadedByEmail || row.uploadedBy) ? (
+                            <p className="truncate text-[11px] text-slate-500">{formatActorEmail(row.uploadedByEmail || row.uploadedBy)}</p>
+                          ) : null}
+                        </td>
+                      ) : null}
+                      <td className="px-2 py-3 text-right">
+                        {String(row.ref || "").trim() ? (
+                          <a
+                            href={row.ref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-400">No file link</span>
+                        )}
                       </td>
                     </tr>
                   ))}

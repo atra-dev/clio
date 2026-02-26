@@ -603,12 +603,10 @@ export default function IncidentManagementModule({ session }) {
   }, [records]);
 
   const severityDistribution = useMemo(() => {
-    const buckets = { Low: 0, Medium: 0, High: 0, Critical: 0 };
+    const buckets = { Low: 0, High: 0 };
     records.forEach((record) => {
-      const severity = String(record?.severity || "").trim();
-      if (buckets[severity] != null) {
-        buckets[severity] += 1;
-      }
+      const severity = normalizeSeverityValue(record?.severity, "Low");
+      buckets[severity] += 1;
     });
     return buckets;
   }, [records]);
@@ -661,22 +659,23 @@ export default function IncidentManagementModule({ session }) {
   }, [typeDistribution]);
 
   const recurringSeverityBars = useMemo(() => {
-    const low = Number(severityDistribution.Low || 0) + Number(severityDistribution.Medium || 0);
-    const high = Number(severityDistribution.High || 0) + Number(severityDistribution.Critical || 0);
+    const low = Number(severityDistribution.Low || 0);
+    const high = Number(severityDistribution.High || 0);
     const maxValue = Math.max(low, high, 1);
     return [
-      { label: "Low", meta: "Low + Medium", value: low, color: "bg-sky-500" },
-      { label: "High", meta: "High + Critical", value: high, color: "bg-rose-500" },
+      { label: "Low", meta: "Lower impact incidents", value: low, color: "bg-sky-500" },
+      { label: "High", meta: "High-impact incidents", value: high, color: "bg-rose-500" },
     ].map((item) => ({
       ...item,
       width: `${Math.round((item.value / maxValue) * 100)}%`,
     }));
   }, [severityDistribution]);
 
-  const alertDeliverySummary = useMemo(() => {
-    let successCount = 0;
-    let failedCount = 0;
+  const alertDispatchInsights = useMemo(() => {
     let incidentsWithDispatch = 0;
+    let emailIncidents = 0;
+    let smsIncidents = 0;
+    let webhookIncidents = 0;
 
     records.forEach((record) => {
       const dispatch = record?.alertDispatchSummary;
@@ -687,45 +686,42 @@ export default function IncidentManagementModule({ session }) {
 
       const email = dispatch?.email && typeof dispatch.email === "object" ? dispatch.email : {};
       const emailRecipients = Math.max(0, Number(email?.recipientCount || 0));
-      const emailStatus = String(email?.status || "").trim().toLowerCase();
-      if (emailRecipients > 0) {
-        if (emailStatus === "sent" || emailStatus === "simulated") {
-          successCount += emailRecipients;
-        } else if (emailStatus === "failed") {
-          failedCount += emailRecipients;
-        } else if (emailStatus === "partial") {
-          successCount += Math.max(0, emailRecipients - 1);
-          failedCount += 1;
-        }
+      if (emailRecipients > 0 || String(email?.status || "").trim()) {
+        emailIncidents += 1;
       }
 
       const sms = dispatch?.sms && typeof dispatch.sms === "object" ? dispatch.sms : {};
       const smsDelivered = Math.max(0, Number(sms?.deliveredCount || 0));
       const smsRecipients = Math.max(0, Number(sms?.recipientCount || 0));
-      const smsFailedList = Array.isArray(sms?.failed) ? sms.failed.length : 0;
-      successCount += smsDelivered;
-      if (smsFailedList > 0) {
-        failedCount += smsFailedList;
-      } else if (String(sms?.status || "").trim().toLowerCase() === "failed" && smsRecipients > smsDelivered) {
-        failedCount += Math.max(0, smsRecipients - smsDelivered);
+      if (smsRecipients > 0 || smsDelivered > 0 || String(sms?.status || "").trim()) {
+        smsIncidents += 1;
       }
 
       const webhooks = dispatch?.webhooks && typeof dispatch.webhooks === "object" ? dispatch.webhooks : {};
       const webhookTargets = Array.isArray(webhooks?.targets) ? webhooks.targets.length : 0;
-      const webhookSuccess = Math.max(0, Number(webhooks?.successCount || 0));
-      successCount += webhookSuccess;
-      if (webhookTargets > webhookSuccess) {
-        failedCount += webhookTargets - webhookSuccess;
+      if (webhookTargets > 0 || Number(webhooks?.successCount || 0) > 0 || String(webhooks?.status || "").trim()) {
+        webhookIncidents += 1;
       }
     });
 
-    const totalDispatchEvents = successCount + failedCount;
+    const totalIncidents = records.length;
+    const incidentsWithoutDispatch = Math.max(0, totalIncidents - incidentsWithDispatch);
+    const coverageMax = Math.max(incidentsWithDispatch, incidentsWithoutDispatch, 1);
+    const channelMax = Math.max(emailIncidents, smsIncidents, webhookIncidents, 1);
+
     return {
-      successCount,
-      failedCount,
-      totalDispatchEvents,
+      totalIncidents,
       incidentsWithDispatch,
-      successRate: totalDispatchEvents > 0 ? Math.round((successCount / totalDispatchEvents) * 100) : 0,
+      incidentsWithoutDispatch,
+      coverageBars: [
+        { label: "With Dispatch", value: incidentsWithDispatch, color: "bg-emerald-500", width: `${Math.round((incidentsWithDispatch / coverageMax) * 100)}%` },
+        { label: "Without Dispatch", value: incidentsWithoutDispatch, color: "bg-slate-400", width: `${Math.round((incidentsWithoutDispatch / coverageMax) * 100)}%` },
+      ],
+      channelBars: [
+        { label: "Email", value: emailIncidents, color: "bg-sky-500", width: `${Math.round((emailIncidents / channelMax) * 100)}%` },
+        { label: "SMS", value: smsIncidents, color: "bg-indigo-500", width: `${Math.round((smsIncidents / channelMax) * 100)}%` },
+        { label: "Webhook", value: webhookIncidents, color: "bg-violet-500", width: `${Math.round((webhookIncidents / channelMax) * 100)}%` },
+      ],
     };
   }, [records]);
 
@@ -756,12 +752,15 @@ export default function IncidentManagementModule({ session }) {
             ))}
           </div>
         </SurfaceCard>
-        <SurfaceCard title="Severity Distribution" subtitle="Incident mix by severity">
+        <SurfaceCard title="Severity Distribution" subtitle="Incident mix by severity (High / Low)">
           <div className="grid gap-2 sm:grid-cols-2">
-            {Object.entries(severityDistribution).map(([label, value]) => (
-              <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
-                <p className="text-sm font-semibold text-slate-900">{value}</p>
+            {[
+              { label: "Low", value: severityDistribution.Low, tone: "border-sky-200 bg-sky-50/50 text-sky-700" },
+              { label: "High", value: severityDistribution.High, tone: "border-rose-200 bg-rose-50/50 text-rose-700" },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-lg border px-3 py-2 ${item.tone}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em]">{item.label}</p>
+                <p className="text-sm font-semibold text-slate-900">{item.value}</p>
               </div>
             ))}
           </div>
@@ -799,7 +798,7 @@ export default function IncidentManagementModule({ session }) {
                       </p>
                     </td>
                     <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
-                    <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
+                    <td className="px-2 py-3"><StatusBadge value={normalizeSeverityValue(record?.severity, "Low")} /></td>
                     <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
                     <td className="px-2 py-3 text-right">
                       <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
@@ -1042,7 +1041,7 @@ export default function IncidentManagementModule({ session }) {
                             Occurrences: {Number(record?.alertOccurrenceCount || 1)}
                           </p>
                         </td>
-                        <td className="px-2 py-3"><StatusBadge value={record?.severity || "Medium"} /></td>
+                        <td className="px-2 py-3"><StatusBadge value={normalizeSeverityValue(record?.severity, "Low")} /></td>
                         <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
                         <td className="px-2 py-3 text-xs">
                           <p className="font-medium text-slate-800">{String(record?.escalationLevel || "-")}</p>
@@ -1131,28 +1130,45 @@ export default function IncidentManagementModule({ session }) {
             </SurfaceCard>
           </div>
 
-          <SurfaceCard title="Alert Delivery Status" subtitle="Incident alert dispatch outcomes">
-            {alertDeliverySummary.incidentsWithDispatch <= 0 ? (
-              <EmptyState title="No alert dispatch data" subtitle="Alert success and failed counts appear after incident notifications run." />
+          <SurfaceCard title="Alert Dispatch Coverage" subtitle="Dispatch readiness and channel usage">
+            {alertDispatchInsights.totalIncidents <= 0 ? (
+              <EmptyState title="No alert dispatch data" subtitle="Coverage and channel charts appear after incidents are logged." />
             ) : (
               <div className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-emerald-700">Success</p>
-                    <p className="mt-1 text-lg font-semibold text-emerald-900">{alertDeliverySummary.successCount}</p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Coverage</p>
+                    <div className="mt-2 space-y-2">
+                      {alertDispatchInsights.coverageBars.map((item) => (
+                        <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center justify-between text-xs text-slate-700">
+                            <span className="font-semibold">{item.label}</span>
+                            <span>{item.value}</span>
+                          </div>
+                          <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full ${item.color}`} style={{ width: item.width }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-rose-700">Failed</p>
-                    <p className="mt-1 text-lg font-semibold text-rose-900">{alertDeliverySummary.failedCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-sky-700">Success Rate</p>
-                    <p className="mt-1 text-lg font-semibold text-sky-900">{alertDeliverySummary.successRate}%</p>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Channel Mix</p>
+                    <div className="mt-2 space-y-2">
+                      {alertDispatchInsights.channelBars.map((item) => (
+                        <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center justify-between text-xs text-slate-700">
+                            <span className="font-semibold">{item.label}</span>
+                            <span>{item.value}</span>
+                          </div>
+                          <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full ${item.color}`} style={{ width: item.width }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <p className="text-xs text-slate-600">
-                  Based on incident alert dispatch logs (Email, SMS, and Webhook channels).
-                </p>
               </div>
             )}
           </SurfaceCard>

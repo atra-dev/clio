@@ -13,6 +13,7 @@ import {
 import {
   canActorEditModule,
   getSelfRestrictedOwnerEmail,
+  isEmployeeRole,
   logApiAudit,
   mapBackendError,
   normalizeEmail,
@@ -81,7 +82,10 @@ export async function GET(request) {
       ownerEmail: ownerEmail || undefined,
     });
 
-    const records = rows.filter((row) => {
+    const scopedRows = isEmployeeRole(session.role)
+      ? rows.filter((row) => normalizeEmail(row.employeeEmail) === normalizeEmail(session.email))
+      : rows;
+    const records = scopedRows.filter((row) => {
       const rowStatus = String(row.status || "").trim().toLowerCase();
       const rowDate = asDate(row.date || row.createdAt);
       const byStatus = statusFilter ? rowStatus.includes(statusFilter) : true;
@@ -124,6 +128,7 @@ export async function GET(request) {
       performedBy: session.email,
       metadata: {
         resultCount: enrichedRecords.length,
+        scopedResultCount: scopedRows.length,
         ownerFilterApplied: Boolean(ownerEmail),
         hasStatusFilter: Boolean(statusFilter),
         hasDateRangeFilter: Boolean(dateFromFilter || dateToFilter),

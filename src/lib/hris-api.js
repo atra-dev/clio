@@ -32,6 +32,190 @@ export function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function ensureObject(value, fallback = {}) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function asString(value, fallback = "") {
+  const normalized = String(value || "").trim();
+  return normalized || fallback;
+}
+
+function asNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeStringArray(value, { lowercase = false } = {}) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return source
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => (lowercase ? item.toLowerCase() : item));
+}
+
+function normalizeIncidentEvidenceDocuments(value) {
+  const rows = ensureArray(value);
+  return rows.map((entry, index) => {
+    const item = ensureObject(entry, {});
+    return {
+      id: asString(item.id || `${index + 1}`),
+      name: asString(item.name, "Incident Evidence"),
+      type: asString(item.type, "Incident Evidence"),
+      ref: asString(item.ref),
+      storagePath: asString(item.storagePath),
+      contentType: asString(item.contentType),
+      fileExtension: asString(item.fileExtension),
+      sizeBytes: asNumber(item.sizeBytes, 0),
+      uploadedAt: asString(item.uploadedAt),
+      uploadedBy: asString(item.uploadedBy).toLowerCase(),
+    };
+  });
+}
+
+export function enrichIncidentRecordForApi(record) {
+  const source = ensureObject(record, {});
+  const involvedEmployees = normalizeStringArray(source.involvedEmployees, { lowercase: true });
+  const alertRecipients = normalizeStringArray(source.alertRecipients, { lowercase: true });
+  const evidenceDocuments = normalizeIncidentEvidenceDocuments(source.evidenceDocuments);
+  const evidenceDocumentsCount = Math.max(
+    evidenceDocuments.length,
+    asNumber(source.evidenceDocumentsCount, evidenceDocuments.length),
+  );
+  const traceability = ensureArray(source.traceability).map((entry) => ensureObject(entry, {}));
+  const forensicSummary = ensureObject(source.forensicSummary, {});
+  const forensicSnapshot = ensureObject(source.forensicSnapshot, {});
+  const alertDispatchSummary = ensureObject(source.alertDispatchSummary, {});
+  const externalIntegrations = ensureObject(source.externalIntegrations, {});
+
+  const normalizedRecord = {
+    ...source,
+    incidentCode: asString(source.incidentCode),
+    title: asString(source.title),
+    summary: asString(source.summary),
+    incidentType: asString(source.incidentType),
+    severity: asString(source.severity),
+    status: asString(source.status),
+    ownerEmail: asString(source.ownerEmail).toLowerCase(),
+    affectedEmployeeEmail: asString(source.affectedEmployeeEmail).toLowerCase(),
+    department: asString(source.department),
+    involvedEmployees,
+    escalationLevel: asString(source.escalationLevel),
+    containmentStatus: asString(source.containmentStatus),
+    impactAssessmentStatus: asString(source.impactAssessmentStatus),
+    regulatoryStatus: asString(source.regulatoryStatus),
+    detectedAt: asString(source.detectedAt),
+    resolvedAt: asString(source.resolvedAt),
+    closedAt: asString(source.closedAt),
+    createdAt: asString(source.createdAt),
+    updatedAt: asString(source.updatedAt),
+    createdBy: asString(source.createdBy).toLowerCase(),
+    updatedBy: asString(source.updatedBy).toLowerCase(),
+    alertDescription: asString(source.alertDescription),
+    alertOccurrenceCount: Math.max(1, asNumber(source.alertOccurrenceCount, 1)),
+    alertFirstObservedAt: asString(source.alertFirstObservedAt),
+    alertLastObservedAt: asString(source.alertLastObservedAt),
+    alertRecipients,
+    alertDispatchSummary,
+    externalIntegrations,
+    forensicSummary,
+    forensicSnapshot,
+    evidenceDocuments,
+    evidenceDocumentsCount,
+    traceability,
+  };
+
+  const detailPayload = {
+    caseProfile: {
+      id: asString(normalizedRecord.id),
+      recordId: asString(normalizedRecord.recordId),
+      incidentCode: normalizedRecord.incidentCode,
+      title: normalizedRecord.title,
+      summary: normalizedRecord.summary,
+      incidentType: normalizedRecord.incidentType,
+      severity: normalizedRecord.severity,
+      status: normalizedRecord.status,
+      restrictedPiiInvolved: Boolean(source.restrictedPiiInvolved),
+      breachConfirmed: Boolean(source.breachConfirmed),
+    },
+    ownership: {
+      ownerEmail: normalizedRecord.ownerEmail,
+      affectedEmployeeEmail: normalizedRecord.affectedEmployeeEmail,
+      department: normalizedRecord.department,
+      involvedEmployees: normalizedRecord.involvedEmployees,
+    },
+    handling: {
+      escalationRequired: Boolean(source.escalationRequired),
+      escalationLevel: normalizedRecord.escalationLevel,
+      containmentStatus: normalizedRecord.containmentStatus,
+      containmentSummary: asString(source.containmentSummary),
+      impactAssessmentStatus: normalizedRecord.impactAssessmentStatus,
+      impactSummary: asString(source.impactSummary),
+      executiveNotificationRequired: Boolean(source.executiveNotificationRequired),
+    },
+    compliance: {
+      regulatoryNotificationRequired: Boolean(source.regulatoryNotificationRequired),
+      regulatoryStatus: normalizedRecord.regulatoryStatus,
+      regulatoryDueAt: asString(source.regulatoryDueAt),
+      regulatoryNotifiedAt: asString(source.regulatoryNotifiedAt),
+      affectedIndividualsNotifiedAt: asString(source.affectedIndividualsNotifiedAt),
+      documentationRetained: Boolean(source.documentationRetained),
+      documentationRetainedAt: asString(source.documentationRetainedAt),
+      documentationLocation: asString(source.documentationLocation),
+      classificationStandard: asString(source.classificationStandard),
+    },
+    timeline: {
+      detectedAt: normalizedRecord.detectedAt,
+      grcAlertedAt: asString(source.grcAlertedAt),
+      executiveNotifiedAt: asString(source.executiveNotifiedAt),
+      resolvedAt: normalizedRecord.resolvedAt,
+      closedAt: normalizedRecord.closedAt,
+      createdAt: normalizedRecord.createdAt,
+      updatedAt: normalizedRecord.updatedAt,
+    },
+    evidence: {
+      count: normalizedRecord.evidenceDocumentsCount,
+      documents: normalizedRecord.evidenceDocuments,
+      notes: asString(source.notes),
+      correctiveActions: asString(source.correctiveActions),
+      disciplinaryActions: asString(source.disciplinaryActions),
+      resolutionNotes: asString(source.resolutionNotes),
+    },
+    alerting: {
+      description: normalizedRecord.alertDescription,
+      occurrences: normalizedRecord.alertOccurrenceCount,
+      firstObservedAt: normalizedRecord.alertFirstObservedAt,
+      lastObservedAt: normalizedRecord.alertLastObservedAt,
+      recipients: normalizedRecord.alertRecipients,
+      dispatchSummary: normalizedRecord.alertDispatchSummary,
+      lastAlertDispatchAt: asString(source.lastAlertDispatchAt),
+    },
+    forensic: {
+      windowStart: asString(source.forensicWindowStart),
+      windowEnd: asString(source.forensicWindowEnd),
+      summary: normalizedRecord.forensicSummary,
+      snapshot: normalizedRecord.forensicSnapshot,
+    },
+    audit: {
+      traceability: normalizedRecord.traceability,
+      createdBy: normalizedRecord.createdBy,
+      updatedBy: normalizedRecord.updatedBy,
+    },
+  };
+
+  return {
+    ...normalizedRecord,
+    details: detailPayload,
+  };
+}
+
 export function parsePositiveInt(value, fallback, { min = 1, max = 1000 } = {}) {
   const parsed = Number.parseInt(String(value || ""), 10);
   if (!Number.isFinite(parsed)) {
@@ -88,7 +272,12 @@ export function getSelfRestrictedOwnerEmail({ session, requestedOwnerEmail, fall
     return requested || null;
   }
 
-  return normalizeEmail(session.email);
+  const actorEmail = normalizeEmail(session.email);
+  if (!actorEmail) {
+    throw new Error("employee_session_email_missing");
+  }
+
+  return actorEmail;
 }
 
 export function canViewSensitiveEmployeeFields(role) {
@@ -328,6 +517,11 @@ export function mapBackendError(reason, fallbackMessage) {
         status: 503,
         message:
           "Database is not configured. Set Firebase environment variables and restart the app.",
+      };
+    case "employee_session_email_missing":
+      return {
+        status: 401,
+        message: "Session is invalid. Sign in again.",
       };
     default:
       return { status: 400, message: fallbackMessage || "Unable to process request." };

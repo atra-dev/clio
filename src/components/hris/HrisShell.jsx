@@ -827,6 +827,19 @@ export default function HrisShell({ children, session }) {
     if (!recordId) {
       return;
     }
+    const existingDecisionRaw = String(notification?.metadata?.deviceVerificationDecision || "")
+      .trim()
+      .toLowerCase();
+    const existingDecision =
+      existingDecisionRaw === "confirmed"
+        ? "confirm"
+        : existingDecisionRaw === "denied"
+          ? "deny"
+          : existingDecisionRaw;
+    if (existingDecision === "confirm" || existingDecision === "deny") {
+      return;
+    }
+
     setDeviceActionState((current) => ({ ...current, [recordId]: true }));
     try {
       const response = await fetch("/api/auth/device-verification", {
@@ -841,10 +854,30 @@ export default function HrisShell({ children, session }) {
         throw new Error(payload?.message || "Unable to submit device verification.");
       }
 
+      const resolvedDecisionRaw = String(payload?.decision || decision || "")
+        .trim()
+        .toLowerCase();
+      const resolvedDecision =
+        resolvedDecisionRaw === "confirmed"
+          ? "confirm"
+          : resolvedDecisionRaw === "denied"
+            ? "deny"
+            : resolvedDecisionRaw;
+      const resolvedAtIso = new Date().toISOString();
       setNotifications((current) =>
         current.map((item) =>
           String(item?.id || item?.recordId || "").trim() === recordId
-            ? { ...item, status: "read", readAt: new Date().toISOString() }
+            ? {
+                ...item,
+                status: "read",
+                readAt: item?.readAt || resolvedAtIso,
+                metadata: {
+                  ...(item?.metadata && typeof item.metadata === "object" ? item.metadata : {}),
+                  deviceVerificationDecision: resolvedDecision || decision,
+                  deviceVerificationResolvedAt: resolvedAtIso,
+                  deviceVerificationResponder: userEmail,
+                },
+              }
             : item,
         ),
       );
@@ -1249,6 +1282,17 @@ export default function HrisShell({ children, session }) {
                           const canOpen = !isDeviceVerification && canOpenNotificationTarget(item);
                           const deviceLabel = String(item?.metadata?.deviceLabel || "").trim();
                           const sourceIp = String(item?.metadata?.sourceIp || "").trim();
+                          const deviceVerificationDecisionRaw = String(item?.metadata?.deviceVerificationDecision || "")
+                            .trim()
+                            .toLowerCase();
+                          const deviceVerificationDecision =
+                            deviceVerificationDecisionRaw === "confirmed"
+                              ? "confirm"
+                              : deviceVerificationDecisionRaw === "denied"
+                                ? "deny"
+                                : deviceVerificationDecisionRaw;
+                          const isDeviceVerificationResolved =
+                            deviceVerificationDecision === "confirm" || deviceVerificationDecision === "deny";
                           const isActionLoading = Boolean(deviceActionState[itemId]);
 
                           const content = (
@@ -1276,22 +1320,37 @@ export default function HrisShell({ children, session }) {
                               ) : null}
                               {isDeviceVerification ? (
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeviceVerification(item, "confirm")}
-                                    disabled={isActionLoading}
-                                    className="inline-flex h-7 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
-                                  >
-                                    It's me
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeviceVerification(item, "deny")}
-                                    disabled={isActionLoading}
-                                    className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
-                                  >
-                                    Not me
-                                  </button>
+                                  {isDeviceVerificationResolved ? (
+                                    <p
+                                      className={cn(
+                                        "rounded-md border px-2 py-1 text-[11px] font-semibold",
+                                        deviceVerificationDecision === "confirm"
+                                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                          : "border-rose-200 bg-rose-50 text-rose-700",
+                                      )}
+                                    >
+                                      Decision saved: {deviceVerificationDecision === "confirm" ? "It's me" : "Not me"}
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeviceVerification(item, "confirm")}
+                                        disabled={isActionLoading}
+                                        className="inline-flex h-7 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                                      >
+                                        It's me
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeviceVerification(item, "deny")}
+                                        disabled={isActionLoading}
+                                        className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                                      >
+                                        Not me
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
                               ) : null}
                               <p className="mt-1 text-[10px] text-slate-500">

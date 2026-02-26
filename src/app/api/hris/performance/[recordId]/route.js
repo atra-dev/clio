@@ -137,12 +137,17 @@ export async function PATCH(request, { params }) {
   }
 
   try {
+    const current = await getPerformanceRecordBackend(recordId);
+    if (!current) {
+      return NextResponse.json({ message: "Record not found." }, { status: 404 });
+    }
+
     const body = await parseJsonBody(request);
     const updated = await updatePerformanceRecordBackend(recordId, body, session.email);
     if (!updated) {
       return NextResponse.json({ message: "Record not found." }, { status: 404 });
     }
-    const changedFields = resolveAuditChangedFields(record, updated, Object.keys(body || {}));
+    const changedFields = resolveAuditChangedFields(current, updated, Object.keys(body || {}));
 
     await logApiAudit({
       request,

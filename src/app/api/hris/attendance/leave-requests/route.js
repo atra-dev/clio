@@ -13,6 +13,7 @@ import {
 import {
   canActorEditModule,
   getSelfRestrictedOwnerEmail,
+  isEmployeeRole,
   logApiAudit,
   mapBackendError,
   normalizeEmail,
@@ -67,7 +68,10 @@ export async function GET(request) {
     const rows = await listLeaveRequestsBackend({
       ownerEmail: ownerEmail || undefined,
     });
-    const records = rows.filter((row) => {
+    const scopedRows = isEmployeeRole(session.role)
+      ? rows.filter((row) => normalizeEmail(row.employeeEmail) === normalizeEmail(session.email))
+      : rows;
+    const records = scopedRows.filter((row) => {
       if (!statusFilter) {
         return true;
       }
@@ -108,6 +112,7 @@ export async function GET(request) {
       performedBy: session.email,
       metadata: {
         resultCount: enrichedRecords.length,
+        scopedResultCount: scopedRows.length,
         ownerFilterApplied: Boolean(ownerEmail),
         hasStatusFilter: Boolean(statusFilter),
         viewedRecordRefs: enrichedRecords.slice(0, 25).map((row) => ({

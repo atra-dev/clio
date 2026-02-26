@@ -2062,10 +2062,10 @@ export default function EmployeeRecordsModule({ session }) {
 
   const renderAttachedDocuments = () => (
     <SurfaceCard
-      title={employeeRole ? "My Attached Documents" : "Employee Attached Documents"}
+      title={employeeRole ? "Documents" : "Employee Attached Documents"}
       subtitle={
         employeeRole
-          ? "Documents linked to your own employee profile."
+          ? "Files linked to your employee profile."
           : "All documents currently attached to this employee record"
       }
     >
@@ -2105,10 +2105,10 @@ export default function EmployeeRecordsModule({ session }) {
 
           {ensureArray(selectedRow.documents).length === 0 ? (
             <EmptyState
-              title={employeeRole ? "No documents available yet" : "No attached documents yet"}
+              title={employeeRole ? "No files yet" : "No attached documents yet"}
               subtitle={
                 employeeRole
-                  ? "HR or onboarding uploads will appear here once attached to your record."
+                  ? "HR or onboarding uploads will appear here once attached."
                   : "Upload employee files to build this document list."
               }
             />

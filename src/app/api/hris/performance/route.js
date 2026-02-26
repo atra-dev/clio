@@ -7,8 +7,10 @@ import {
 import {
   canActorEditModule,
   getSelfRestrictedOwnerEmail,
+  isEmployeeRole,
   logApiAudit,
   mapBackendError,
+  normalizeEmail,
   parseJsonBody,
   resolveAuditRecordRef,
   summarizeAuditFieldList,
@@ -42,7 +44,10 @@ export async function GET(request) {
     const rows = await listPerformanceRecordsBackend({
       ownerEmail: ownerEmail || undefined,
     });
-    const records = rows.filter((row) => {
+    const scopedRows = isEmployeeRole(session.role)
+      ? rows.filter((row) => normalizeEmail(row.employeeEmail) === normalizeEmail(session.email))
+      : rows;
+    const records = scopedRows.filter((row) => {
       const byPeriod = periodFilter ? String(row.period || "").trim().toLowerCase().includes(periodFilter) : true;
       const byStatus = statusFilter ? String(row.status || "").trim().toLowerCase().includes(statusFilter) : true;
       return byPeriod && byStatus;
@@ -57,6 +62,7 @@ export async function GET(request) {
       performedBy: session.email,
       metadata: {
         resultCount: records.length,
+        scopedResultCount: scopedRows.length,
         ownerFilterApplied: Boolean(ownerEmail),
         hasPeriodFilter: Boolean(periodFilter),
         hasStatusFilter: Boolean(statusFilter),
