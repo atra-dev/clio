@@ -93,7 +93,7 @@ function getAppBaseUrl({ requestOrigin } = {}) {
 
   const candidates =
     process.env.NODE_ENV === "production"
-      ? [requestOriginUrl, firebaseAuthDomain, vercelUrl, configured, publicSiteUrl]
+      ? [requestOriginUrl, configured, publicSiteUrl, vercelUrl, firebaseAuthDomain]
       : [requestOriginUrl, configured, publicSiteUrl, firebaseAuthDomain, vercelUrl];
 
   for (const candidate of candidates) {

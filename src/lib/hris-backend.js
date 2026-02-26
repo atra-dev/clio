@@ -1851,7 +1851,7 @@ function resolveLifecycleInviteRole(record) {
   return LIFECYCLE_ROLE_ALIAS.get(normalized) || normalized || "EMPLOYEE_L1";
 }
 
-async function triggerOnboardingInvite(record, actorEmail, actorRole) {
+async function triggerOnboardingInvite(record, actorEmail, actorRole, { requestOrigin = "" } = {}) {
   const normalizedEmail = normalizeEmail(record?.employeeEmail);
   if (!normalizedEmail) {
     throw new Error("invalid_employee_email");
@@ -1887,6 +1887,7 @@ async function triggerOnboardingInvite(record, actorEmail, actorRole) {
       invitedBy: actorEmail,
       expiresAt: result.invite.expiresAt,
       inviteToken: result.invite.token,
+      requestOrigin,
     });
   } catch (deliveryError) {
     const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";
@@ -2324,11 +2325,13 @@ export async function getLifecycleRecordBackend(recordId) {
   return await getCollectionRecordById(getCollectionName("lifecycle"), recordId);
 }
 
-export async function createLifecycleRecordBackend(payload, actorEmail, actorRole = "") {
+export async function createLifecycleRecordBackend(payload, actorEmail, actorRole = "", { requestOrigin = "" } = {}) {
   const normalized = normalizeLifecyclePayload(payload, actorEmail, actorRole);
   const effects = [];
   if (shouldTriggerOnboardingInvite(normalized)) {
-    const inviteEffect = await triggerOnboardingInvite(normalized, actorEmail, actorRole);
+    const inviteEffect = await triggerOnboardingInvite(normalized, actorEmail, actorRole, {
+      requestOrigin,
+    });
     if (inviteEffect) {
       effects.push(inviteEffect);
     }
