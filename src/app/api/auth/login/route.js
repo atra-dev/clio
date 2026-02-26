@@ -249,7 +249,7 @@ export async function POST(request) {
       );
     }
 
-    if (smsMfaRequired && !account.phoneVerifiedAt) {
+    if (smsMfaRequired && account.smsMfaEnabled) {
       let loginMfaChallenge = null;
       try {
         loginMfaChallenge = await createLoginSmsChallenge({

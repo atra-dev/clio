@@ -7,6 +7,7 @@ import {
   getRedirectResult,
   linkWithPhoneNumber,
   onAuthStateChanged,
+  reauthenticateWithPhoneNumber,
   signInWithPopup,
   signInWithRedirect,
   signOut,
@@ -277,7 +278,11 @@ export default function LoginCard() {
       otpRequestedAt: "",
     });
     setErrorMessage("");
-    setInfoMessage("Register your mobile number and verify OTP to continue login.");
+    setInfoMessage(
+      authUser.phoneNumber
+        ? "Verify the code sent to your registered mobile number to continue login."
+        : "Register your mobile number and verify OTP to continue login.",
+    );
     confirmationResultRef.current = null;
     disposeRecaptchaVerifier();
     return true;
@@ -304,7 +309,7 @@ export default function LoginCard() {
   };
 
   const handleSendOtp = async () => {
-    if (!pendingFirebaseUser || !mfaState.challengeToken || !mfaState.phoneNumber || isSendingOtp) {
+    if (!pendingFirebaseUser || !mfaState.challengeToken || isSendingOtp) {
       return;
     }
 
@@ -320,23 +325,23 @@ export default function LoginCard() {
       }
 
       const alreadyLinked = activeUser.providerData.some((provider) => provider?.providerId === "phone");
-      if (alreadyLinked && activeUser.phoneNumber) {
-        await completeFirebaseSmsEnrollment(activeUser, activeUser.phoneNumber);
-        await completeWorkspaceLogin(auth, activeUser);
-        resetMfaState();
-        router.replace("/dashboard");
-        router.refresh();
-        return;
+      const fallbackPhoneNumber = String(mfaState.phoneNumber || "").trim();
+      const targetPhoneNumber = String(activeUser.phoneNumber || fallbackPhoneNumber).trim();
+      if (!targetPhoneNumber) {
+        throw new Error("auth/invalid-phone-number");
       }
 
       const verifier = await getOrCreateRecaptchaVerifier(auth);
-      const confirmationResult = await linkWithPhoneNumber(activeUser, mfaState.phoneNumber, verifier);
+      const confirmationResult = alreadyLinked
+        ? await reauthenticateWithPhoneNumber(activeUser, targetPhoneNumber, verifier)
+        : await linkWithPhoneNumber(activeUser, targetPhoneNumber, verifier);
       confirmationResultRef.current = confirmationResult;
       setMfaState((current) => ({
         ...current,
+        phoneNumber: targetPhoneNumber,
         otpRequestedAt: new Date().toISOString(),
       }));
-      setInfoMessage("OTP sent via Firebase. Enter the code to continue.");
+      setInfoMessage("OTP sent via SMS. Enter the code to continue.");
     } catch (error) {
       const mapped = mapLoginError(error);
       setErrorMessage(mapped);
@@ -507,8 +512,10 @@ export default function LoginCard() {
     }
   };
 
-  const showVerifyingOverlay =
-    isVerifyingAccess || isVerifyingOtp || finalizingLoginRef.current;
+  const showVerifyingOverlay = isVerifyingAccess || isVerifyingOtp || finalizingLoginRef.current;
+  const hasPhoneProviderLinked =
+    Boolean(pendingFirebaseUser?.phoneNumber) ||
+    pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
   const hasMfaChallenge = Boolean(mfaState.challengeToken);
 
@@ -622,13 +629,15 @@ export default function LoginCard() {
                         }
                         placeholder="+639171234567"
                         className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                        disabled={isSendingOtp || isVerifyingOtp}
+                        disabled={isSendingOtp || isVerifyingOtp || hasPhoneProviderLinked}
                       />
                     </label>
                     <p className={`mt-2 text-[11px] ${hasPhoneNumber ? "text-slate-500" : "font-medium text-amber-700"}`}>
-                      {hasPhoneNumber
-                        ? "Use international format with country code."
-                        : "Add your mobile number first before requesting OTP."}
+                      {hasPhoneProviderLinked
+                        ? "Using your registered mobile number for sign-in verification."
+                        : hasPhoneNumber
+                          ? "Use international format with country code."
+                          : "Add your mobile number first before requesting OTP."}
                     </p>
                     <button
                       type="button"
