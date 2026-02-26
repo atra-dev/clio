@@ -650,13 +650,13 @@ export default function LoginCard() {
       </div>
 
       {hasMfaChallenge ? (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/45 p-4 backdrop-blur-sm sm:items-center sm:p-6">
-          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_35px_90px_-35px_rgba(15,23,42,0.55)]">
-            <div className="border-b border-slate-100 bg-[linear-gradient(120deg,#f8fafc_0%,#f1f5f9_100%)] px-5 py-4 sm:px-6">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/45 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_30px_70px_-30px_rgba(15,23,42,0.55)]">
+            <div className="border-b border-slate-100 bg-[linear-gradient(120deg,#f8fafc_0%,#f1f5f9_100%)] px-4 py-3 sm:px-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">Clio HRIS Access</p>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-900 sm:text-xl">
+                  <h2 className="mt-1 text-base font-semibold text-slate-900 sm:text-lg">
                     {isPhoneRegistrationRequired ? "Add SMS Phone Registration" : "SMS Verification Required"}
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
@@ -665,7 +665,7 @@ export default function LoginCard() {
                       : "Complete mobile OTP verification to continue to your secured workspace."}
                   </p>
                 </div>
-                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
                   <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
                     <path
                       fill="currentColor"
@@ -676,60 +676,62 @@ export default function LoginCard() {
               </div>
             </div>
 
-            <div className="space-y-4 px-5 py-5 sm:px-6">
+            <div className="space-y-3 px-4 py-4 sm:px-5 sm:py-5">
               <div id="clio-login-sms-recaptcha" className="sr-only" />
 
-              <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#fcfdff_0%,#f8fafc_100%)] p-4 shadow-[0_18px_38px_-32px_rgba(15,23,42,0.45)] sm:p-5">
+              <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#fcfdff_0%,#f8fafc_100%)] p-3 shadow-[0_18px_38px_-32px_rgba(15,23,42,0.45)] sm:p-4">
                 <div className="space-y-4">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Mobile Number</p>
-                    <label className="mt-2 block space-y-1">
-                      <span className="text-xs font-medium text-slate-700">Work Mobile</span>
-                      <input
-                        type="tel"
-                        value={mfaState.phoneNumber}
-                        onChange={(event) =>
-                          setMfaState((current) => ({
-                            ...current,
-                            phoneNumber: event.target.value,
-                          }))
-                        }
-                        placeholder="+639171234567"
-                        className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                        disabled={isSendingOtp || isVerifyingOtp || hasPhoneProviderLinked}
-                      />
-                    </label>
-                    <p className={`mt-2 text-[11px] ${hasPhoneNumber ? "text-slate-500" : "font-medium text-amber-700"}`}>
-                      {hasPhoneProviderLinked
-                        ? "Using your registered mobile number for sign-in verification."
-                        : hasPhoneNumber
+                  {isPhoneRegistrationRequired ? (
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Mobile Number</p>
+                      <label className="mt-2 block space-y-1">
+                        <span className="text-xs font-medium text-slate-700">Work Mobile</span>
+                        <input
+                          type="tel"
+                          value={mfaState.phoneNumber}
+                          onChange={(event) =>
+                            setMfaState((current) => ({
+                              ...current,
+                              phoneNumber: event.target.value,
+                            }))
+                          }
+                          placeholder="+639171234567"
+                          className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                          disabled={isSendingOtp || isVerifyingOtp}
+                        />
+                      </label>
+                      <p className={`mt-2 text-[11px] ${hasPhoneNumber ? "text-slate-500" : "font-medium text-amber-700"}`}>
+                        {hasPhoneNumber
                           ? "Use international format with country code to register this account."
                           : "Add your mobile number first before requesting OTP."}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleSendOtp}
-                      disabled={isSendingOtp || isOtpCooldownActive || !hasPhoneNumber}
-                      className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isSendingOtp
-                        ? "Sending OTP..."
-                        : isOtpCooldownActive
-                          ? `Retry in ${otpCooldownSecondsLeft}s`
-                          : hasOtpRequest
-                            ? "Resend OTP"
-                            : isPhoneRegistrationRequired
-                              ? "Register Phone and Send OTP"
-                              : "Send OTP"}
-                    </button>
-                    {isOtpCooldownActive ? (
-                      <p className="mt-2 text-[11px] font-medium text-amber-700">
-                        OTP is temporarily rate-limited. Please wait before retrying.
                       </p>
-                    ) : null}
-                  </div>
+                      <button
+                        type="button"
+                        onClick={handleSendOtp}
+                        disabled={isSendingOtp || isOtpCooldownActive || !hasPhoneNumber}
+                        className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isSendingOtp
+                          ? "Sending OTP..."
+                          : isOtpCooldownActive
+                            ? `Retry in ${otpCooldownSecondsLeft}s`
+                            : hasOtpRequest
+                              ? "Resend OTP"
+                              : "Register Phone and Send OTP"}
+                      </button>
+                      {isOtpCooldownActive ? (
+                        <p className="mt-2 text-[11px] font-medium text-amber-700">
+                          OTP is temporarily rate-limited. Please wait before retrying.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                      OTP is sent automatically to your registered mobile number.
+                    </p>
+                  )}
 
-                  <div className="h-px w-full bg-slate-200" />
+                  {isPhoneRegistrationRequired ? <div className="h-px w-full bg-slate-200" /> : null}
 
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">OTP Code</p>
@@ -745,7 +747,7 @@ export default function LoginCard() {
                           }))
                         }
                         placeholder="6-digit code"
-                        className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
                         disabled={isSendingOtp || isVerifyingOtp}
                       />
                     </label>
@@ -753,13 +755,13 @@ export default function LoginCard() {
                       type="button"
                       onClick={handleVerifyOtp}
                       disabled={isVerifyingOtp || !hasOtpRequest || mfaState.otpCode.trim().length !== 6}
-                      className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isVerifyingOtp ? "Verifying OTP..." : "Verify OTP and Continue"}
                     </button>
                     {!hasOtpRequest ? (
                       <p className="mt-2 text-[11px] text-slate-500">
-                        Request OTP first before entering a verification code.
+                        {isPhoneRegistrationRequired ? "Request OTP first before entering a verification code." : "Waiting for OTP challenge. Please hold for a moment."}
                       </p>
                     ) : null}
                   </div>
