@@ -1826,14 +1826,16 @@ function shouldApplyLifecycleArchivePolicy(record) {
 function shouldApplyOnboardingActivation(record) {
   const category = asString(record?.category).toLowerCase();
   const status = asString(record?.status).toLowerCase();
+  const hasEmployeeEmail = Boolean(normalizeEmail(record?.employeeEmail));
   const isOnboarding = category.includes("onboarding");
   const isFinalized = status.includes("approved") || status.includes("completed");
-  return isOnboarding && isFinalized;
+  return hasEmployeeEmail && isOnboarding && isFinalized;
 }
 
 function shouldTriggerOnboardingInvite(record) {
   const category = asString(record?.category).toLowerCase();
-  return category.includes("onboarding");
+  const hasEmployeeEmail = Boolean(normalizeEmail(record?.employeeEmail));
+  return hasEmployeeEmail && category.includes("onboarding");
 }
 
 function resolveLifecycleInviteRole(record) {

@@ -289,7 +289,7 @@ export function mapBackendError(reason, fallbackMessage) {
       return {
         status: 502,
         message:
-          "Email provider is not configured. For branded account-opening invites, set CLIO_EMAIL_PROVIDER=resend, RESEND_API_KEY, and CLIO_EMAIL_FROM.",
+          "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and configure Firebase Authentication email template/SMTP settings.",
       };
     case "firebase_api_key_not_configured":
       return {
