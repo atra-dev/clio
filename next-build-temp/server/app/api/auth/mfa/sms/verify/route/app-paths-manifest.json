@@ -1,0 +1,3 @@
+{
+  "/api/auth/mfa/sms/verify/route": "app/api/auth/mfa/sms/verify/route.js"
+}

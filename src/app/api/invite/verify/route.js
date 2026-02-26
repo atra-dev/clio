@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { dispatchDirectSms } from "@/lib/security-alert-delivery";
+import { alertRepeatedOtpFailures } from "@/lib/security-auth-alerts";
 import {
   completeInviteSmsVerification,
   getInviteForEmailVerification,
@@ -300,6 +301,11 @@ export async function POST(request) {
       },
       request,
     });
+    await alertRepeatedOtpFailures({
+      request,
+      reason: "otp_attempts_exceeded",
+      context: "invite_verify_post_ip",
+    }).catch(() => null);
     return jsonResponse(
       { message: "Too many verification attempts. Please wait before trying again." },
       { status: 429, rateLimit: activeRateLimit },
@@ -347,6 +353,11 @@ export async function POST(request) {
       },
       request,
     });
+    await alertRepeatedOtpFailures({
+      request,
+      reason: "otp_attempts_exceeded",
+      context: "invite_verify_post_token",
+    }).catch(() => null);
     return jsonResponse(
       { message: "Too many verification attempts for this invite. Please try again later." },
       { status: 429, rateLimit: activeRateLimit },
@@ -489,6 +500,11 @@ export async function POST(request) {
       },
       request,
     });
+    await alertRepeatedOtpFailures({
+      request,
+      reason,
+      context: action === "complete_sms" ? "invite_complete_sms" : "invite_verification",
+    }).catch(() => null);
 
     return jsonResponse(
       { message: messageForReason(reason), reason },

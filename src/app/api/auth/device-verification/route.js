@@ -170,6 +170,7 @@ export async function POST(request) {
     return NextResponse.json({ ok: true, decision: "deny", incidentId: incident?.id || null });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "device_verification_failed";
-    return NextResponse.json({ message: "Unable to process device verification.", reason }, { status: 400 });
+    const status = reason === "device_verification_already_resolved" ? 409 : 400;
+    return NextResponse.json({ message: "Unable to process device verification.", reason }, { status });
   }
 }

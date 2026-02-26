@@ -518,6 +518,12 @@ export function mapBackendError(reason, fallbackMessage) {
         message:
           "Database is not configured. Set Firebase environment variables and restart the app.",
       };
+    case "firestore_operation_failed":
+      return {
+        status: 503,
+        message:
+          "Database operation failed. Retry after Firestore is available.",
+      };
     case "employee_session_email_missing":
       return {
         status: 401,

@@ -4,6 +4,7 @@ import { enforceRateLimitByRequest, consumeRateLimit } from "@/lib/api-rate-limi
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
 import { syncFirebaseCustomClaimsForUser } from "@/lib/firebase-custom-claims";
+import { alertRepeatedNewDeviceSignIns } from "@/lib/security-auth-alerts";
 import { createLoginSmsChallenge, getLoginAccount, markUserLogin, recordLoginDevice } from "@/lib/user-accounts";
 import { createInAppNotification } from "@/lib/security-notifications";
 
@@ -463,6 +464,11 @@ export async function POST(request) {
           },
           createdBy: normalizedEmail,
         });
+        await alertRepeatedNewDeviceSignIns({
+          actorEmail: normalizedEmail,
+          sourceIp: deviceResult.device.lastIp,
+          deviceLabel: deviceResult.device.label,
+        }).catch(() => null);
       }
     } catch {
       // Ignore device tracking failures so login flow is never blocked.
@@ -517,12 +523,14 @@ export async function POST(request) {
                   : reason === "invite_email_verification_required"
                     ? "Account invitation must be verified first."
                     : reason === "sms_mfa_required"
-                      ? "SMS authentication setup is required before login."
-                    : reason === "firebase_custom_claims_not_configured"
-                      ? "Firebase custom claims are not configured."
-                      : "Unable to process login request.";
-
-    return jsonResponse({ message }, { status: 400, rateLimit: activeRateLimit });
+                    ? "SMS authentication setup is required before login."
+                    : reason === "firestore_operation_failed"
+                      ? "Secure login is temporarily unavailable due to a database issue. Please retry shortly."
+                      : reason === "firebase_custom_claims_not_configured"
+                        ? "Firebase custom claims are not configured."
+                        : "Unable to process login request.";
+    const status = reason === "firestore_operation_failed" ? 503 : 400;
+    return jsonResponse({ message }, { status, rateLimit: activeRateLimit });
   }
 }
 

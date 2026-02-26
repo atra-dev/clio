@@ -314,6 +314,14 @@ export async function resolveDeviceVerificationNotification(recordId, recipientE
   }
 
   const metadata = asObject(current?.metadata);
+  const existingDecision = asString(metadata?.deviceVerificationDecision).toLowerCase();
+  if (existingDecision) {
+    if (existingDecision === normalizedDecision) {
+      return current;
+    }
+    throw new Error("device_verification_already_resolved");
+  }
+
   const now = nowIso();
   const patched = {
     ...current,

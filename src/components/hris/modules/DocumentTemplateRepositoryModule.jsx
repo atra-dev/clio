@@ -138,6 +138,8 @@ export default function DocumentTemplateRepositoryModule({ session }) {
       (record.documents || []).forEach((document, index) => {
         rows.push({
           id: `${record.id}-${index}`,
+          employeeRecordId: record.id,
+          documentId: String(document.id || document.recordId || index),
           employee: formatEmployeeName({
             firstName: record.firstName,
             middleName: record.middleName,
@@ -151,6 +153,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
           name: document.name || "Document",
           type: document.type || "General",
           ref: document.ref || "",
+          storagePath: document.storagePath || "",
           uploadedAt: document.uploadedAt || record.updatedAt || record.createdAt,
           uploadedBy: document.uploadedBy || record.updatedBy || "-",
           uploadedByName: document.uploadedByName || record.updatedByName || "",
@@ -243,6 +246,31 @@ export default function DocumentTemplateRepositoryModule({ session }) {
       setErrorMessage(error.message || "Unable to archive template.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const openEmployeeDocument = async (row) => {
+    const targetRecordId = String(row?.employeeRecordId || "").trim();
+    if (!targetRecordId) {
+      setErrorMessage("Unable to open document. Missing employee record reference.");
+      return;
+    }
+
+    try {
+      const payload = await hrisApi.employees.logDocumentAccess(targetRecordId, {
+        documentId: String(row?.documentId || "").trim(),
+        documentName: String(row?.name || "").trim(),
+        documentType: String(row?.type || "").trim(),
+        documentRef: String(row?.ref || "").trim(),
+        documentStoragePath: String(row?.storagePath || "").trim(),
+      });
+      const accessUrl = String(payload?.accessUrl || "").trim();
+      if (!accessUrl) {
+        throw new Error("Document access URL is unavailable.");
+      }
+      window.open(accessUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setErrorMessage(error?.message || "Document access is blocked by security policy.");
     }
   };
 
@@ -382,15 +410,14 @@ export default function DocumentTemplateRepositoryModule({ session }) {
                         </td>
                       ) : null}
                       <td className="px-2 py-3 text-right">
-                        {String(row.ref || "").trim() ? (
-                          <a
-                            href={row.ref}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                        {String(row.ref || row.storagePath || "").trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => openEmployeeDocument(row)}
                             className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
                           >
                             Open
-                          </a>
+                          </button>
                         ) : (
                           <span className="text-xs text-slate-400">No file link</span>
                         )}

@@ -87,6 +87,58 @@ service cloud.firestore {
       ]);
     }
 
+    function attendanceEditableSelfFieldsOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "date",
+        "checkIn",
+        "checkOut",
+        "reason",
+        "updatedAt",
+        "updatedBy",
+        "modificationTrail"
+      ]);
+    }
+
+    function attendanceCreateSelfFieldsOnly() {
+      return request.resource.data.keys().hasOnly([
+        "employeeEmail",
+        "employee",
+        "date",
+        "checkIn",
+        "checkOut",
+        "reason",
+        "createdAt",
+        "createdBy",
+        "updatedAt",
+        "updatedBy",
+        "modificationTrail"
+      ]);
+    }
+
+    function notificationOwnerEditableFieldsOnly() {
+      let changedKeys = request.resource.data.diff(resource.data).changedKeys();
+      let currentMetadata = resource.data.metadata is map ? resource.data.metadata : {};
+      let nextMetadata = request.resource.data.metadata is map ? request.resource.data.metadata : {};
+      return changedKeys.hasOnly(["status", "readAt", "updatedAt", "metadata"]) &&
+        (
+          !changedKeys.hasAny(["metadata"]) ||
+          nextMetadata.diff(currentMetadata).changedKeys().hasOnly([
+            "deviceVerificationDecision",
+            "deviceVerificationResolvedAt",
+            "deviceVerificationResponder"
+          ])
+        );
+    }
+
+    function notificationDecisionImmutable() {
+      let currentMetadata = resource.data.metadata is map ? resource.data.metadata : {};
+      let nextMetadata = request.resource.data.metadata is map ? request.resource.data.metadata : {};
+      let currentDecision = currentMetadata.deviceVerificationDecision;
+      let nextDecision = nextMetadata.deviceVerificationDecision;
+      return !(currentDecision is string) ||
+        (nextDecision is string && nextDecision == currentDecision);
+    }
+
     // Account directory and role assignment
     match /clio_users/{userId} {
       allow read: if isSuperAdmin() || isPrivilegedRole() || isOwnerEmail(resource.data.email);
@@ -124,7 +176,14 @@ service cloud.firestore {
     // Attendance Logs
     match /attendance/{recordId} {
       allow read: if isPrivilegedRole() || isOwnerEmail(resource.data.employeeEmail);
-      allow create, update: if isPrivilegedRole() || (isEmployeeRole() && isOwnerEmail(request.resource.data.employeeEmail));
+      allow create: if isPrivilegedRole() ||
+        (isEmployeeRole() &&
+          isOwnerEmail(request.resource.data.employeeEmail) &&
+          attendanceCreateSelfFieldsOnly());
+      allow update: if isPrivilegedRole() ||
+        (isEmployeeRole() &&
+          isOwnerEmail(resource.data.employeeEmail) &&
+          attendanceEditableSelfFieldsOnly());
       allow delete: if isSuperAdmin() || isHR() || isGRC();
     }
 
@@ -174,7 +233,12 @@ service cloud.firestore {
         ));
       allow create: if isSuperAdmin() || isPrivilegedRole();
       allow update: if isSuperAdmin() ||
-        (isAuthenticated() && isOwnerEmail(resource.data.recipientEmail));
+        (
+          isAuthenticated() &&
+          isOwnerEmail(resource.data.recipientEmail) &&
+          notificationOwnerEditableFieldsOnly() &&
+          notificationDecisionImmutable()
+        );
       allow delete: if isSuperAdmin();
     }
 

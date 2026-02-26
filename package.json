@@ -10,6 +10,7 @@
     "build:clean": "npm run clean:build-artifacts && next build",
     "start": "next start",
     "lint": "eslint",
+    "test:security": "node scripts/security-regression-check.mjs",
     "clean:build-artifacts": "node scripts/clean-build-artifacts.mjs",
     "env:firebase-admin": "node scripts/apply-firebase-admin-env.js",
     "audit": "npm audit --audit-level=high",

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
+import { alertRepeatedOtpFailures } from "@/lib/security-auth-alerts";
 import { completeLoginSmsVerificationWithFirebase } from "@/lib/user-accounts";
 
 function statusForReason(reason) {
@@ -66,12 +67,18 @@ export async function POST(request) {
   });
 
   if (!activeRateLimit.allowed) {
+    await alertRepeatedOtpFailures({
+      request,
+      reason: "otp_attempts_exceeded",
+      context: "login_sms_verify_ip",
+    }).catch(() => null);
     return jsonResponse(
       { message: "Too many OTP verification attempts. Please wait before retrying." },
       { status: 429, rateLimit: activeRateLimit },
     );
   }
 
+  let actorEmail = "anonymous@gmail.com";
   try {
     const body = await request.json();
     const idToken = typeof body?.idToken === "string" ? body.idToken : "";
@@ -80,6 +87,7 @@ export async function POST(request) {
 
     const identity = await verifyFirebaseIdToken(idToken);
     const email = identity.email;
+    actorEmail = email;
 
     activeRateLimit = enforceRateLimitByRequest({
       request,
@@ -102,6 +110,12 @@ export async function POST(request) {
         },
         request,
       });
+      await alertRepeatedOtpFailures({
+        request,
+        actorEmail: email,
+        reason: "otp_attempts_exceeded",
+        context: "login_sms_verify_email",
+      }).catch(() => null);
 
       return jsonResponse(
         { message: "Too many OTP verification attempts for this account. Please wait and retry." },
@@ -161,13 +175,19 @@ export async function POST(request) {
       activityName: "Login SMS verification failed",
       status: "Failed",
       module: "Authentication",
-      performedBy: "anonymous@gmail.com",
+      performedBy: actorEmail,
       sensitivity: "Sensitive",
       metadata: {
         reason,
       },
       request,
     });
+    await alertRepeatedOtpFailures({
+      request,
+      actorEmail,
+      reason,
+      context: "login_sms_verify",
+    }).catch(() => null);
 
     return jsonResponse(
       {

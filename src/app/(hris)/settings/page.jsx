@@ -3,6 +3,7 @@ import SettingsReferenceDataModule from "@/components/hris/modules/SettingsRefer
 import SettingsRecentActivityPanel from "@/components/hris/modules/SettingsRecentActivityPanel";
 import { requireModuleAccess } from "@/lib/server-authorization";
 import { normalizeRole } from "@/lib/hris";
+import { getLoginAccount } from "@/lib/user-accounts";
 
 export const metadata = {
   title: "Settings | Clio HRIS",
@@ -10,6 +11,8 @@ export const metadata = {
 
 export default async function SettingsPage() {
   const session = await requireModuleAccess("settings");
+  const account = await getLoginAccount(session?.email).catch(() => null);
+  const isSmsMfaEnabled = Boolean(account?.smsMfaEnabled);
   const role = normalizeRole(session?.role);
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isGrc = role === "GRC";
@@ -48,6 +51,15 @@ export default async function SettingsPage() {
           </div>
         </div>
       </header>
+
+      {!isSmsMfaEnabled ? (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Security warning: SMS MFA is currently disabled.</p>
+          <p className="mt-1 text-amber-800">
+            This account can be at higher risk of unauthorized access. Enable MFA in Account Security.
+          </p>
+        </section>
+      ) : null}
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
         <div className="space-y-6">
