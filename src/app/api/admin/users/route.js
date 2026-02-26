@@ -82,6 +82,7 @@ export async function POST(request) {
         invitedBy: session.email,
         expiresAt: result.invite.expiresAt,
         inviteToken: result.invite.token,
+        requestOrigin: request.nextUrl?.origin || "",
       });
     } catch (deliveryError) {
       const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";

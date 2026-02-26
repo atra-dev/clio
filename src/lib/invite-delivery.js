@@ -80,33 +80,28 @@ function assertSafeProductionBaseUrl(baseUrl) {
   }
 }
 
-function getAppBaseUrl() {
-  const configured = normalizeBaseUrl(process.env.CLIO_APP_BASE_URL);
-  if (configured) {
-    assertSafeProductionBaseUrl(configured);
-    return configured;
-  }
-
-  const publicSiteUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
-  if (publicSiteUrl) {
-    assertSafeProductionBaseUrl(publicSiteUrl);
-    return publicSiteUrl;
-  }
-
+function getAppBaseUrl({ requestOrigin } = {}) {
+  const requestOriginUrl = normalizeBaseUrl(requestOrigin);
   const firebaseAuthDomain = normalizeBaseUrl(
     process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN,
   );
-  if (firebaseAuthDomain) {
-    assertSafeProductionBaseUrl(firebaseAuthDomain);
-    return firebaseAuthDomain;
-  }
-
   const vercelUrl = normalizeBaseUrl(
     process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL,
   );
-  if (vercelUrl) {
-    assertSafeProductionBaseUrl(vercelUrl);
-    return vercelUrl;
+  const configured = normalizeBaseUrl(process.env.CLIO_APP_BASE_URL);
+  const publicSiteUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+
+  const candidates =
+    process.env.NODE_ENV === "production"
+      ? [requestOriginUrl, firebaseAuthDomain, vercelUrl, configured, publicSiteUrl]
+      : [requestOriginUrl, configured, publicSiteUrl, firebaseAuthDomain, vercelUrl];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    assertSafeProductionBaseUrl(candidate);
+    return candidate;
   }
 
   throw new Error("app_base_url_not_configured");
@@ -128,13 +123,11 @@ function getInviteVerifyPath() {
   return configured.startsWith("/") ? configured : `/${configured}`;
 }
 
-function buildLoginUrl() {
-  const baseUrl = getAppBaseUrl();
+function buildLoginUrl(baseUrl) {
   return `${baseUrl}${getLoginPath()}`;
 }
 
-function buildInviteVerificationUrl(inviteToken) {
-  const baseUrl = getAppBaseUrl();
+function buildInviteVerificationUrl(inviteToken, baseUrl) {
   const path = getInviteVerifyPath();
   const token = String(inviteToken || "").trim();
   if (!token) {
@@ -331,9 +324,17 @@ function sendViaConsole({ toEmail, subject, verifyUrl, loginUrl }) {
   };
 }
 
-export async function deliverInviteEmail({ toEmail, role, invitedBy, expiresAt, inviteToken }) {
-  const verifyUrl = buildInviteVerificationUrl(inviteToken);
-  const loginUrl = buildLoginUrl();
+export async function deliverInviteEmail({
+  toEmail,
+  role,
+  invitedBy,
+  expiresAt,
+  inviteToken,
+  requestOrigin = "",
+}) {
+  const baseUrl = getAppBaseUrl({ requestOrigin });
+  const verifyUrl = buildInviteVerificationUrl(inviteToken, baseUrl);
+  const loginUrl = buildLoginUrl(baseUrl);
   const content = buildEmailContent({
     role,
     invitedBy,
