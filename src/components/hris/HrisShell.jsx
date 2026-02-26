@@ -611,9 +611,6 @@ export default function HrisShell({ children, session }) {
   const [currentDateTime, setCurrentDateTime] = useState("");
   const accountRoleLabel = formatRoleLabel(profileInsights.role || role);
   const employmentRoleLabel = formatEmployeeRoleLabel(profileInsights.employmentRole || profileInsights.role || role);
-  const isSmsPhoneVerified = Boolean(String(profileDraft.phoneVerifiedAt || "").trim());
-  const isSmsMfaEnabled = Boolean(profileDraft.smsMfaEnabled);
-  const canToggleSmsMfa = isSmsPhoneVerified || isSmsMfaEnabled;
   const canOpenSettings = canAccessModule(role, "settings");
   const canOpenNotificationTarget = useCallback(
     (notification) => {
@@ -903,17 +900,6 @@ export default function HrisShell({ children, session }) {
     setProfileDraft((current) => ({
       ...current,
       [field]: event.target.value,
-    }));
-  };
-
-  const handleSmsMfaToggle = (event) => {
-    const nextValue = Boolean(event.target.checked);
-    if (nextValue && !isSmsPhoneVerified) {
-      return;
-    }
-    setProfileDraft((current) => ({
-      ...current,
-      smsMfaEnabled: nextValue,
     }));
   };
 
@@ -1488,33 +1474,6 @@ export default function HrisShell({ children, session }) {
                       className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
                     />
                   </div>
-
-                  <section className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">SMS Multi-factor Authentication</p>
-                        <p className="text-sm font-medium text-slate-900">Require SMS OTP on every sign-in</p>
-                        <p className="text-xs text-slate-600">
-                          {isSmsPhoneVerified
-                            ? `Registered mobile ending in ${profileDraft.phoneLast4 ? profileDraft.phoneLast4 : "****"}.`
-                            : "No verified mobile number yet. Complete one SMS verification first."}
-                        </p>
-                        {isSmsPhoneVerified ? (
-                          <p className="text-xs text-slate-500">Phone verified: {formatDateTime(profileDraft.phoneVerifiedAt)}</p>
-                        ) : null}
-                      </div>
-                      <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={isSmsMfaEnabled}
-                          onChange={handleSmsMfaToggle}
-                          disabled={isSavingProfile || isUploadingPhoto || isRevokingSessions || !canToggleSmsMfa}
-                          className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-                        />
-                        Enable SMS MFA
-                      </label>
-                    </div>
-                  </section>
 
                   <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                     <div className="grid gap-2 sm:grid-cols-2">

@@ -36,6 +36,7 @@ export default function LoginCard() {
   const [pendingFirebaseUser, setPendingFirebaseUser] = useState(null);
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
+  const recaptchaCreationPromiseRef = useRef(null);
   const lastAutoSendChallengeRef = useRef("");
   const lastAutoVerifyCodeRef = useRef("");
   const otpInputRefs = useRef([]);
@@ -181,6 +182,7 @@ export default function LoginCard() {
   };
 
   const disposeRecaptchaVerifier = () => {
+    recaptchaCreationPromiseRef.current = null;
     if (recaptchaVerifierRef.current) {
       try {
         recaptchaVerifierRef.current.clear();
@@ -201,6 +203,10 @@ export default function LoginCard() {
       return recaptchaVerifierRef.current;
     }
 
+    if (recaptchaCreationPromiseRef.current) {
+      return await recaptchaCreationPromiseRef.current;
+    }
+
     if (typeof window === "undefined") {
       throw new Error("captcha_not_ready");
     }
@@ -210,12 +216,28 @@ export default function LoginCard() {
       throw new Error("captcha_not_ready");
     }
 
-    const verifier = new RecaptchaVerifier(auth, "clio-login-sms-recaptcha", {
-      size: "invisible",
-    });
-    await verifier.render();
-    recaptchaVerifierRef.current = verifier;
-    return verifier;
+    recaptchaCreationPromiseRef.current = (async () => {
+      // Ensure the host element is clean before creating a new verifier instance.
+      container.innerHTML = "";
+      const verifier = new RecaptchaVerifier(auth, "clio-login-sms-recaptcha", {
+        size: "invisible",
+      });
+      await verifier.render();
+      recaptchaVerifierRef.current = verifier;
+      return verifier;
+    })();
+
+    try {
+      return await recaptchaCreationPromiseRef.current;
+    } catch (error) {
+      try {
+        container.innerHTML = "";
+      } catch {}
+      recaptchaVerifierRef.current = null;
+      throw error;
+    } finally {
+      recaptchaCreationPromiseRef.current = null;
+    }
   };
 
   const resetMfaState = () => {
@@ -387,10 +409,26 @@ export default function LoginCard() {
         throw new Error("auth/invalid-phone-number");
       }
 
-      const verifier = await getOrCreateRecaptchaVerifier(auth);
-      const confirmationResult = alreadyLinked
-        ? await reauthenticateWithPhoneNumber(activeUser, targetPhoneNumber, verifier)
-        : await linkWithPhoneNumber(activeUser, targetPhoneNumber, verifier);
+      const requestOtp = async () => {
+        const verifier = await getOrCreateRecaptchaVerifier(auth);
+        return alreadyLinked
+          ? await reauthenticateWithPhoneNumber(activeUser, targetPhoneNumber, verifier)
+          : await linkWithPhoneNumber(activeUser, targetPhoneNumber, verifier);
+      };
+
+      let confirmationResult;
+      try {
+        confirmationResult = await requestOtp();
+      } catch (firstError) {
+        const firstMessage = String(firstError?.message || "").toLowerCase();
+        if (firstMessage.includes("recaptcha has already been rendered")) {
+          disposeRecaptchaVerifier();
+          confirmationResult = await requestOtp();
+        } else {
+          throw firstError;
+        }
+      }
+
       confirmationResultRef.current = confirmationResult;
       setMfaState((current) => ({
         ...current,
@@ -877,9 +915,9 @@ export default function LoginCard() {
                           OTP is sent automatically to your registered mobile number.
                         </p>
                       ) : null}
-                      <label className="mt-2 block space-y-1">
+                      <label className="mt-2 block space-y-2">
                         <span className="text-xs font-medium text-slate-700">Verification Code</span>
-                        <div className="grid grid-cols-6 gap-2" onPaste={handleOtpPaste}>
+                        <div className="mx-auto flex max-w-[360px] items-center justify-center gap-2 sm:gap-3" onPaste={handleOtpPaste}>
                           {otpDigitValues.map((digit, index) => (
                             <input
                               key={`otp-${index}`}
@@ -893,7 +931,7 @@ export default function LoginCard() {
                               value={digit}
                               onChange={(event) => handleOtpInputChange(index, event.target.value)}
                               onKeyDown={(event) => handleOtpInputKeyDown(index, event)}
-                              className="h-10 w-full rounded-xl border border-slate-300 bg-white text-center text-base font-semibold text-slate-900 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
+                              className="h-12 w-12 rounded-2xl border border-sky-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] text-center text-lg font-semibold text-slate-900 shadow-[0_2px_10px_-8px_rgba(2,132,199,0.45)] transition focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
                               disabled={isSendingOtp || isVerifyingOtp}
                             />
                           ))}
