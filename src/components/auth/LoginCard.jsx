@@ -37,6 +37,8 @@ export default function LoginCard() {
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
   const lastAutoSendChallengeRef = useRef("");
+  const lastAutoVerifyCodeRef = useRef("");
+  const otpInputRefs = useRef([]);
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
   const REDIRECT_USER_WAIT_TIMEOUT_MS = 15000;
 
@@ -228,6 +230,7 @@ export default function LoginCard() {
     setInfoMessage("");
     confirmationResultRef.current = null;
     lastAutoSendChallengeRef.current = "";
+    lastAutoVerifyCodeRef.current = "";
     disposeRecaptchaVerifier();
   };
 
@@ -303,6 +306,7 @@ export default function LoginCard() {
     setInfoMessage("");
     confirmationResultRef.current = null;
     lastAutoSendChallengeRef.current = "";
+    lastAutoVerifyCodeRef.current = "";
     disposeRecaptchaVerifier();
     return true;
   };
@@ -391,9 +395,11 @@ export default function LoginCard() {
       setMfaState((current) => ({
         ...current,
         phoneNumber: targetPhoneNumber,
+        otpCode: "",
         otpRequestedAt: new Date().toISOString(),
       }));
       setOtpCooldownSecondsLeft(0);
+      lastAutoVerifyCodeRef.current = "";
       setInfoMessage("OTP sent via SMS. Enter the code to continue.");
     } catch (error) {
       if (String(error?.code || "").trim() === "auth/too-many-requests") {
@@ -409,7 +415,10 @@ export default function LoginCard() {
   };
 
   const handleVerifyOtp = async () => {
-    if (!pendingFirebaseUser || !mfaState.challengeToken || !mfaState.otpCode || isVerifyingOtp) {
+    const enteredOtpCode = String(mfaState.otpCode || "")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+    if (!pendingFirebaseUser || !mfaState.challengeToken || enteredOtpCode.length !== 6 || isVerifyingOtp) {
       return;
     }
 
@@ -425,7 +434,7 @@ export default function LoginCard() {
         throw new Error("Request OTP first before entering a verification code.");
       }
 
-      const credentialResult = await confirmationResult.confirm(mfaState.otpCode.trim());
+      const credentialResult = await confirmationResult.confirm(enteredOtpCode);
       const verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
       if (!verifiedUser) {
         throw new Error("Firebase session expired. Retry Google sign-in.");
@@ -577,6 +586,123 @@ export default function LoginCard() {
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
   const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current);
   const isOtpCooldownActive = otpCooldownSecondsLeft > 0;
+  const otpCodeValue = String(mfaState.otpCode || "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+  const otpDigitValues = Array.from({ length: 6 }, (_, index) => otpCodeValue[index] || "");
+
+  const updateOtpCode = (nextCode) => {
+    const normalized = String(nextCode || "")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+    setMfaState((current) => ({
+      ...current,
+      otpCode: normalized,
+    }));
+  };
+
+  const handleOtpInputChange = (index, rawValue) => {
+    const digits = String(rawValue || "").replace(/\D/g, "");
+    const currentDigits = otpDigitValues.slice();
+
+    if (!digits) {
+      if (index >= otpCodeValue.length) {
+        return;
+      }
+      updateOtpCode(otpCodeValue.slice(0, index));
+      return;
+    }
+
+    for (let offset = 0; offset < digits.length && index + offset < 6; offset += 1) {
+      currentDigits[index + offset] = digits[offset];
+    }
+
+    updateOtpCode(currentDigits.join(""));
+    const nextIndex = Math.min(index + digits.length, 5);
+    window.requestAnimationFrame(() => {
+      otpInputRefs.current[nextIndex]?.focus();
+      otpInputRefs.current[nextIndex]?.select?.();
+    });
+  };
+
+  const handleOtpInputKeyDown = (index, event) => {
+    if (event.key === "Backspace" && !otpDigitValues[index] && index > 0) {
+      event.preventDefault();
+      updateOtpCode(otpCodeValue.slice(0, index - 1));
+      window.requestAnimationFrame(() => {
+        otpInputRefs.current[index - 1]?.focus();
+      });
+      return;
+    }
+
+    if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      otpInputRefs.current[index - 1]?.focus();
+      return;
+    }
+
+    if (event.key === "ArrowRight" && index < 5) {
+      event.preventDefault();
+      otpInputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpPaste = (event) => {
+    const pasted = event.clipboardData?.getData("text") || "";
+    const digits = pasted.replace(/\D/g, "").slice(0, 6);
+    if (!digits) {
+      return;
+    }
+    event.preventDefault();
+    updateOtpCode(digits);
+    const focusIndex = Math.min(digits.length, 6) - 1;
+    window.requestAnimationFrame(() => {
+      otpInputRefs.current[focusIndex]?.focus();
+      otpInputRefs.current[focusIndex]?.select?.();
+    });
+  };
+
+  useEffect(() => {
+    if (!hasMfaChallenge) {
+      return;
+    }
+
+    if (otpCodeValue.length < 6) {
+      lastAutoVerifyCodeRef.current = "";
+      return;
+    }
+
+    if (!hasOtpRequest || isVerifyingOtp || isSendingOtp) {
+      return;
+    }
+
+    const submissionKey = `${mfaState.challengeToken}:${otpCodeValue}`;
+    if (lastAutoVerifyCodeRef.current === submissionKey) {
+      return;
+    }
+
+    lastAutoVerifyCodeRef.current = submissionKey;
+    handleVerifyOtp().catch(() => null);
+  }, [
+    hasMfaChallenge,
+    hasOtpRequest,
+    isSendingOtp,
+    isVerifyingOtp,
+    mfaState.challengeToken,
+    otpCodeValue,
+  ]);
+
+  useEffect(() => {
+    if (!hasMfaChallenge || !hasOtpRequest || isVerifyingOtp) {
+      return;
+    }
+
+    const firstEmptyIndex = otpDigitValues.findIndex((digit) => !digit);
+    const targetIndex = firstEmptyIndex === -1 ? 5 : firstEmptyIndex;
+    window.requestAnimationFrame(() => {
+      otpInputRefs.current[targetIndex]?.focus();
+    });
+  }, [hasMfaChallenge, hasOtpRequest, isVerifyingOtp, otpCodeValue]);
 
   return (
     <section className="w-full">
@@ -679,7 +805,6 @@ export default function LoginCard() {
                 <div className="space-y-4">
                   {isPhoneRegistrationRequired ? (
                     <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Mobile Number</p>
                       <label className="mt-2 block space-y-1">
                         <span className="text-xs font-medium text-slate-700">Mobile Number</span>
                         <input
@@ -721,38 +846,35 @@ export default function LoginCard() {
                     </p>
                   )}
 
-                  {isPhoneRegistrationRequired ? <div className="h-px w-full bg-slate-200" /> : null}
-
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Verification Code</p>
                     <label className="mt-2 block space-y-1">
                       <span className="text-xs font-medium text-slate-700">Verification Code</span>
-                      <input
-                        type="text"
-                        value={mfaState.otpCode}
-                        onChange={(event) =>
-                          setMfaState((current) => ({
-                            ...current,
-                            otpCode: event.target.value,
-                          }))
-                        }
-                        placeholder="6-digit code"
-                        className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                        disabled={isSendingOtp || isVerifyingOtp}
-                      />
+                      <div className="grid grid-cols-6 gap-2" onPaste={handleOtpPaste}>
+                        {otpDigitValues.map((digit, index) => (
+                          <input
+                            key={`otp-${index}`}
+                            ref={(element) => {
+                              otpInputRefs.current[index] = element;
+                            }}
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete={index === 0 ? "one-time-code" : "off"}
+                            maxLength={1}
+                            value={digit}
+                            onChange={(event) => handleOtpInputChange(index, event.target.value)}
+                            onKeyDown={(event) => handleOtpInputKeyDown(index, event)}
+                            className="h-10 w-full rounded-xl border border-slate-300 bg-white text-center text-base font-semibold text-slate-900 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
+                            disabled={isSendingOtp || isVerifyingOtp}
+                          />
+                        ))}
+                      </div>
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleVerifyOtp}
-                      disabled={isVerifyingOtp || !hasOtpRequest || mfaState.otpCode.trim().length !== 6}
-                      className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isVerifyingOtp ? "Verifying OTP..." : "Verify OTP and Continue"}
-                    </button>
                     {!hasOtpRequest ? (
                       <p className="mt-2 text-[11px] text-slate-500">
                         {isPhoneRegistrationRequired ? "Request OTP first before entering a verification code." : "Waiting for OTP challenge. Please hold for a moment."}
                       </p>
+                    ) : otpCodeValue.length < 6 ? (
+                      <p className="mt-2 text-[11px] text-slate-500">Enter the 6-digit code. Verification is automatic.</p>
                     ) : null}
                   </div>
                 </div>
