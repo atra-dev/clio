@@ -112,6 +112,15 @@ function isDevelopmentPreviewEnabled() {
   return process.env.NODE_ENV !== "production";
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function buildEmailContent({ role, invitedBy, verifyUrl, loginUrl, expiresAt }) {
   const expirationDate = new Date(expiresAt);
   const readableExpiration = Number.isNaN(expirationDate.getTime())
@@ -124,32 +133,50 @@ function buildEmailContent({ role, invitedBy, verifyUrl, loginUrl, expiresAt }) 
         minute: "2-digit",
       });
 
-  const subject = "Verify your email to open your CLIO account";
+  const roleText = String(role || "Employee").trim() || "Employee";
+  const invitedByText = String(invitedBy || "CLIO Administrator").trim() || "CLIO Administrator";
+  const brandDomain = String(process.env.CLIO_EMAIL_BRAND_DOMAIN || "cisoasaservice.io").trim() || "cisoasaservice.io";
+  const safeRole = escapeHtml(roleText);
+  const safeInvitedBy = escapeHtml(invitedByText);
+  const safeVerifyUrl = escapeHtml(verifyUrl);
+  const safeLoginUrl = escapeHtml(loginUrl);
+  const safeReadableExpiration = escapeHtml(readableExpiration);
+  const safeBrandDomain = escapeHtml(brandDomain);
+
+  const subject = "You're invited to verify your email and open your Clio account";
   const text = [
-    "You were invited to open a CLIO account.",
-    `Assigned role: ${role}`,
-    `Invited by: ${invitedBy}`,
-    `Verify your email to open your account: ${verifyUrl}`,
-    `Sign-in page: ${loginUrl}`,
+    "You have been invited to Clio Secured HRIS.",
+    "",
+    "To open your account, please verify your email first.",
+    `Verify your Clio account: ${verifyUrl}`,
+    `Sign in after verification: ${loginUrl}`,
+    "",
+    `Assigned role: ${roleText}`,
+    `Invited by: ${invitedByText}`,
     `Invitation expires: ${readableExpiration}`,
     "",
-    "Step 1: Open the verification link and complete email verification.",
-    "Step 2: Complete SMS OTP on the verification page.",
-    "Step 3: Sign in with Google using the same invited work email.",
-    "Only invited accounts can access the workspace.",
+    "For security, complete SMS OTP after email verification.",
+    "Use the same invited work email when signing in.",
+    "",
+    `Domain: ${brandDomain}`,
   ].join("\n");
 
   return {
     subject,
     text,
     html: [
-      "<p>You were invited to open your <strong>CLIO</strong> account.</p>",
-      `<p><strong>Assigned role:</strong> ${role}<br/>`,
-      `<strong>Invited by:</strong> ${invitedBy}<br/>`,
-      `<strong>Invitation expires:</strong> ${readableExpiration}</p>`,
-      `<p><a href="${verifyUrl}">Verify your email to open your CLIO account</a></p>`,
-      `<p><a href="${loginUrl}">Open CLIO sign-in</a></p>`,
-      "<p>After email + SMS verification, sign in using Google with the same invited work email.</p>",
+      "<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:620px\">",
+      "<p style=\"margin:0 0 12px 0\">Hello,</p>",
+      "<p style=\"margin:0 0 12px 0\">You have been invited to <strong>Clio Secured HRIS</strong>.</p>",
+      "<p style=\"margin:0 0 16px 0\">To open your account, please verify your email and complete secure onboarding.</p>",
+      `<p style="margin:0 0 16px 0"><a href="${safeVerifyUrl}" style="display:inline-block;background:#0f6bcf;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:10px;font-weight:600">Verify Clio Account</a></p>`,
+      `<p style="margin:0 0 12px 0"><strong>Assigned role:</strong> ${safeRole}<br/>`,
+      `<strong>Invited by:</strong> ${safeInvitedBy}<br/>`,
+      `<strong>Invitation expires:</strong> ${safeReadableExpiration}</p>`,
+      `<p style="margin:0 0 12px 0">After verification, sign in here: <a href="${safeLoginUrl}">${safeLoginUrl}</a></p>`,
+      `<p style="margin:0 0 12px 0">For security, complete SMS OTP after email verification and use the same invited work email.</p>`,
+      `<p style="margin:0;color:#475569;font-size:12px">This invitation is intended for authorized recipients of ${safeBrandDomain}.</p>`,
+      "</div>",
     ].join(""),
   };
 }

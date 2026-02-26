@@ -24,7 +24,7 @@ const ALLOWED_STATUSES = new Set(["pending", "active", "disabled"]);
 const ALLOWED_INVITE_STATUSES = new Set(["sent", "otp_sent", "verified", "revoked", "expired"]);
 const ALLOWED_ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
-const DEFAULT_INVITE_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_INVITE_EXPIRATION_DAYS = 7;
 const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const DEFAULT_OTP_TTL_SECONDS = 300;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
@@ -184,6 +184,18 @@ function envInt(name, fallback, { min, max } = {}) {
   }
 
   return parsed;
+}
+
+function getInviteExpirationMs() {
+  const days = envInt("CLIO_INVITE_EXPIRATION_DAYS", DEFAULT_INVITE_EXPIRATION_DAYS, {
+    min: 1,
+    max: 90,
+  });
+  return days * 24 * 60 * 60 * 1000;
+}
+
+function createInviteExpirationIso() {
+  return new Date(Date.now() + getInviteExpirationMs()).toISOString();
 }
 
 function getOtpSecret() {
@@ -686,7 +698,7 @@ function normalizeInviteRecord(invite) {
   const expiresAt =
     typeof invite?.expiresAt === "string"
       ? invite.expiresAt
-      : new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+      : createInviteExpirationIso();
   const status = ALLOWED_INVITE_STATUSES.has(invite?.status) ? invite.status : "sent";
   const phoneMasked =
     typeof invite?.verification?.phoneMasked === "string" ? invite.verification.phoneMasked : null;
@@ -1088,7 +1100,7 @@ async function inviteUserAccountInFirestore(db, { email, role, invitedBy }) {
     });
   }
 
-  const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+  const expiresAt = createInviteExpirationIso();
   const invite = {
     email: normalizedEmail,
     role: requestedRole,
@@ -1593,7 +1605,7 @@ async function inviteUserAccountInFile({ email, role, invitedBy }) {
     }
   }
 
-  const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+  const expiresAt = createInviteExpirationIso();
   const invite = {
     id: createId("INV"),
     email: normalizedEmail,
