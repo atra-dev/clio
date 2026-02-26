@@ -304,7 +304,8 @@ export function mapBackendError(reason, fallbackMessage) {
     case "firebase_continue_url_invalid":
       return {
         status: 502,
-        message: "Firebase continue URL is invalid. Check CLIO_APP_BASE_URL / CLIO_INVITE_VERIFY_PATH and authorize the domain in Firebase Authentication.",
+        message:
+          "Firebase continue URL is invalid. Check NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN (or CLIO_APP_BASE_URL override) and authorize the domain in Firebase Authentication.",
       };
     case "unsupported_email_provider":
       return {

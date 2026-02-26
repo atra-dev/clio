@@ -117,7 +117,7 @@ export async function POST(request) {
             : deliveryReason === "firebase_email_provider_not_enabled"
               ? "Firebase email-link provider is not enabled. Enable Email link (passwordless sign-in) in Firebase Authentication."
               : deliveryReason === "firebase_continue_url_invalid"
-                ? "Firebase continue URL is invalid. Check CLIO_APP_BASE_URL / CLIO_INVITE_VERIFY_PATH and authorize the domain in Firebase Authentication."
+                ? "Firebase continue URL is invalid. Check NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN (or CLIO_APP_BASE_URL override) and authorize the domain in Firebase Authentication."
                 : deliveryReason === "invalid_email"
                   ? "Invalid invite email address."
           : deliveryReason === "unsupported_email_provider"

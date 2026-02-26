@@ -67,6 +67,13 @@ function getAppBaseUrl() {
     return publicSiteUrl;
   }
 
+  const firebaseAuthDomain = normalizeBaseUrl(
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN,
+  );
+  if (firebaseAuthDomain) {
+    return firebaseAuthDomain;
+  }
+
   const vercelUrl = normalizeBaseUrl(
     process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL,
   );
