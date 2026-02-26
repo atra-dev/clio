@@ -300,11 +300,7 @@ export default function LoginCard() {
       otpRequestedAt: "",
     });
     setErrorMessage("");
-    setInfoMessage(
-      authUser.phoneNumber
-        ? "Verify the code sent to your registered mobile number to continue login."
-        : "Register your mobile number and verify OTP to continue login.",
-    );
+    setInfoMessage("");
     confirmationResultRef.current = null;
     lastAutoSendChallengeRef.current = "";
     disposeRecaptchaVerifier();
@@ -655,7 +651,7 @@ export default function LoginCard() {
             <div className="border-b border-slate-100 bg-[linear-gradient(120deg,#f8fafc_0%,#f1f5f9_100%)] px-4 py-3 sm:px-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">Clio HRIS Access</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">CLIO</p>
                   <h2 className="mt-1 text-base font-semibold text-slate-900 sm:text-lg">
                     {isPhoneRegistrationRequired ? "Add SMS Phone Registration" : "SMS Verification Required"}
                   </h2>
@@ -685,7 +681,7 @@ export default function LoginCard() {
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Mobile Number</p>
                       <label className="mt-2 block space-y-1">
-                        <span className="text-xs font-medium text-slate-700">Work Mobile</span>
+                        <span className="text-xs font-medium text-slate-700">Mobile Number</span>
                         <input
                           type="tel"
                           value={mfaState.phoneNumber}
@@ -711,13 +707,7 @@ export default function LoginCard() {
                         disabled={isSendingOtp || isOtpCooldownActive || !hasPhoneNumber}
                         className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {isSendingOtp
-                          ? "Sending OTP..."
-                          : isOtpCooldownActive
-                            ? `Retry in ${otpCooldownSecondsLeft}s`
-                            : hasOtpRequest
-                              ? "Resend OTP"
-                              : "Register Phone and Send OTP"}
+                        {isSendingOtp ? "Sending OTP..." : isOtpCooldownActive ? `Retry in ${otpCooldownSecondsLeft}s` : "Register"}
                       </button>
                       {isOtpCooldownActive ? (
                         <p className="mt-2 text-[11px] font-medium text-amber-700">
@@ -734,7 +724,7 @@ export default function LoginCard() {
                   {isPhoneRegistrationRequired ? <div className="h-px w-full bg-slate-200" /> : null}
 
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">OTP Code</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Verification Code</p>
                     <label className="mt-2 block space-y-1">
                       <span className="text-xs font-medium text-slate-700">Verification Code</span>
                       <input
