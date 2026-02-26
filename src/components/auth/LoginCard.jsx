@@ -22,6 +22,7 @@ export default function LoginCard() {
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [isVerifyingAccess, setIsVerifyingAccess] = useState(false);
+  const [useVisibleRecaptcha, setUseVisibleRecaptcha] = useState(false);
   const [otpCooldownSecondsLeft, setOtpCooldownSecondsLeft] = useState(0);
   const finalizingLoginRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -37,11 +38,14 @@ export default function LoginCard() {
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
   const recaptchaCreationPromiseRef = useRef(null);
+  const sendOtpInFlightRef = useRef(false);
+  const recaptchaContainerIdRef = useRef(`clio-login-sms-recaptcha-${Math.random().toString(36).slice(2, 10)}`);
   const lastAutoSendChallengeRef = useRef("");
   const lastAutoVerifyCodeRef = useRef("");
   const otpInputRefs = useRef([]);
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
   const REDIRECT_USER_WAIT_TIMEOUT_MS = 15000;
+  const OTP_AUTO_SEND_GUARD_WINDOW_MS = 120000;
 
   const startOtpCooldown = (seconds = 90) => {
     const next = Number.isFinite(seconds) ? Math.max(1, Math.trunc(seconds)) : 90;
@@ -67,6 +71,50 @@ export default function LoginCard() {
       return false;
     }
     return window.sessionStorage.getItem(REDIRECT_PENDING_KEY) === "1";
+  };
+
+  const buildOtpAutoSendGuardKey = (challengeToken, userId = "") => {
+    const normalizedUserId = String(userId || "").trim();
+    if (normalizedUserId) {
+      return `clio_sms_otp_autosend_guard:user:${normalizedUserId}`;
+    }
+    return `clio_sms_otp_autosend_guard:challenge:${String(challengeToken || "").trim()}`;
+  };
+
+  const markOtpAutoSendGuard = (challengeToken, userId = "") => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const normalized = String(challengeToken || "").trim();
+    if (!normalized) {
+      return;
+    }
+    window.sessionStorage.setItem(buildOtpAutoSendGuardKey(normalized, userId), String(Date.now()));
+  };
+
+  const shouldSkipOtpAutoSend = (challengeToken, userId = "") => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const normalized = String(challengeToken || "").trim();
+    if (!normalized) {
+      return false;
+    }
+    const key = buildOtpAutoSendGuardKey(normalized, userId);
+    const raw = window.sessionStorage.getItem(key);
+    const sentAt = Number(raw);
+    if (!Number.isFinite(sentAt) || sentAt <= 0) {
+      if (raw) {
+        window.sessionStorage.removeItem(key);
+      }
+      return false;
+    }
+    const elapsed = Date.now() - sentAt;
+    if (elapsed >= OTP_AUTO_SEND_GUARD_WINDOW_MS) {
+      window.sessionStorage.removeItem(key);
+      return false;
+    }
+    return true;
   };
 
   const waitForSignedInUser = async (auth, timeoutMs = 5000) => {
@@ -175,6 +223,9 @@ export default function LoginCard() {
     if (rawCode === "auth/captcha-check-failed") {
       return "Captcha validation failed. Retry and complete captcha challenge.";
     }
+    if (rawMessage.toLowerCase().includes("recaptcha has already been rendered")) {
+      return "Security challenge is refreshing. Please retry OTP in a few seconds.";
+    }
     if (rawMessage.startsWith("firebase_client_not_configured")) {
       return "Firebase client is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID, then restart npm run dev.";
     }
@@ -191,7 +242,7 @@ export default function LoginCard() {
     }
 
     if (typeof document !== "undefined") {
-      const container = document.getElementById("clio-login-sms-recaptcha");
+      const container = document.getElementById(recaptchaContainerIdRef.current);
       if (container) {
         container.innerHTML = "";
       }
@@ -211,7 +262,7 @@ export default function LoginCard() {
       throw new Error("captcha_not_ready");
     }
 
-    const container = document.getElementById("clio-login-sms-recaptcha");
+    const container = document.getElementById(recaptchaContainerIdRef.current);
     if (!container) {
       throw new Error("captcha_not_ready");
     }
@@ -219,8 +270,8 @@ export default function LoginCard() {
     recaptchaCreationPromiseRef.current = (async () => {
       // Ensure the host element is clean before creating a new verifier instance.
       container.innerHTML = "";
-      const verifier = new RecaptchaVerifier(auth, "clio-login-sms-recaptcha", {
-        size: "invisible",
+      const verifier = new RecaptchaVerifier(auth, recaptchaContainerIdRef.current, {
+        size: useVisibleRecaptcha ? "normal" : "invisible",
       });
       await verifier.render();
       recaptchaVerifierRef.current = verifier;
@@ -248,6 +299,8 @@ export default function LoginCard() {
       otpCode: "",
       otpRequestedAt: "",
     });
+    sendOtpInFlightRef.current = false;
+    setUseVisibleRecaptcha(false);
     setPendingFirebaseUser(null);
     setInfoMessage("");
     confirmationResultRef.current = null;
@@ -326,6 +379,8 @@ export default function LoginCard() {
     });
     setErrorMessage("");
     setInfoMessage("");
+    sendOtpInFlightRef.current = false;
+    setUseVisibleRecaptcha(false);
     confirmationResultRef.current = null;
     lastAutoSendChallengeRef.current = "";
     lastAutoVerifyCodeRef.current = "";
@@ -374,6 +429,11 @@ export default function LoginCard() {
       return;
     }
 
+    if (shouldSkipOtpAutoSend(mfaState.challengeToken, pendingFirebaseUser?.uid)) {
+      setInfoMessage("OTP was recently sent. Enter the current code or tap Send OTP if needed.");
+      return;
+    }
+
     lastAutoSendChallengeRef.current = mfaState.challengeToken;
     setInfoMessage("Sending OTP to your registered mobile number...");
     handleSendOtp().catch(() => null);
@@ -387,10 +447,11 @@ export default function LoginCard() {
   ]);
 
   const handleSendOtp = async () => {
-    if (!pendingFirebaseUser || !mfaState.challengeToken || isSendingOtp) {
+    if (!pendingFirebaseUser || !mfaState.challengeToken || isSendingOtp || sendOtpInFlightRef.current) {
       return;
     }
 
+    sendOtpInFlightRef.current = true;
     setIsSendingOtp(true);
     setErrorMessage("");
     setInfoMessage("");
@@ -436,10 +497,21 @@ export default function LoginCard() {
         otpCode: "",
         otpRequestedAt: new Date().toISOString(),
       }));
+      markOtpAutoSendGuard(mfaState.challengeToken, activeUser.uid);
+      setUseVisibleRecaptcha(false);
       setOtpCooldownSecondsLeft(0);
       lastAutoVerifyCodeRef.current = "";
       setInfoMessage("OTP sent via SMS. Enter the code to continue.");
     } catch (error) {
+      const errorCode = String(error?.code || "").trim();
+      const errorMessage = String(error?.message || "").toLowerCase();
+      const isCaptchaProblem =
+        errorCode === "auth/captcha-check-failed" ||
+        errorMessage.includes("recaptcha has already been rendered") ||
+        errorMessage.includes("recaptcha");
+      if (isCaptchaProblem && !useVisibleRecaptcha) {
+        setUseVisibleRecaptcha(true);
+      }
       if (String(error?.code || "").trim() === "auth/too-many-requests") {
         startOtpCooldown(90);
       }
@@ -448,6 +520,7 @@ export default function LoginCard() {
       disposeRecaptchaVerifier();
       confirmationResultRef.current = null;
     } finally {
+      sendOtpInFlightRef.current = false;
       setIsSendingOtp(false);
     }
   };
@@ -844,7 +917,12 @@ export default function LoginCard() {
             </div>
 
             <div className="space-y-3 px-4 py-4 sm:px-5 sm:py-5">
-              <div id="clio-login-sms-recaptcha" className="sr-only" />
+              <div className={useVisibleRecaptcha ? "rounded-xl border border-slate-200 bg-white p-2" : "sr-only"}>
+                <p className={useVisibleRecaptcha ? "mb-2 text-[11px] font-medium text-slate-600" : "hidden"}>
+                  Complete the captcha challenge, then tap Register again.
+                </p>
+                <div id={recaptchaContainerIdRef.current} />
+              </div>
 
               <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#fcfdff_0%,#f8fafc_100%)] p-3 shadow-[0_18px_38px_-32px_rgba(15,23,42,0.45)] sm:p-4">
                 <div className="space-y-4">
@@ -911,9 +989,19 @@ export default function LoginCard() {
                   {showOtpStep ? (
                     <div>
                       {!isPhoneRegistrationRequired ? (
-                        <p className="mb-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
-                          OTP is sent automatically to your registered mobile number.
-                        </p>
+                        <div className="mb-2 space-y-2">
+                          <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                            OTP is sent automatically to your registered mobile number.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleSendOtp}
+                            disabled={isSendingOtp || isVerifyingOtp || isOtpCooldownActive || !hasPhoneNumber}
+                            className="inline-flex h-9 items-center justify-center rounded-xl border border-sky-300 bg-white px-3 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isSendingOtp ? "Sending OTP..." : isOtpCooldownActive ? `Retry in ${otpCooldownSecondsLeft}s` : hasOtpRequest ? "Resend OTP" : "Send OTP"}
+                          </button>
+                        </div>
                       ) : null}
                       <label className="mt-2 block space-y-2">
                         <span className="text-xs font-medium text-slate-700">Verification Code</span>
