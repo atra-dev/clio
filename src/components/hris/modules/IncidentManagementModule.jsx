@@ -628,14 +628,50 @@ export default function IncidentManagementModule({ session }) {
     return Object.entries(tally).sort((a, b) => b[1] - a[1]);
   }, [records]);
 
-  const departmentDistribution = useMemo(() => {
-    const tally = {};
-    records.forEach((record) => {
-      const dept = String(record?.department || "Unassigned").trim() || "Unassigned";
-      tally[dept] = (tally[dept] || 0) + 1;
+  const incidentTrendsPie = useMemo(() => {
+    const total = typeDistribution.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+    const palette = ["#0ea5e9", "#14b8a6", "#f97316", "#6366f1", "#ef4444", "#a855f7", "#22c55e", "#06b6d4"];
+
+    let cursor = 0;
+    const segments = typeDistribution.map(([type, count], index) => {
+      const numericCount = Number(count || 0);
+      const ratio = total > 0 ? numericCount / total : 0;
+      const start = cursor;
+      cursor += ratio;
+      return {
+        label: type,
+        value: numericCount,
+        percentage: total > 0 ? Math.round(ratio * 100) : 0,
+        color: palette[index % palette.length],
+        fromDeg: (start * 360).toFixed(2),
+        toDeg: (cursor * 360).toFixed(2),
+      };
     });
-    return Object.entries(tally).sort((a, b) => b[1] - a[1]);
-  }, [records]);
+
+    const gradient = segments.length
+      ? `conic-gradient(${segments.map((segment) => `${segment.color} ${segment.fromDeg}deg ${segment.toDeg}deg`).join(", ")})`
+      : "";
+
+    return {
+      total,
+      segments,
+      gradient,
+      dominant: segments[0] || null,
+    };
+  }, [typeDistribution]);
+
+  const recurringSeverityBars = useMemo(() => {
+    const low = Number(severityDistribution.Low || 0) + Number(severityDistribution.Medium || 0);
+    const high = Number(severityDistribution.High || 0) + Number(severityDistribution.Critical || 0);
+    const maxValue = Math.max(low, high, 1);
+    return [
+      { label: "Low", meta: "Low + Medium", value: low, color: "bg-sky-500" },
+      { label: "High", meta: "High + Critical", value: high, color: "bg-rose-500" },
+    ].map((item) => ({
+      ...item,
+      width: `${Math.round((item.value / maxValue) * 100)}%`,
+    }));
+  }, [severityDistribution]);
 
   return (
     <div className="space-y-4">
@@ -987,45 +1023,55 @@ export default function IncidentManagementModule({ session }) {
 
 
       {section === "reports-analytics" ? (
-        <SurfaceCard title="Reports & Analytics" subtitle="Trends, department risk, and recurring issues">
-        <div className="grid gap-3 lg:grid-cols-3">
-          <SurfaceCard title="Incident Trends" subtitle="Volume by type">
-            {typeDistribution.length === 0 ? (
-              <EmptyState title="No data yet" subtitle="Incident trends will appear after cases are logged." />
-            ) : (
-                <ul className="space-y-2 text-xs text-slate-600">
-                  {typeDistribution.map(([type, count]) => (
-                    <li key={type} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <span>{type}</span>
-                      <span className="font-semibold text-slate-900">{count}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SurfaceCard>
-            <SurfaceCard title="Department Risk" subtitle="Incidents by department">
-              {departmentDistribution.length === 0 ? (
-                <EmptyState title="No department data" subtitle="Add department information to incident reports." />
+        <SurfaceCard title="Reports & Analytics" subtitle="Incident trends and recurring issue severity">
+          <div className="grid gap-3 lg:grid-cols-2">
+            <SurfaceCard title="Incident Trends" subtitle="Pie chart by incident type">
+              {incidentTrendsPie.total <= 0 ? (
+                <EmptyState title="No data yet" subtitle="Incident trends will appear after cases are logged." />
               ) : (
-                <ul className="space-y-2 text-xs text-slate-600">
-                  {departmentDistribution.map(([dept, count]) => (
-                    <li key={dept} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <span>{dept}</span>
-                      <span className="font-semibold text-slate-900">{count}</span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="space-y-3">
+                  <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+                    <div
+                      className="h-44 w-44 shrink-0 rounded-full border border-slate-200 shadow-[0_14px_34px_-28px_rgba(15,23,42,0.5)]"
+                      style={{ backgroundImage: incidentTrendsPie.gradient }}
+                      aria-label="Incident trends pie chart"
+                    />
+                    <ul className="w-full space-y-2 text-xs text-slate-600">
+                      {incidentTrendsPie.segments.map((segment) => (
+                        <li key={segment.label} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
+                            <span>{segment.label}</span>
+                          </span>
+                          <span className="font-semibold text-slate-900">{segment.value} ({segment.percentage}%)</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  {incidentTrendsPie.dominant ? (
+                    <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                      Top incident type: <span className="font-semibold text-slate-900">{incidentTrendsPie.dominant.label}</span>
+                    </p>
+                  ) : null}
+                </div>
               )}
             </SurfaceCard>
-            <SurfaceCard title="Recurring Issues" subtitle="Severity spread overview">
-              <ul className="space-y-2 text-xs text-slate-600">
-                {Object.entries(severityDistribution).map(([label, value]) => (
-                  <li key={label} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <span>{label}</span>
-                    <span className="font-semibold text-slate-900">{value}</span>
-                  </li>
+
+            <SurfaceCard title="Recurring Issues" subtitle="High vs low incident volume">
+              <div className="space-y-3">
+                {recurringSeverityBars.map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-center justify-between text-xs text-slate-600">
+                      <span className="font-semibold text-slate-800">{item.label}</span>
+                      <span>{item.value}</span>
+                    </div>
+                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                      <div className={`h-full rounded-full ${item.color}`} style={{ width: item.width }} />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">{item.meta}</p>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </SurfaceCard>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -1034,8 +1080,8 @@ export default function IncidentManagementModule({ session }) {
             </button>
             <button type="button" className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
               Export Excel
-          </button>
-        </div>
+            </button>
+          </div>
         </SurfaceCard>
       ) : null}
 
