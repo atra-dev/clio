@@ -22,6 +22,7 @@ export default function LoginCard() {
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [isVerifyingAccess, setIsVerifyingAccess] = useState(false);
+  const [otpCooldownSecondsLeft, setOtpCooldownSecondsLeft] = useState(0);
   const finalizingLoginRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
@@ -38,6 +39,11 @@ export default function LoginCard() {
   const lastAutoSendChallengeRef = useRef("");
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
   const REDIRECT_USER_WAIT_TIMEOUT_MS = 15000;
+
+  const startOtpCooldown = (seconds = 90) => {
+    const next = Number.isFinite(seconds) ? Math.max(1, Math.trunc(seconds)) : 90;
+    setOtpCooldownSecondsLeft(next);
+  };
 
   const setRedirectPending = () => {
     if (typeof window === "undefined") {
@@ -225,6 +231,20 @@ export default function LoginCard() {
     disposeRecaptchaVerifier();
   };
 
+  useEffect(() => {
+    if (otpCooldownSecondsLeft <= 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setOtpCooldownSecondsLeft((current) => (current <= 1 ? 0 : current - 1));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [otpCooldownSecondsLeft]);
+
   const completeWorkspaceLogin = async (auth, firebaseUser) => {
     const idToken = await firebaseUser.getIdToken(true);
 
@@ -320,7 +340,7 @@ export default function LoginCard() {
       return;
     }
 
-    if (isSendingOtp || isVerifyingOtp) {
+    if (isSendingOtp || isVerifyingOtp || otpCooldownSecondsLeft > 0) {
       return;
     }
 
@@ -338,6 +358,7 @@ export default function LoginCard() {
   }, [
     isSendingOtp,
     isVerifyingOtp,
+    otpCooldownSecondsLeft,
     mfaState.challengeToken,
     mfaState.otpRequestedAt,
     pendingFirebaseUser,
@@ -376,8 +397,12 @@ export default function LoginCard() {
         phoneNumber: targetPhoneNumber,
         otpRequestedAt: new Date().toISOString(),
       }));
+      setOtpCooldownSecondsLeft(0);
       setInfoMessage("OTP sent via SMS. Enter the code to continue.");
     } catch (error) {
+      if (String(error?.code || "").trim() === "auth/too-many-requests") {
+        startOtpCooldown(90);
+      }
       const mapped = mapLoginError(error);
       setErrorMessage(mapped);
       disposeRecaptchaVerifier();
@@ -551,9 +576,11 @@ export default function LoginCard() {
   const hasPhoneProviderLinked =
     Boolean(pendingFirebaseUser?.phoneNumber) ||
     pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
+  const hasMfaChallenge = Boolean(mfaState.challengeToken);
+  const isPhoneRegistrationRequired = hasMfaChallenge && !hasPhoneProviderLinked;
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
   const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current);
-  const hasMfaChallenge = Boolean(mfaState.challengeToken);
+  const isOtpCooldownActive = otpCooldownSecondsLeft > 0;
 
   return (
     <section className="w-full">
@@ -629,9 +656,13 @@ export default function LoginCard() {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">Clio HRIS Access</p>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-900 sm:text-xl">SMS Verification Required</h2>
+                  <h2 className="mt-1 text-lg font-semibold text-slate-900 sm:text-xl">
+                    {isPhoneRegistrationRequired ? "Add SMS Phone Registration" : "SMS Verification Required"}
+                  </h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Complete mobile OTP verification to continue to your secured workspace.
+                    {isPhoneRegistrationRequired
+                      ? "Register your mobile number and complete OTP verification before continuing."
+                      : "Complete mobile OTP verification to continue to your secured workspace."}
                   </p>
                 </div>
                 <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
@@ -672,17 +703,30 @@ export default function LoginCard() {
                       {hasPhoneProviderLinked
                         ? "Using your registered mobile number for sign-in verification."
                         : hasPhoneNumber
-                          ? "Use international format with country code."
+                          ? "Use international format with country code to register this account."
                           : "Add your mobile number first before requesting OTP."}
                     </p>
                     <button
                       type="button"
                       onClick={handleSendOtp}
-                      disabled={isSendingOtp || !hasPhoneNumber}
+                      disabled={isSendingOtp || isOtpCooldownActive || !hasPhoneNumber}
                       className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {isSendingOtp ? "Sending OTP..." : hasOtpRequest ? "Resend OTP" : "Send OTP"}
+                      {isSendingOtp
+                        ? "Sending OTP..."
+                        : isOtpCooldownActive
+                          ? `Retry in ${otpCooldownSecondsLeft}s`
+                          : hasOtpRequest
+                            ? "Resend OTP"
+                            : isPhoneRegistrationRequired
+                              ? "Register Phone and Send OTP"
+                              : "Send OTP"}
                     </button>
+                    {isOtpCooldownActive ? (
+                      <p className="mt-2 text-[11px] font-medium text-amber-700">
+                        OTP is temporarily rate-limited. Please wait before retrying.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="h-px w-full bg-slate-200" />
