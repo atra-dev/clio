@@ -5,7 +5,7 @@ import { createIncidentRecordBackend } from "@/lib/hris-backend";
 import {
   createInAppNotificationsBulk,
   getInAppNotificationForRecipient,
-  markInAppNotificationRead,
+  resolveDeviceVerificationNotification,
   resolveGrcRecipients,
 } from "@/lib/security-notifications";
 import { buildIncidentCreatedNotification } from "@/lib/incident-notification-text";
@@ -52,6 +52,23 @@ export async function POST(request) {
     }
 
     const metadata = notification?.metadata && typeof notification.metadata === "object" ? notification.metadata : {};
+    const existingDecisionRaw = asString(metadata?.deviceVerificationDecision).toLowerCase();
+    const existingDecision =
+      existingDecisionRaw === "confirmed"
+        ? "confirm"
+        : existingDecisionRaw === "denied"
+          ? "deny"
+          : existingDecisionRaw;
+    if (existingDecision) {
+      if (existingDecision === decision) {
+        return NextResponse.json({ ok: true, decision: existingDecision, alreadyResolved: true });
+      }
+      return NextResponse.json(
+        { message: `Device verification already submitted as ${existingDecision}.` },
+        { status: 409 },
+      );
+    }
+
     const deviceId = asString(metadata?.deviceId);
     const deviceLabel = asString(metadata?.deviceLabel, "Unknown device");
     const sourceIp = asString(metadata?.sourceIp, "unknown");
@@ -67,7 +84,7 @@ export async function POST(request) {
         deviceId,
         trusted: true,
       });
-      await markInAppNotificationRead(recordId, session.email);
+      await resolveDeviceVerificationNotification(recordId, session.email, "confirm");
 
       await recordAuditEvent({
         activityName: "Device verification confirmed",
@@ -83,7 +100,7 @@ export async function POST(request) {
         request,
       });
 
-      return NextResponse.json({ ok: true, decision: "confirmed" });
+      return NextResponse.json({ ok: true, decision: "confirm" });
     }
 
     await updateLoginDeviceTrust({
@@ -93,7 +110,7 @@ export async function POST(request) {
       deniedReason: "user_reported",
     });
     await revokeUserSessions({ userId: session.email }).catch(() => null);
-    await markInAppNotificationRead(recordId, session.email);
+    await resolveDeviceVerificationNotification(recordId, session.email, "deny");
 
     const incident = await createIncidentRecordBackend(
       {
@@ -150,7 +167,7 @@ export async function POST(request) {
       request,
     });
 
-    return NextResponse.json({ ok: true, decision: "denied", incidentId: incident?.id || null });
+    return NextResponse.json({ ok: true, decision: "deny", incidentId: incident?.id || null });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "device_verification_failed";
     return NextResponse.json({ message: "Unable to process device verification.", reason }, { status: 400 });

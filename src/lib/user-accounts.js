@@ -24,7 +24,7 @@ const ALLOWED_STATUSES = new Set(["pending", "active", "disabled"]);
 const ALLOWED_INVITE_STATUSES = new Set(["sent", "otp_sent", "verified", "revoked", "expired"]);
 const ALLOWED_ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
-const DEFAULT_INVITE_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_INVITE_EXPIRATION_DAYS = 7;
 const DEFAULT_ARCHIVE_RETENTION_YEARS = 5;
 const DEFAULT_OTP_TTL_SECONDS = 300;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
@@ -101,6 +101,19 @@ function normalizeSessionVersion(value, fallback = 1) {
     return fallback;
   }
   return parsed;
+}
+
+function normalizeBooleanFlag(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) {
+    return fallback;
+  }
+  return raw === "true" || raw === "1" || raw === "yes";
 }
 
 function isLegacyLocalAccountEmail(value) {
@@ -184,6 +197,18 @@ function envInt(name, fallback, { min, max } = {}) {
   }
 
   return parsed;
+}
+
+function getInviteExpirationMs() {
+  const days = envInt("CLIO_INVITE_EXPIRATION_DAYS", DEFAULT_INVITE_EXPIRATION_DAYS, {
+    min: 1,
+    max: 90,
+  });
+  return days * 24 * 60 * 60 * 1000;
+}
+
+function createInviteExpirationIso() {
+  return new Date(Date.now() + getInviteExpirationMs()).toISOString();
 }
 
 function getOtpSecret() {
@@ -614,6 +639,7 @@ function normalizeUserRecord(user) {
     phoneVerifiedAt: typeof user?.phoneVerifiedAt === "string" ? user.phoneVerifiedAt : null,
     phoneLast4: typeof user?.phoneLast4 === "string" ? user.phoneLast4 : null,
     phoneHash: typeof user?.phoneHash === "string" ? user.phoneHash : null,
+    smsMfaEnabled: normalizeBooleanFlag(user?.smsMfaEnabled, false),
     verificationMethod: ["sms", "email"].includes(user?.verificationMethod) ? user.verificationMethod : null,
     archivedAt: archivedAt || null,
     archivedBy,
@@ -686,7 +712,7 @@ function normalizeInviteRecord(invite) {
   const expiresAt =
     typeof invite?.expiresAt === "string"
       ? invite.expiresAt
-      : new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+      : createInviteExpirationIso();
   const status = ALLOWED_INVITE_STATUSES.has(invite?.status) ? invite.status : "sent";
   const phoneMasked =
     typeof invite?.verification?.phoneMasked === "string" ? invite.verification.phoneMasked : null;
@@ -833,6 +859,7 @@ function toPublicUser(user) {
     lastLoginAt: user.lastLoginAt,
     phoneVerifiedAt: user.phoneVerifiedAt,
     phoneLast4: user.phoneLast4,
+    smsMfaEnabled: Boolean(user?.smsMfaEnabled),
     verificationMethod: user.verificationMethod,
     archivedAt: user.archivedAt || null,
     archivedBy: user.archivedBy || null,
@@ -1088,7 +1115,7 @@ async function inviteUserAccountInFirestore(db, { email, role, invitedBy }) {
     });
   }
 
-  const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+  const expiresAt = createInviteExpirationIso();
   const invite = {
     email: normalizedEmail,
     role: requestedRole,
@@ -1261,7 +1288,7 @@ async function archiveUserAccountInFirestore(
 
 async function updateUserAccountProfileInFirestore(
   db,
-  { userId, firstName, middleName, lastName, profilePhotoDataUrl, profilePhotoStoragePath },
+  { userId, firstName, middleName, lastName, profilePhotoDataUrl, profilePhotoStoragePath, smsMfaEnabled },
 ) {
   const normalizedUserId = String(userId || "").trim().toLowerCase();
   if (!normalizedUserId) {
@@ -1274,7 +1301,16 @@ async function updateUserAccountProfileInFirestore(
     return null;
   }
 
+  const current = normalizeFirestoreUser(snapshot.id, snapshot.data());
+  if (!current) {
+    return null;
+  }
+
   const timestamp = nowIso();
+  const shouldUpdateMfa = typeof smsMfaEnabled === "boolean";
+  if (shouldUpdateMfa && smsMfaEnabled && !current.phoneVerifiedAt) {
+    throw new Error("mfa_phone_not_verified");
+  }
   const nextPayload = {
     firstName: normalizeNameField(firstName),
     middleName: normalizeNameField(middleName),
@@ -1284,6 +1320,12 @@ async function updateUserAccountProfileInFirestore(
     profileUpdatedAt: timestamp,
     updatedAt: timestamp,
   };
+  if (shouldUpdateMfa) {
+    nextPayload.smsMfaEnabled = smsMfaEnabled;
+    if (!smsMfaEnabled) {
+      nextPayload.loginMfa = null;
+    }
+  }
 
   await updateDoc(userRef, nextPayload);
 
@@ -1593,7 +1635,7 @@ async function inviteUserAccountInFile({ email, role, invitedBy }) {
     }
   }
 
-  const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRATION_MS).toISOString();
+  const expiresAt = createInviteExpirationIso();
   const invite = {
     id: createId("INV"),
     email: normalizedEmail,
@@ -1744,6 +1786,7 @@ async function updateUserAccountProfileInFile({
   lastName,
   profilePhotoDataUrl,
   profilePhotoStoragePath,
+  smsMfaEnabled,
 }) {
   const normalizedUserId = String(userId || "").trim().toLowerCase();
   if (!normalizedUserId) {
@@ -1756,11 +1799,22 @@ async function updateUserAccountProfileInFile({
     return null;
   }
 
+  const shouldUpdateMfa = typeof smsMfaEnabled === "boolean";
+  if (shouldUpdateMfa && smsMfaEnabled && !user.phoneVerifiedAt) {
+    throw new Error("mfa_phone_not_verified");
+  }
+
   user.firstName = normalizeNameField(firstName);
   user.middleName = normalizeNameField(middleName);
   user.lastName = normalizeNameField(lastName);
   user.profilePhotoDataUrl = normalizeProfilePhotoDataUrl(profilePhotoDataUrl);
   user.profilePhotoStoragePath = normalizeStoragePath(profilePhotoStoragePath);
+  if (shouldUpdateMfa) {
+    user.smsMfaEnabled = smsMfaEnabled;
+    if (!smsMfaEnabled) {
+      user.loginMfa = null;
+    }
+  }
   user.profileUpdatedAt = nowIso();
   user.updatedAt = user.profileUpdatedAt;
 
@@ -2457,10 +2511,6 @@ async function createLoginSmsChallengeInFirestore(db, { email }) {
     throw new Error("account_disabled");
   }
 
-  if (normalizedUser.phoneVerifiedAt) {
-    throw new Error("already_verified");
-  }
-
   const challengeToken = createInviteToken();
   const timestamp = nowIso();
   const challengeExpiresAt = new Date(Date.now() + getLoginMfaChallengeTtlSeconds() * 1000).toISOString();
@@ -2504,10 +2554,6 @@ async function createLoginSmsChallengeInFile({ email }) {
 
   if (user.status === "disabled") {
     throw new Error("account_disabled");
-  }
-
-  if (user.phoneVerifiedAt) {
-    throw new Error("already_verified");
   }
 
   const challengeToken = createInviteToken();
@@ -2988,10 +3034,6 @@ async function completeLoginSmsVerificationWithFirebaseInFirestore(db, { email, 
     throw new Error("account_disabled");
   }
 
-  if (normalizedUser.phoneVerifiedAt) {
-    throw new Error("already_verified");
-  }
-
   verifyLoginMfaChallenge({
     challengeToken,
     loginMfa: rawUser.loginMfa,
@@ -2999,7 +3041,7 @@ async function completeLoginSmsVerificationWithFirebaseInFirestore(db, { email, 
 
   const timestamp = nowIso();
   const nextPayload = {
-    phoneVerifiedAt: timestamp,
+    phoneVerifiedAt: normalizedUser.phoneVerifiedAt || timestamp,
     phoneLast4: getPhoneLast4(normalizedPhone),
     phoneHash: hashPhoneNumber(normalizedPhone),
     verificationMethod: "sms",
@@ -3038,17 +3080,13 @@ async function completeLoginSmsVerificationWithFirebaseInFile({ email, challenge
     throw new Error("account_disabled");
   }
 
-  if (user.phoneVerifiedAt) {
-    throw new Error("already_verified");
-  }
-
   verifyLoginMfaChallenge({
     challengeToken,
     loginMfa: user.loginMfa,
   });
 
   const timestamp = nowIso();
-  user.phoneVerifiedAt = timestamp;
+  user.phoneVerifiedAt = user.phoneVerifiedAt || timestamp;
   user.phoneLast4 = getPhoneLast4(normalizedPhone);
   user.phoneHash = hashPhoneNumber(normalizedPhone);
   user.verificationMethod = "sms";
@@ -3769,6 +3807,7 @@ export async function updateUserAccountProfile({
   lastName,
   profilePhotoDataUrl,
   profilePhotoStoragePath,
+  smsMfaEnabled,
 }) {
   const db = await getFirestoreStore();
   if (db) {
@@ -3780,6 +3819,7 @@ export async function updateUserAccountProfile({
         lastName,
         profilePhotoDataUrl,
         profilePhotoStoragePath,
+        smsMfaEnabled,
       });
     } catch {
       return await updateUserAccountProfileInFile({
@@ -3789,6 +3829,7 @@ export async function updateUserAccountProfile({
         lastName,
         profilePhotoDataUrl,
         profilePhotoStoragePath,
+        smsMfaEnabled,
       });
     }
   }
@@ -3800,5 +3841,6 @@ export async function updateUserAccountProfile({
     lastName,
     profilePhotoDataUrl,
     profilePhotoStoragePath,
+    smsMfaEnabled,
   });
 }

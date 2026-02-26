@@ -27,6 +27,9 @@ export async function GET(request) {
   const profilePhotoDataUrl = typeof account?.profilePhotoDataUrl === "string" ? account.profilePhotoDataUrl : null;
   const profilePhotoStoragePath =
     typeof account?.profilePhotoStoragePath === "string" ? account.profilePhotoStoragePath : null;
+  const phoneVerifiedAt = typeof account?.phoneVerifiedAt === "string" ? account.phoneVerifiedAt : null;
+  const phoneLast4 = typeof account?.phoneLast4 === "string" ? account.phoneLast4 : null;
+  const smsMfaEnabled = Boolean(account?.smsMfaEnabled);
   const role = account?.role || session.role;
 
   await recordAuditEvent({
@@ -57,6 +60,9 @@ export async function GET(request) {
     }),
     profilePhotoDataUrl,
     profilePhotoStoragePath,
+    phoneVerifiedAt,
+    phoneLast4,
+    smsMfaEnabled,
   });
 }
 
@@ -83,6 +89,7 @@ export async function PUT(request) {
       lastName: body?.lastName,
       profilePhotoDataUrl: body?.profilePhotoDataUrl,
       profilePhotoStoragePath: body?.profilePhotoStoragePath,
+      smsMfaEnabled: typeof body?.smsMfaEnabled === "boolean" ? body.smsMfaEnabled : undefined,
     });
 
     if (!updated) {
@@ -96,7 +103,14 @@ export async function PUT(request) {
       performedBy: session.email,
       sensitivity: "Sensitive",
       metadata: {
-        fieldsUpdated: ["firstName", "middleName", "lastName", "profilePhotoDataUrl", "profilePhotoStoragePath"],
+        fieldsUpdated: [
+          "firstName",
+          "middleName",
+          "lastName",
+          "profilePhotoDataUrl",
+          "profilePhotoStoragePath",
+          ...(typeof body?.smsMfaEnabled === "boolean" ? ["smsMfaEnabled"] : []),
+        ],
       },
       request,
     });
@@ -123,6 +137,9 @@ export async function PUT(request) {
         profilePhotoDataUrl: updated.profilePhotoDataUrl || null,
         profilePhotoStoragePath: updated.profilePhotoStoragePath || null,
         profileUpdatedAt: updated.profileUpdatedAt || null,
+        phoneVerifiedAt: updated.phoneVerifiedAt || null,
+        phoneLast4: updated.phoneLast4 || null,
+        smsMfaEnabled: Boolean(updated.smsMfaEnabled),
       },
     });
   } catch (error) {
@@ -147,6 +164,8 @@ export async function PUT(request) {
           ? "Invalid profile picture. Use PNG/JPG/WEBP under 1.5MB."
           : reason === "invalid_storage_path"
             ? "Invalid storage path for profile picture."
+          : reason === "mfa_phone_not_verified"
+            ? "Verify a mobile number first before enabling SMS MFA."
           : "Unable to update profile.";
 
     return NextResponse.json({ message }, { status: 400 });

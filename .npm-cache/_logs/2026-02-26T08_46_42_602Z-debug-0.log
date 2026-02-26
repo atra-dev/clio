@@ -1,0 +1,75 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.8.2
+2 info using node@v20.20.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\tanov\OneDrive\Desktop\clio\.npmrc
+5 silly config load:file:C:\Users\tanov\.npmrc
+6 silly config load:file:C:\Users\tanov\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm install eslint-config-next@16.1.6
+8 verbose argv "install" "--save-dev" "eslint-config-next@16.1.6"
+9 verbose logfile logs-max:10 dir:C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_logs\2026-02-26T08_46_42_602Z-
+10 verbose logfile C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_logs\2026-02-26T08_46_42_602Z-debug-0.log
+11 silly packumentCache heap:2197815296 maxSize:549453824 maxEntrySize:274726912
+12 silly logfile done cleaning log files
+13 silly idealTree buildDeps
+14 silly fetch manifest eslint-config-next@16.1.6
+15 silly packumentCache full:https://registry.npmjs.org/eslint-config-next cache-miss
+16 http fetch GET 200 https://registry.npmjs.org/npm 585ms
+17 http fetch GET 200 https://registry.npmjs.org/eslint-config-next 380ms (cache miss)
+18 silly placeDep ROOT eslint-config-next@ REPLACE for: clio@0.1.0 want: 16.1.6
+19 verbose type system
+20 verbose stack FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/eslint-config-next: EPERM: operation not permitted, unlink 'C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_cacache\tmp\7201c155'
+20 verbose stack     at C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+20 verbose stack     at async Response.json (C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+20 verbose stack     at async RegistryFetcher.packument (C:\Program Files\nodejs\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+20 verbose stack     at async RegistryFetcher.manifest (C:\Program Files\nodejs\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+20 verbose stack     at async #fetchManifest (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1199:20)
+20 verbose stack     at async #nodeFromEdge (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1037:19)
+20 verbose stack     at async #buildDepStep (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:901:11)
+20 verbose stack     at async Arborist.buildIdealTree (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:181:7)
+20 verbose stack     at async Promise.all (index 1)
+20 verbose stack     at async Arborist.reify (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\reify.js:131:5)
+21 error code EPERM
+22 error syscall unlink
+23 error path C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_cacache\tmp\7201c155
+24 error errno EPERM
+25 error FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/eslint-config-next: EPERM: operation not permitted, unlink 'C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_cacache\tmp\7201c155'
+25 error     at C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+25 error     at async Response.json (C:\Program Files\nodejs\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+25 error     at async RegistryFetcher.packument (C:\Program Files\nodejs\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+25 error     at async RegistryFetcher.manifest (C:\Program Files\nodejs\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+25 error     at async #fetchManifest (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1199:20)
+25 error     at async #nodeFromEdge (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1037:19)
+25 error     at async #buildDepStep (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:901:11)
+25 error     at async Arborist.buildIdealTree (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:181:7)
+25 error     at async Promise.all (index 1)
+25 error     at async Arborist.reify (C:\Program Files\nodejs\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\reify.js:131:5) {
+25 error   code: 'EPERM',
+25 error   errno: 'EPERM',
+25 error   syscall: 'unlink',
+25 error   path: 'C:\\Users\\tanov\\OneDrive\\Desktop\\clio\\.npm-cache\\_cacache\\tmp\\7201c155',
+25 error   type: 'system',
+25 error   requiredBy: '.'
+25 error }
+26 error
+26 error The operation was rejected by your operating system.
+26 error It's possible that the file was already in use (by a text editor or antivirus),
+26 error or that you lack permissions to access it.
+26 error
+26 error If you believe this might be a permissions issue, please double-check the
+26 error permissions of the file and its containing directories, or try running
+26 error the command again as root/Administrator.
+27 silly unfinished npm timer reify 1772095603102
+28 silly unfinished npm timer reify:loadTrees 1772095603153
+29 verbose cwd C:\Users\tanov\OneDrive\Desktop\clio
+30 verbose os Windows_NT 10.0.26200
+31 verbose node v20.20.0
+32 verbose npm  v10.8.2
+33 notice
+33 notice New major version of npm available! 10.8.2 -> 11.11.0
+33 notice Changelog: https://github.com/npm/cli/releases/tag/v11.11.0
+33 notice To update run: npm install -g npm@11.11.0
+33 notice  { force: true, [Symbol(proc-log.meta)]: true }
+34 verbose exit 1
+35 verbose code 1
+36 error A complete log of this run can be found in: C:\Users\tanov\OneDrive\Desktop\clio\.npm-cache\_logs\2026-02-26T08_46_42_602Z-debug-0.log

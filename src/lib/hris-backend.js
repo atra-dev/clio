@@ -1826,14 +1826,16 @@ function shouldApplyLifecycleArchivePolicy(record) {
 function shouldApplyOnboardingActivation(record) {
   const category = asString(record?.category).toLowerCase();
   const status = asString(record?.status).toLowerCase();
+  const hasEmployeeEmail = Boolean(normalizeEmail(record?.employeeEmail));
   const isOnboarding = category.includes("onboarding");
   const isFinalized = status.includes("approved") || status.includes("completed");
-  return isOnboarding && isFinalized;
+  return hasEmployeeEmail && isOnboarding && isFinalized;
 }
 
 function shouldTriggerOnboardingInvite(record) {
   const category = asString(record?.category).toLowerCase();
-  return category.includes("onboarding");
+  const hasEmployeeEmail = Boolean(normalizeEmail(record?.employeeEmail));
+  return hasEmployeeEmail && category.includes("onboarding");
 }
 
 function resolveLifecycleInviteRole(record) {
@@ -1849,7 +1851,7 @@ function resolveLifecycleInviteRole(record) {
   return LIFECYCLE_ROLE_ALIAS.get(normalized) || normalized || "EMPLOYEE_L1";
 }
 
-async function triggerOnboardingInvite(record, actorEmail, actorRole) {
+async function triggerOnboardingInvite(record, actorEmail, actorRole, { requestOrigin = "" } = {}) {
   const normalizedEmail = normalizeEmail(record?.employeeEmail);
   if (!normalizedEmail) {
     throw new Error("invalid_employee_email");
@@ -1885,6 +1887,7 @@ async function triggerOnboardingInvite(record, actorEmail, actorRole) {
       invitedBy: actorEmail,
       expiresAt: result.invite.expiresAt,
       inviteToken: result.invite.token,
+      requestOrigin,
     });
   } catch (deliveryError) {
     const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";
@@ -1908,7 +1911,9 @@ async function triggerOnboardingInvite(record, actorEmail, actorRole) {
     message:
       delivery?.status === "failed"
         ? "Onboarding invite was created. Email delivery failed in test mode."
-        : "Onboarding invite sent. User can verify email and activate access.",
+        : delivery?.provider === "firebase"
+          ? "Onboarding invite sent via Firebase email-link template. User must verify email to open the CLIO account, then complete SMS OTP."
+          : "Onboarding invite sent. User must verify email to open the CLIO account, then complete SMS OTP.",
     inviteId: result.invite.id,
     inviteStatus: result.invite.status,
     role: result.user.role,
@@ -2320,11 +2325,13 @@ export async function getLifecycleRecordBackend(recordId) {
   return await getCollectionRecordById(getCollectionName("lifecycle"), recordId);
 }
 
-export async function createLifecycleRecordBackend(payload, actorEmail, actorRole = "") {
+export async function createLifecycleRecordBackend(payload, actorEmail, actorRole = "", { requestOrigin = "" } = {}) {
   const normalized = normalizeLifecyclePayload(payload, actorEmail, actorRole);
   const effects = [];
   if (shouldTriggerOnboardingInvite(normalized)) {
-    const inviteEffect = await triggerOnboardingInvite(normalized, actorEmail, actorRole);
+    const inviteEffect = await triggerOnboardingInvite(normalized, actorEmail, actorRole, {
+      requestOrigin,
+    });
     if (inviteEffect) {
       effects.push(inviteEffect);
     }

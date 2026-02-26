@@ -19,6 +19,7 @@
 /.next-clio/
 /.next-clio-run-*/
 /out/
+/next-dev-cache/
 
 # production
 /build

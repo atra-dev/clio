@@ -1051,32 +1051,8 @@ export default function EmploymentLifecycleModule({ session }) {
     }
 
     if (isOnboardingCategory(form.category)) {
-      if (!String(form.onboardingEmployeeId || "").trim()) {
-        setErrorMessage("Employee number is required for onboarding.");
-        return;
-      }
-      if (!String(form.onboardingLastName || "").trim()) {
-        setErrorMessage("Last name is required for onboarding.");
-        return;
-      }
-      if (!String(form.onboardingFirstName || "").trim()) {
-        setErrorMessage("First name is required for onboarding.");
-        return;
-      }
       if (!String(form.employeeEmail || "").trim()) {
         setErrorMessage("Google account email is required for onboarding.");
-        return;
-      }
-      if (!String(form.onboardingRole || "").trim()) {
-        setErrorMessage("Assigned role is required for onboarding.");
-        return;
-      }
-      if (!String(form.onboardingDepartment || "").trim()) {
-        setErrorMessage("Assigned department is required for onboarding.");
-        return;
-      }
-      if (!String(form.onboardingStartDate || "").trim()) {
-        setErrorMessage("Employment start date is required for onboarding.");
         return;
       }
       const oversizedFile = onboardingDocuments.find((file) => file.size > 10 * 1024 * 1024);
@@ -1126,8 +1102,9 @@ export default function EmploymentLifecycleModule({ session }) {
     try {
       const onboardingMode = isOnboardingCategory(form.category);
       const onboardingEmployeeName = onboardingMode ? composeOnboardingEmployeeName(form) : form.employee;
+      const onboardingEmail = String(form.employeeEmail || "").trim();
       const status = onboardingMode
-        ? form.activateEmploymentNow
+        ? form.activateEmploymentNow && onboardingEmail
           ? "Approved"
           : "In Progress"
         : form.status;
@@ -1190,8 +1167,13 @@ export default function EmploymentLifecycleModule({ session }) {
         effectSummary
           ? `${documentSummary}Lifecycle workflow created. ${effectSummary}`
           : `${documentSummary}Lifecycle workflow created.`;
-      setSuccessMessage(successText);
-      toast.success(successText);
+      const onboardingDraftNote =
+        onboardingMode && form.activateEmploymentNow && !onboardingEmail
+          ? " Saved as In Progress because account email is blank."
+          : "";
+      const finalSuccessText = `${successText}${onboardingDraftNote}`;
+      setSuccessMessage(finalSuccessText);
+      toast.success(finalSuccessText);
       await loadRecords();
     } catch (error) {
       const message = error.message || "Unable to create lifecycle workflow.";
@@ -1839,7 +1821,6 @@ export default function EmploymentLifecycleModule({ session }) {
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Employee Number</label>
                     <input
-                      required
                       value={form.onboardingEmployeeId}
                       onChange={handleFormField("onboardingEmployeeId")}
                       placeholder="Employee number"
@@ -1849,7 +1830,6 @@ export default function EmploymentLifecycleModule({ session }) {
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Last Name</label>
                     <input
-                      required
                       value={form.onboardingLastName}
                       onChange={handleFormField("onboardingLastName")}
                       placeholder="Last name"
@@ -1859,7 +1839,6 @@ export default function EmploymentLifecycleModule({ session }) {
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">First Name</label>
                     <input
-                      required
                       value={form.onboardingFirstName}
                       onChange={handleFormField("onboardingFirstName")}
                       placeholder="First name"
@@ -1900,7 +1879,6 @@ export default function EmploymentLifecycleModule({ session }) {
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned Role</label>
                     <select
-                      required
                       value={form.onboardingRole}
                       onChange={handleFormField("onboardingRole")}
                       className="h-9 w-full rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
@@ -1916,7 +1894,6 @@ export default function EmploymentLifecycleModule({ session }) {
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned Department</label>
                     <select
-                      required
                       value={form.onboardingDepartment}
                       onChange={handleFormField("onboardingDepartment")}
                       className="h-9 w-full rounded-lg border border-slate-300 px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
@@ -1952,7 +1929,6 @@ export default function EmploymentLifecycleModule({ session }) {
                     </label>
                     <input
                       type="date"
-                      required
                       value={form.onboardingStartDate}
                       onChange={handleFormField("onboardingStartDate")}
                       className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-sky-400 focus:outline-none"
@@ -2198,13 +2174,7 @@ export default function EmploymentLifecycleModule({ session }) {
                     isLoadingEmployeeOptions ||
                     isLoadingReferenceCatalog ||
                     (isOnboardingCategory(form.category)
-                      ? !String(form.onboardingEmployeeId || "").trim() ||
-                        !String(form.onboardingLastName || "").trim() ||
-                        !String(form.onboardingFirstName || "").trim() ||
-                        !String(form.employeeEmail || "").trim() ||
-                        !String(form.onboardingRole || "").trim() ||
-                        !String(form.onboardingDepartment || "").trim() ||
-                        !String(form.onboardingStartDate || "").trim()
+                      ? !String(form.employeeEmail || "").trim()
                       : employeeOptions.length === 0 || !form.employeeRecordId)
                   }
                   className="inline-flex h-9 items-center justify-center rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"

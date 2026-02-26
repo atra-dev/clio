@@ -285,6 +285,53 @@ export async function markInAppNotificationRead(recordId, recipientEmail) {
   return patched;
 }
 
+export async function resolveDeviceVerificationNotification(recordId, recipientEmail, decision) {
+  const db = getFirestoreStore();
+  if (!db) {
+    return null;
+  }
+
+  const normalizedId = asString(recordId);
+  if (!normalizedId) {
+    throw new Error("invalid_record_id");
+  }
+
+  const normalizedRecipient = normalizeEmail(recipientEmail);
+  const normalizedDecision = asString(decision).toLowerCase();
+  if (normalizedDecision !== "confirm" && normalizedDecision !== "deny") {
+    throw new Error("invalid_device_verification_decision");
+  }
+
+  const ref = doc(db, getNotificationsCollectionName(), normalizedId);
+  const snapshot = await getDoc(ref);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  const current = toNotificationRecord(snapshot);
+  if (!isVisibleNotification(current, normalizedRecipient)) {
+    throw new Error("forbidden_notification_access");
+  }
+
+  const metadata = asObject(current?.metadata);
+  const now = nowIso();
+  const patched = {
+    ...current,
+    status: "read",
+    readAt: asString(current?.readAt, now),
+    updatedAt: now,
+    metadata: {
+      ...metadata,
+      deviceVerificationDecision: normalizedDecision,
+      deviceVerificationResolvedAt: now,
+      deviceVerificationResponder: normalizedRecipient,
+    },
+  };
+
+  await updateDoc(ref, patched);
+  return patched;
+}
+
 export async function markAllInAppNotificationsRead({ recipientEmail, limit = 120 } = {}) {
   const normalizedRecipient = normalizeEmail(recipientEmail);
   if (!normalizedRecipient) {

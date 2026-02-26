@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import BrandMark from "@/components/ui/BrandMark";
 
 function formatDate(value) {
   if (!value) {
@@ -30,19 +29,16 @@ function InviteVerificationContent() {
   const [invite, setInvite] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasAutoAttempted, setHasAutoAttempted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isVerified, setIsVerified] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [otpExpiresAt, setOtpExpiresAt] = useState("");
-  const [resendAvailableAt, setResendAvailableAt] = useState("");
-  const [devOtpCode, setDevOtpCode] = useState("");
 
   const loadInvite = useCallback(async () => {
     if (!token) {
       setErrorMessage("Invite link is invalid or unavailable.");
       setInvite(null);
+      setIsVerified(false);
       setIsLoading(false);
       return;
     }
@@ -59,12 +55,16 @@ function InviteVerificationContent() {
       if (!response.ok) {
         setInvite(payload?.invite || null);
         setErrorMessage(payload?.message || "Unable to validate invite link.");
-        setIsVerified(payload?.alreadyVerified === true);
+        const alreadyVerified = payload?.alreadyVerified === true || payload?.invite?.status === "verified";
+        setIsVerified(alreadyVerified);
+        if (alreadyVerified) {
+          setSuccessMessage(payload?.message || "Invite verification already completed. You can now sign in.");
+        }
         return;
       }
 
       setInvite(payload?.invite || null);
-      const alreadyVerified = payload?.alreadyVerified === true;
+      const alreadyVerified = payload?.alreadyVerified === true || payload?.invite?.status === "verified";
       setIsVerified(alreadyVerified);
       if (alreadyVerified) {
         setSuccessMessage(payload?.message || "Invite verification already completed. You can now sign in.");
@@ -81,14 +81,15 @@ function InviteVerificationContent() {
     loadInvite();
   }, [loadInvite]);
 
-  const handleRequestOtp = async () => {
+  const handleVerifyEmail = useCallback(async () => {
     if (!token || isSubmitting || isVerified) {
       return;
     }
+
     setIsSubmitting(true);
     setErrorMessage("");
     setSuccessMessage("");
-    setDevOtpCode("");
+
     try {
       const response = await fetch("/api/invite/verify", {
         method: "POST",
@@ -97,181 +98,118 @@ function InviteVerificationContent() {
         },
         body: JSON.stringify({
           token,
-          action: "start_sms",
-          phoneNumber,
+          action: "verify_email",
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setErrorMessage(payload?.message || "Unable to send OTP.");
+        setErrorMessage(payload?.message || "Unable to verify invite email.");
         return;
       }
 
-      setInvite(payload?.invite || invite);
-      setOtpExpiresAt(String(payload?.otpExpiresAt || ""));
-      setResendAvailableAt(String(payload?.resendAvailableAt || ""));
-      setDevOtpCode(String(payload?.devOtpCode || ""));
-      if (payload?.alreadyVerified) {
-        setIsVerified(true);
-      }
-      setSuccessMessage(payload?.message || "OTP sent. Enter the code to complete verification.");
-    } catch {
-      setErrorMessage("Unable to send OTP.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    if (!token || isSubmitting || isVerified) {
-      return;
-    }
-    setIsSubmitting(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const response = await fetch("/api/invite/verify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          token,
-          action: "complete_sms",
-          otpCode,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setErrorMessage(payload?.message || "Unable to verify OTP.");
-        return;
-      }
       setInvite(payload?.invite || invite);
       setIsVerified(true);
-      setSuccessMessage(payload?.message || "SMS verification completed. You can now sign in.");
+      setSuccessMessage(payload?.message || "Email verification completed. You can now sign in with Google.");
     } catch {
-      setErrorMessage("Unable to verify OTP.");
+      setErrorMessage("Unable to verify invite email.");
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [invite, isSubmitting, isVerified, token]);
+
+  useEffect(() => {
+    if (isLoading || isVerified || !invite || !token || hasAutoAttempted) {
+      return;
+    }
+
+    const status = String(invite?.status || "").toLowerCase();
+    if (status === "expired" || status === "revoked") {
+      return;
+    }
+
+    setHasAutoAttempted(true);
+    handleVerifyEmail();
+  }, [handleVerifyEmail, hasAutoAttempted, invite, isLoading, isVerified, token]);
 
   const canSubmit = !isLoading && !isSubmitting && !isVerified && Boolean(token);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
-      <section className="w-full rounded-3xl border border-[#d7e5f5] bg-white p-8 shadow-[0_20px_45px_-32px_rgba(15,23,42,0.55)] sm:p-10">
-        <BrandMark compact />
+    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#dbeafe_0%,#f8fafc_45%,#fff7ed_100%)] px-4 py-10 sm:px-6 lg:px-8">
+      <div className="pointer-events-none absolute inset-0 bg-slate-950/10" />
+      <div className="relative mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-2xl items-center justify-center">
+        <section className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_32px_90px_-42px_rgba(15,23,42,0.55)]">
+          <div className="border-b border-slate-100 bg-[linear-gradient(120deg,#f8fafc_0%,#eff6ff_100%)] px-6 py-5 sm:px-7">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#0f6bcf]">CLIO HRIS Access</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
+              Verify Invite Email
+            </h1>
+            <p className="mt-1.5 text-sm text-slate-600">
+              Confirm this invitation to open your Clio account and continue to secure sign-in.
+            </p>
+          </div>
 
-        <div className="mt-6 space-y-2">
-          <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#0f6bcf]">Invitation Verification</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Verify your CLIO account (SMS MFA)</h1>
-          <p className="text-sm text-slate-600">
-            Enter your phone number and complete OTP verification. After this, Google sign-in will be enabled.
-          </p>
-        </div>
+          <div className="space-y-4 px-6 py-6 sm:px-7">
+            {errorMessage ? (
+              <p className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">
+                {errorMessage}
+              </p>
+            ) : null}
 
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-          <dl className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
-            <div>
-              <dt className="text-xs uppercase tracking-[0.08em] text-slate-500">Invite Status</dt>
-              <dd className="mt-1 font-medium text-slate-900">{invite?.status || (isLoading ? "Checking..." : "-")}</dd>
+            {successMessage ? (
+              <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700">
+                {successMessage}
+              </p>
+            ) : null}
+
+            <div className={`rounded-2xl border bg-white p-4 sm:p-5 ${isVerified ? "border-emerald-200" : "border-slate-200"}`}>
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  This invite link verifies your email and activates your onboarding account.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleVerifyEmail}
+                  disabled={!canSubmit}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSubmitting ? "Verifying..." : isVerified ? "Invite Verified" : "Verify Invite and Continue"}
+                </button>
+              </div>
             </div>
-            <div>
-              <dt className="text-xs uppercase tracking-[0.08em] text-slate-500">Role</dt>
-              <dd className="mt-1 font-medium text-slate-900">{invite?.role || "-"}</dd>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs text-slate-600">
+              <p>
+                Invite Status: <span className="font-semibold text-slate-700">{invite?.status || (isLoading ? "Checking..." : "-")}</span>
+              </p>
+              <p>
+                Role: <span className="font-semibold text-slate-700">{invite?.role || "-"}</span>
+              </p>
+              <p>
+                Expires: <span className="font-semibold text-slate-700">{formatDate(invite?.expiresAt)}</span>
+              </p>
             </div>
-            <div>
-              <dt className="text-xs uppercase tracking-[0.08em] text-slate-500">Invited</dt>
-              <dd className="mt-1 font-medium text-slate-900">{formatDate(invite?.invitedAt)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-[0.08em] text-slate-500">Expires</dt>
-              <dd className="mt-1 font-medium text-slate-900">{formatDate(invite?.expiresAt)}</dd>
-            </div>
-          </dl>
-        </div>
 
-        {errorMessage ? (
-          <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{errorMessage}</p>
-        ) : null}
-
-        {successMessage ? (
-          <p className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {successMessage}
-          </p>
-        ) : null}
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <label className="w-full space-y-1">
-            <span className="text-xs uppercase tracking-[0.08em] text-slate-500">Mobile Number</span>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={(event) => setPhoneNumber(event.target.value)}
-              placeholder="+639171234567"
-              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-              disabled={isSubmitting || isVerified}
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={handleRequestOtp}
-            disabled={!canSubmit || !phoneNumber}
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0f6bcf] px-5 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? "Processing..." : "Send OTP"}
-          </button>
-
-          <label className="w-full space-y-1">
-            <span className="text-xs uppercase tracking-[0.08em] text-slate-500">OTP Code</span>
-            <input
-              type="text"
-              value={otpCode}
-              onChange={(event) => setOtpCode(event.target.value)}
-              placeholder="6-digit code"
-              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-              disabled={isSubmitting || isVerified}
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={handleVerifyOtp}
-            disabled={!canSubmit || !otpCode}
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0f6bcf] px-5 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? "Verifying..." : isVerified ? "SMS Verified" : "Verify OTP"}
-          </button>
-
-          <Link
-            href="/login"
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Go to Login
-          </Link>
-        </div>
-
-        <div className="mt-4 text-xs text-slate-500">
-          {otpExpiresAt ? <p>OTP Expires: {formatDate(otpExpiresAt)}</p> : null}
-          {resendAvailableAt ? <p>Resend Available: {formatDate(resendAvailableAt)}</p> : null}
-          {devOtpCode ? <p className="text-amber-700">Dev OTP: {devOtpCode}</p> : null}
-        </div>
-      </section>
+            <Link
+              href="/login"
+              className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Go to Login
+            </Link>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
 
 function InviteVerificationFallback() {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
-      <section className="w-full rounded-3xl border border-[#d7e5f5] bg-white p-8 shadow-[0_20px_45px_-32px_rgba(15,23,42,0.55)] sm:p-10">
-        <BrandMark compact />
-        <div className="mt-6 space-y-3">
-          <div className="h-4 w-44 rounded-md bg-slate-200" />
-          <div className="h-8 w-80 rounded-md bg-slate-200" />
-          <div className="h-4 w-full max-w-[32rem] rounded-md bg-slate-200" />
+    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_0%_0%,#dbeafe_0%,#f8fafc_38%,#fff7ed_100%)] px-4 py-10 sm:px-6 lg:px-8">
+      <section className="mx-auto w-full max-w-2xl rounded-3xl border border-[#d7e5f5] bg-white p-8 shadow-[0_32px_70px_-48px_rgba(15,23,42,0.6)] sm:p-10">
+        <div className="space-y-3">
+          <div className="h-4 w-52 rounded-md bg-slate-200" />
+          <div className="h-8 w-full max-w-lg rounded-md bg-slate-200" />
+          <div className="h-4 w-full max-w-xl rounded-md bg-slate-200" />
         </div>
       </section>
     </main>

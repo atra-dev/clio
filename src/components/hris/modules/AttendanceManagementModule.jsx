@@ -393,7 +393,7 @@ export default function AttendanceManagementModule({ session }) {
   }, [loadData]);
 
   useEffect(() => {
-    if (employeeRole || typeof window === "undefined") {
+    if (typeof window === "undefined") {
       return;
     }
 
@@ -435,7 +435,7 @@ export default function AttendanceManagementModule({ session }) {
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("clio:subtab-anchor", onSubTabAnchor);
     };
-  }, [employeeRole]);
+  }, []);
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentShift = useMemo(() => resolveShiftForMinutes(currentMinutes), [currentMinutes]);
@@ -677,7 +677,9 @@ export default function AttendanceManagementModule({ session }) {
           </p>
         ) : null}
 
-        <div className="relative">
+        {section === "monitoring-dashboard" ? (
+          <>
+            <div className="relative">
           <div className="rounded-2xl border border-sky-200 bg-white px-4 py-3 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.55)]">
             <div className="flex items-center justify-between gap-3">
               <p className="text-base font-semibold text-slate-900">Clock-in Information</p>
@@ -764,9 +766,9 @@ export default function AttendanceManagementModule({ session }) {
               </div>
             </div>
           ) : null}
-        </div>
+            </div>
 
-        <SurfaceCard title="Your Profile" subtitle="Clock-in and clock-out controls">
+            <SurfaceCard title="Your Profile" subtitle="Clock-in and clock-out controls">
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-5">
             <div className="flex flex-col items-center gap-3 text-center">
               <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-slate-900 text-xl font-semibold text-white">
@@ -805,9 +807,12 @@ export default function AttendanceManagementModule({ session }) {
               ) : null}
             </div>
           </div>
-        </SurfaceCard>
+            </SurfaceCard>
+          </>
+        ) : null}
 
-        <SurfaceCard title="Recent Attendance" subtitle="Latest attendance logs from your account">
+        {section === "records" ? (
+          <SurfaceCard title="Attendance Records" subtitle="Latest attendance logs from your account">
           {isLoading ? (
             <p className="text-sm text-slate-600">Loading attendance data...</p>
           ) : recentAttendanceRows.length === 0 ? (
@@ -845,7 +850,61 @@ export default function AttendanceManagementModule({ session }) {
               </table>
             </div>
           )}
-        </SurfaceCard>
+          </SurfaceCard>
+        ) : null}
+
+        {section === "audit-logs" ? (
+          <SurfaceCard title="Attendance Audit Logs" subtitle="Modification trail for your attendance records">
+            {isLoading ? (
+              <p className="text-sm text-slate-600">Loading attendance data...</p>
+            ) : attendanceRows.length === 0 ? (
+              <EmptyState title="No attendance audit logs yet" subtitle="Modification trails will appear after updates." />
+            ) : (
+              <div className="space-y-2">
+                {attendanceRows.map((row) => (
+                  <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <p className="text-sm font-semibold text-slate-900">
+                      {row.employee || "-"} | {row.date || "-"}
+                    </p>
+                    <div className="mt-2 space-y-1">
+                      {(row.modificationTrail || []).length === 0 ? (
+                        <p className="text-xs text-slate-500">No trail entries yet.</p>
+                      ) : (
+                        row.modificationTrail.map((event, index) => {
+                          const actorName = getActorDisplayName(event.byName, event.byEmail || event.by, "-");
+                          const actorEmail = getActorEmail(event.byEmail || event.by);
+                          return (
+                            <div
+                              key={`${row.id}-${index}`}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5"
+                            >
+                              <div className="flex min-w-[200px] items-center gap-2">
+                                <Image
+                                  src={getActorAvatar(event.byAvatar)}
+                                  alt={`${actorName} profile`}
+                                  width={24}
+                                  height={24}
+                                  className="h-6 w-6 rounded-full border border-slate-200 bg-white object-cover"
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-xs font-medium text-slate-800">{actorName}</p>
+                                  {actorEmail ? <p className="truncate text-[11px] text-slate-500">{actorEmail}</p> : null}
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-700">
+                                [{formatDate(event.at)}] {event.action || "update"} | status: {event.status || "-"}
+                              </p>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SurfaceCard>
+        ) : null}
       </div>
     );
   }

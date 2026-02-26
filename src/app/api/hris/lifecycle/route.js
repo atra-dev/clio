@@ -150,7 +150,9 @@ export async function POST(request) {
     delete nextPayload.workflowAction;
     delete nextPayload.evidence;
 
-    const result = await createLifecycleRecordBackend(nextPayload, session.email, session.role);
+    const result = await createLifecycleRecordBackend(nextPayload, session.email, session.role, {
+      requestOrigin: request.nextUrl?.origin || "",
+    });
     const created = result?.record || result;
     const effects = Array.isArray(result?.effects) ? result.effects : [];
     const accessedDocuments = summarizeLifecycleEvidence(created);

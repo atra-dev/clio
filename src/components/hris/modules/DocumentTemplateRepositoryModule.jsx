@@ -15,6 +15,7 @@ const SECTION_TABS = [
   { id: "versions", label: "Version History" },
   { id: "upload-audit", label: "Upload Audit Logs" },
 ];
+const EMPLOYEE_SECTION_TABS = [{ id: "employee-docs", label: "Documents" }];
 
 const initialTemplateForm = {
   templateName: "",
@@ -80,7 +81,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
   const employeeRole = isEmployeeRole(actorRole);
   const canManageTemplates = !employeeRole;
 
-  const [section, setSection] = useState("library");
+  const [section, setSection] = useState(employeeRole ? "employee-docs" : "library");
   const [templates, setTemplates] = useState([]);
   const [employeeRecords, setEmployeeRecords] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -89,6 +90,17 @@ export default function DocumentTemplateRepositoryModule({ session }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const visibleSectionTabs = useMemo(
+    () => (employeeRole ? EMPLOYEE_SECTION_TABS : SECTION_TABS),
+    [employeeRole],
+  );
+
+  useEffect(() => {
+    if (visibleSectionTabs.some((tab) => tab.id === section)) {
+      return;
+    }
+    setSection(visibleSectionTabs[0]?.id || "employee-docs");
+  }, [section, visibleSectionTabs]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -236,7 +248,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
 
   return (
     <div className="space-y-4">
-      <ModuleTabs tabs={SECTION_TABS} value={section} onChange={setSection} />
+      <ModuleTabs tabs={visibleSectionTabs} value={section} onChange={setSection} />
 
       {errorMessage ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMessage}</p>
@@ -307,7 +319,9 @@ export default function DocumentTemplateRepositoryModule({ session }) {
       <SurfaceCard
         title={
           section === "employee-docs"
-            ? "Employee Documents"
+            ? employeeRole
+              ? "Documents"
+              : "Employee Documents"
             : section === "contracts"
               ? "Contracts & Agreements"
               : section === "versions"
@@ -316,40 +330,70 @@ export default function DocumentTemplateRepositoryModule({ session }) {
                   ? "Upload Audit Logs"
                   : "Templates Library"
         }
-        subtitle="Permission-based template and document access"
+        subtitle={
+          employeeRole
+            ? "Attached files from your employee record."
+            : "Permission-based template and document access"
+        }
       >
         {isLoading ? (
           <p className="text-sm text-slate-600">Loading template repository...</p>
         ) : section === "employee-docs" ? (
           employeeDocuments.length === 0 ? (
-            <EmptyState title="No employee documents yet" subtitle="Uploaded employee documents will appear here." />
+            <EmptyState
+              title={employeeRole ? "No files yet" : "No employee documents yet"}
+              subtitle={
+                employeeRole
+                  ? "Files attached to your profile will appear here."
+                  : "Uploaded employee documents will appear here."
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                    <th className="px-2 py-3 font-medium">Employee</th>
+                    {!employeeRole ? <th className="px-2 py-3 font-medium">Employee</th> : null}
                     <th className="px-2 py-3 font-medium">Document</th>
                     <th className="px-2 py-3 font-medium">Type</th>
                     <th className="px-2 py-3 font-medium">Uploaded</th>
-                    <th className="px-2 py-3 font-medium">Uploaded By</th>
+                    {!employeeRole ? <th className="px-2 py-3 font-medium">Uploaded By</th> : null}
+                    <th className="px-2 py-3 font-medium text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {employeeDocuments.map((row) => (
                     <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                      <td className="px-2 py-3">
-                        <p className="font-medium text-slate-900">{row.employee}</p>
-                        <p className="text-xs text-slate-500">{row.employeeEmail}</p>
-                      </td>
+                      {!employeeRole ? (
+                        <td className="px-2 py-3">
+                          <p className="font-medium text-slate-900">{row.employee}</p>
+                          <p className="text-xs text-slate-500">{row.employeeEmail}</p>
+                        </td>
+                      ) : null}
                       <td className="px-2 py-3">{row.name}</td>
                       <td className="px-2 py-3">{row.type}</td>
                       <td className="px-2 py-3">{formatDate(row.uploadedAt)}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600">
-                        <p className="font-medium text-slate-800">{formatActorName(row.uploadedByName, row.uploadedBy)}</p>
-                        {formatActorEmail(row.uploadedByEmail || row.uploadedBy) ? (
-                          <p className="truncate text-[11px] text-slate-500">{formatActorEmail(row.uploadedByEmail || row.uploadedBy)}</p>
-                        ) : null}
+                      {!employeeRole ? (
+                        <td className="px-2 py-3 text-xs text-slate-600">
+                          <p className="font-medium text-slate-800">{formatActorName(row.uploadedByName, row.uploadedBy)}</p>
+                          {formatActorEmail(row.uploadedByEmail || row.uploadedBy) ? (
+                            <p className="truncate text-[11px] text-slate-500">{formatActorEmail(row.uploadedByEmail || row.uploadedBy)}</p>
+                          ) : null}
+                        </td>
+                      ) : null}
+                      <td className="px-2 py-3 text-right">
+                        {String(row.ref || "").trim() ? (
+                          <a
+                            href={row.ref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-7 items-center rounded-md border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-400">No file link</span>
+                        )}
                       </td>
                     </tr>
                   ))}

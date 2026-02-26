@@ -17,6 +17,17 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function getStatusTone(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "failed" || normalized === "rejected") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  if (normalized === "pending") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+}
+
 export default function SettingsRecentActivityPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -57,7 +68,7 @@ export default function SettingsRecentActivityPanel() {
   return (
     <SurfaceCard
       title="Recent Account Activity"
-      subtitle="Your latest account events and access history"
+      subtitle="Latest security and session events for this account"
     >
       {isLoading ? (
         <div className="flex justify-center py-4">
@@ -70,17 +81,27 @@ export default function SettingsRecentActivityPanel() {
       ) : recentActivity.length === 0 ? (
         <p className="text-xs text-slate-500">No recent account activity.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-2.5">
           {recentActivity.map((item) => (
             <li
               key={item?.id || `${item?.activityName}-${item?.loggedAt}`}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+              className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5"
             >
-              <p className="text-xs font-semibold text-slate-900">{String(item?.activityName || "Activity")}</p>
-              <p className="mt-1 text-[11px] text-slate-600">
-                {String(item?.module || "System")} | {String(item?.status || "Completed")} |{" "}
-                {item?.relativeTime || formatDateTime(item?.loggedAt)}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-slate-900">{String(item?.activityName || "Activity")}</p>
+                  <p className="text-[11px] text-slate-600">
+                    {String(item?.module || "System")} | {item?.relativeTime || formatDateTime(item?.loggedAt)}
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${getStatusTone(
+                    item?.status,
+                  )}`}
+                >
+                  {String(item?.status || "Completed")}
+                </span>
+              </div>
             </li>
           ))}
         </ul>

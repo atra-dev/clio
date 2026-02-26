@@ -12,6 +12,7 @@ import {
 import {
   canActorEditModule,
   getSelfRestrictedOwnerEmail,
+  isEmployeeRole,
   logApiAudit,
   mapBackendError,
   paginateRows,
@@ -85,7 +86,10 @@ export async function GET(request) {
       ownerEmail: ownerEmail || undefined,
       includeDocuments,
     });
-    const filtered = rows.filter((record) => {
+    const scopedRows = isEmployeeRole(session.role)
+      ? rows.filter((record) => normalizeEmail(record.email) === normalizeEmail(session.email))
+      : rows;
+    const filtered = scopedRows.filter((record) => {
       const byStatus = statusFilter
         ? String(record.status || "").trim().toLowerCase().includes(statusFilter)
         : true;
@@ -122,6 +126,7 @@ export async function GET(request) {
       metadata: {
         resultCount: records.length,
         totalMatched: filtered.length,
+        scopedResultCount: scopedRows.length,
         ownerFilterApplied: Boolean(ownerEmail),
         hasSearchQuery: Boolean(queryText),
         hasStatusFilter: Boolean(statusFilter),

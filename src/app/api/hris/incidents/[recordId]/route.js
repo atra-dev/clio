@@ -15,6 +15,7 @@ import { validateIncidentEvidenceDocumentsStrict } from "@/lib/incident-evidence
 import { drainSecurityDetectionRetryQueue } from "@/lib/security-detection";
 import { dispatchSecurityIncidentAlerts } from "@/lib/security-alert-delivery";
 import {
+  enrichIncidentRecordForApi,
   logApiAudit,
   mapBackendError,
   parseJsonBody,
@@ -232,7 +233,7 @@ export async function GET(request, { params }) {
       },
     });
 
-    return NextResponse.json({ record });
+    return NextResponse.json({ record: enrichIncidentRecordForApi(record) });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     const mapped = mapBackendError(reason, "Unable to load incident record.");
@@ -402,7 +403,7 @@ export async function PATCH(request, { params }) {
       },
     });
 
-    return NextResponse.json({ ok: true, record: updated });
+    return NextResponse.json({ ok: true, record: enrichIncidentRecordForApi(updated) });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     const mapped = mapBackendError(reason, "Unable to update incident record.");

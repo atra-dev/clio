@@ -82,6 +82,7 @@ export async function POST(request) {
         invitedBy: session.email,
         expiresAt: result.invite.expiresAt,
         inviteToken: result.invite.token,
+        requestOrigin: request.nextUrl?.origin || "",
       });
     } catch (deliveryError) {
       const rawReason = deliveryError instanceof Error ? deliveryError.message : "email_delivery_failed";
@@ -111,13 +112,15 @@ export async function POST(request) {
 
       const failureMessage =
         deliveryReason === "email_provider_not_configured"
-          ? "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and NEXT_PUBLIC_FIREBASE_API_KEY."
+          ? "Email provider is not configured. Set CLIO_EMAIL_PROVIDER=firebase and configure Firebase Authentication email template/SMTP settings."
           : deliveryReason === "firebase_api_key_not_configured"
             ? "Firebase API key is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY."
             : deliveryReason === "firebase_email_provider_not_enabled"
               ? "Firebase email-link provider is not enabled. Enable Email link (passwordless sign-in) in Firebase Authentication."
               : deliveryReason === "firebase_continue_url_invalid"
-                ? "Firebase continue URL is invalid. Check CLIO_APP_BASE_URL / CLIO_INVITE_VERIFY_PATH and authorize the domain in Firebase Authentication."
+                ? "Firebase continue URL is invalid. Check NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN (or CLIO_APP_BASE_URL override) and authorize the domain in Firebase Authentication."
+                : deliveryReason === "unsafe_app_base_url_for_production"
+                  ? "Invite base URL is unsafe for production (localhost). Remove CLIO_APP_BASE_URL/NEXT_PUBLIC_APP_URL localhost overrides and use NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN."
                 : deliveryReason === "invalid_email"
                   ? "Invalid invite email address."
           : deliveryReason === "unsupported_email_provider"

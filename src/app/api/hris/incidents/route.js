@@ -16,6 +16,7 @@ import { validateIncidentEvidenceDocumentsStrict } from "@/lib/incident-evidence
 import { drainSecurityDetectionRetryQueue } from "@/lib/security-detection";
 import { dispatchSecurityIncidentAlerts } from "@/lib/security-alert-delivery";
 import {
+  enrichIncidentRecordForApi,
   logApiAudit,
   mapBackendError,
   paginateRows,
@@ -312,6 +313,7 @@ export async function GET(request) {
 
     const summary = summarizeIncidentWindow(filtered);
     const { data, pagination } = paginateRows(filtered, { page, pageSize });
+    const detailedRecords = data.map((row) => enrichIncidentRecordForApi(row));
 
     await logApiAudit({
       request,
@@ -321,9 +323,9 @@ export async function GET(request) {
       sensitivity: "Sensitive",
       performedBy: session.email,
       metadata: {
-        resultCount: data.length,
+        resultCount: detailedRecords.length,
         totalMatched: filtered.length,
-        viewedRecordRefs: data.slice(0, 25).map((row) => ({
+        viewedRecordRefs: detailedRecords.slice(0, 25).map((row) => ({
           recordId: row.id,
           recordRef: resolveAuditRecordRef(row, row.id, ["incidentCode", "id"]),
           severity: row.severity || "",
@@ -338,12 +340,12 @@ export async function GET(request) {
             (regulatoryFilter && regulatoryFilter !== "all") ||
             restrictedPiiFilter !== null,
         ),
-        auditNote: `Listed ${data.length} incident record(s) in current page window.`,
+        auditNote: `Listed ${detailedRecords.length} incident record(s) in current page window.`,
         nextAction: "No further action required.",
       },
     });
 
-    return NextResponse.json({ records: data, pagination, summary });
+    return NextResponse.json({ records: detailedRecords, pagination, summary });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     const mapped = mapBackendError(reason, "Unable to load incident records.");
@@ -492,7 +494,7 @@ export async function POST(request) {
       },
     });
 
-    return NextResponse.json({ ok: true, record: created }, { status: 201 });
+    return NextResponse.json({ ok: true, record: enrichIncidentRecordForApi(created) }, { status: 201 });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     const mapped = mapBackendError(reason, "Unable to create incident record.");
