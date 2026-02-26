@@ -35,6 +35,7 @@ export default function LoginCard() {
   const [pendingFirebaseUser, setPendingFirebaseUser] = useState(null);
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
+  const lastAutoSendChallengeRef = useRef("");
   const REDIRECT_PENDING_KEY = "clio_google_redirect_pending";
   const REDIRECT_USER_WAIT_TIMEOUT_MS = 15000;
 
@@ -220,6 +221,7 @@ export default function LoginCard() {
     setPendingFirebaseUser(null);
     setInfoMessage("");
     confirmationResultRef.current = null;
+    lastAutoSendChallengeRef.current = "";
     disposeRecaptchaVerifier();
   };
 
@@ -284,6 +286,7 @@ export default function LoginCard() {
         : "Register your mobile number and verify OTP to continue login.",
     );
     confirmationResultRef.current = null;
+    lastAutoSendChallengeRef.current = "";
     disposeRecaptchaVerifier();
     return true;
   };
@@ -307,6 +310,38 @@ export default function LoginCard() {
       throw new Error(payload?.message || "Unable to complete SMS verification.");
     }
   };
+
+  useEffect(() => {
+    const hasLinkedPhone =
+      Boolean(pendingFirebaseUser?.phoneNumber) ||
+      pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
+
+    if (!mfaState.challengeToken || !hasLinkedPhone || !pendingFirebaseUser) {
+      return;
+    }
+
+    if (isSendingOtp || isVerifyingOtp) {
+      return;
+    }
+
+    if (confirmationResultRef.current || mfaState.otpRequestedAt) {
+      return;
+    }
+
+    if (lastAutoSendChallengeRef.current === mfaState.challengeToken) {
+      return;
+    }
+
+    lastAutoSendChallengeRef.current = mfaState.challengeToken;
+    setInfoMessage("Sending OTP to your registered mobile number...");
+    handleSendOtp().catch(() => null);
+  }, [
+    isSendingOtp,
+    isVerifyingOtp,
+    mfaState.challengeToken,
+    mfaState.otpRequestedAt,
+    pendingFirebaseUser,
+  ]);
 
   const handleSendOtp = async () => {
     if (!pendingFirebaseUser || !mfaState.challengeToken || isSendingOtp) {
@@ -517,6 +552,7 @@ export default function LoginCard() {
     Boolean(pendingFirebaseUser?.phoneNumber) ||
     pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
+  const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current);
   const hasMfaChallenge = Boolean(mfaState.challengeToken);
 
   return (
@@ -645,7 +681,7 @@ export default function LoginCard() {
                       disabled={isSendingOtp || !hasPhoneNumber}
                       className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {isSendingOtp ? "Sending OTP..." : "Send OTP"}
+                      {isSendingOtp ? "Sending OTP..." : hasOtpRequest ? "Resend OTP" : "Send OTP"}
                     </button>
                   </div>
 
@@ -672,11 +708,16 @@ export default function LoginCard() {
                     <button
                       type="button"
                       onClick={handleVerifyOtp}
-                      disabled={isVerifyingOtp || mfaState.otpCode.trim().length !== 6}
+                      disabled={isVerifyingOtp || !hasOtpRequest || mfaState.otpCode.trim().length !== 6}
                       className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#0f6bcf] px-4 text-sm font-semibold text-white transition hover:bg-[#0c57aa] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isVerifyingOtp ? "Verifying OTP..." : "Verify OTP and Continue"}
                     </button>
+                    {!hasOtpRequest ? (
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        Request OTP first before entering a verification code.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </div>
