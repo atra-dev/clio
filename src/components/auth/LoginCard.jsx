@@ -586,6 +586,19 @@ export default function LoginCard() {
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
   const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current);
   const isOtpCooldownActive = otpCooldownSecondsLeft > 0;
+  const isSmsSendingStep = isPhoneRegistrationRequired && isSendingOtp && !hasOtpRequest;
+  const showRegistrationStep = isPhoneRegistrationRequired && !hasOtpRequest && !isSmsSendingStep;
+  const showOtpStep = hasOtpRequest || !isPhoneRegistrationRequired;
+  const modalTitle = showRegistrationStep
+    ? "Register Phone Number"
+    : isSmsSendingStep
+      ? "Sending OTP Code"
+      : "OTP Verification";
+  const modalDescription = showRegistrationStep
+    ? "Register your mobile number first before you can continue."
+    : isSmsSendingStep
+      ? "Please wait while we send a one-time code to your mobile number."
+      : "Enter the 6-digit code sent to your mobile number.";
   const otpCodeValue = String(mfaState.otpCode || "")
     .replace(/\D/g, "")
     .slice(0, 6);
@@ -778,14 +791,8 @@ export default function LoginCard() {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#0f766e]">CLIO</p>
-                  <h2 className="mt-1 text-base font-semibold text-slate-900 sm:text-lg">
-                    {isPhoneRegistrationRequired ? "Add SMS Phone Registration" : "SMS Verification Required"}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {isPhoneRegistrationRequired
-                      ? "Register your mobile number and complete OTP verification before continuing."
-                      : "Complete mobile OTP verification to continue to your secured workspace."}
-                  </p>
+                  <h2 className="mt-1 text-base font-semibold text-slate-900 sm:text-lg">{modalTitle}</h2>
+                  <p className="mt-1 text-sm text-slate-600">{modalDescription}</p>
                 </div>
                 <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
                   <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
@@ -803,7 +810,7 @@ export default function LoginCard() {
 
               <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#fcfdff_0%,#f8fafc_100%)] p-3 shadow-[0_18px_38px_-32px_rgba(15,23,42,0.45)] sm:p-4">
                 <div className="space-y-4">
-                  {isPhoneRegistrationRequired ? (
+                  {showRegistrationStep ? (
                     <div>
                       <label className="mt-2 block space-y-1">
                         <span className="text-xs font-medium text-slate-700">Mobile Number</span>
@@ -840,43 +847,65 @@ export default function LoginCard() {
                         </p>
                       ) : null}
                     </div>
-                  ) : (
-                    <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
-                      OTP is sent automatically to your registered mobile number.
-                    </p>
-                  )}
+                  ) : null}
 
-                  <div>
-                    <label className="mt-2 block space-y-1">
-                      <span className="text-xs font-medium text-slate-700">Verification Code</span>
-                      <div className="grid grid-cols-6 gap-2" onPaste={handleOtpPaste}>
-                        {otpDigitValues.map((digit, index) => (
-                          <input
-                            key={`otp-${index}`}
-                            ref={(element) => {
-                              otpInputRefs.current[index] = element;
-                            }}
-                            type="text"
-                            inputMode="numeric"
-                            autoComplete={index === 0 ? "one-time-code" : "off"}
-                            maxLength={1}
-                            value={digit}
-                            onChange={(event) => handleOtpInputChange(index, event.target.value)}
-                            onKeyDown={(event) => handleOtpInputKeyDown(index, event)}
-                            className="h-10 w-full rounded-xl border border-slate-300 bg-white text-center text-base font-semibold text-slate-900 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
-                            disabled={isSendingOtp || isVerifyingOtp}
-                          />
-                        ))}
+                  {isSmsSendingStep ? (
+                    <div className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-6">
+                      <div className="flex flex-col items-center justify-center gap-3 text-center">
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm">
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                            <path
+                              fill="currentColor"
+                              d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 3.2l-8 5-8-5V6l8 5 8-5v1.2z"
+                            />
+                          </svg>
+                        </span>
+                        <p className="text-sm font-semibold text-slate-800">Sending OTP to your mobile number...</p>
+                        <span className="inline-flex w-8 justify-start">
+                          <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.2s]" />
+                          <span className="ml-1 inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.1s]" />
+                          <span className="ml-1 inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500" />
+                        </span>
                       </div>
-                    </label>
-                    {!hasOtpRequest ? (
-                      <p className="mt-2 text-[11px] text-slate-500">
-                        {isPhoneRegistrationRequired ? "Request OTP first before entering a verification code." : "Waiting for OTP challenge. Please hold for a moment."}
-                      </p>
-                    ) : otpCodeValue.length < 6 ? (
-                      <p className="mt-2 text-[11px] text-slate-500">Enter the 6-digit code. Verification is automatic.</p>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
+
+                  {showOtpStep ? (
+                    <div>
+                      {!isPhoneRegistrationRequired ? (
+                        <p className="mb-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                          OTP is sent automatically to your registered mobile number.
+                        </p>
+                      ) : null}
+                      <label className="mt-2 block space-y-1">
+                        <span className="text-xs font-medium text-slate-700">Verification Code</span>
+                        <div className="grid grid-cols-6 gap-2" onPaste={handleOtpPaste}>
+                          {otpDigitValues.map((digit, index) => (
+                            <input
+                              key={`otp-${index}`}
+                              ref={(element) => {
+                                otpInputRefs.current[index] = element;
+                              }}
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete={index === 0 ? "one-time-code" : "off"}
+                              maxLength={1}
+                              value={digit}
+                              onChange={(event) => handleOtpInputChange(index, event.target.value)}
+                              onKeyDown={(event) => handleOtpInputKeyDown(index, event)}
+                              className="h-10 w-full rounded-xl border border-slate-300 bg-white text-center text-base font-semibold text-slate-900 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
+                              disabled={isSendingOtp || isVerifyingOtp}
+                            />
+                          ))}
+                        </div>
+                      </label>
+                      {!hasOtpRequest ? (
+                        <p className="mt-2 text-[11px] text-slate-500">Waiting for OTP challenge. Please hold for a moment.</p>
+                      ) : otpCodeValue.length < 6 ? (
+                        <p className="mt-2 text-[11px] text-slate-500">Enter the 6-digit code. Verification is automatic.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
