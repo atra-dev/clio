@@ -1,7 +1,8 @@
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import SettingsMfaModule from "@/components/hris/modules/SettingsMfaModule";
 import SettingsReferenceDataModule from "@/components/hris/modules/SettingsReferenceDataModule";
 import SettingsRecentActivityPanel from "@/components/hris/modules/SettingsRecentActivityPanel";
-import { requireAuthenticatedSession } from "@/lib/server-authorization";
+import { requireModuleAccess } from "@/lib/server-authorization";
 import { normalizeRole } from "@/lib/hris";
 
 export const metadata = {
@@ -9,7 +10,7 @@ export const metadata = {
 };
 
 export default async function SettingsPage() {
-  const session = await requireAuthenticatedSession();
+  const session = await requireModuleAccess("settings");
   const role = normalizeRole(session?.role);
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isGrc = role === "GRC";
@@ -17,142 +18,81 @@ export default async function SettingsPage() {
   const isEa = role === "EA";
   const isEmployee = role.startsWith("EMPLOYEE");
   const canManageReferenceData = isSuperAdmin || isGrc || isHr;
-  const canManageSecurity = isSuperAdmin || isGrc;
-  const canManageExports = isSuperAdmin || isGrc || isHr;
-  const canViewRetention = isSuperAdmin || isGrc || isHr;
-  const canViewIncident = isSuperAdmin || isGrc;
+  const roleLabel =
+    role === "SUPER_ADMIN"
+      ? "Super Admin"
+      : role === "GRC"
+        ? "GRC"
+        : role === "HR"
+          ? "HR"
+          : role === "EA"
+            ? "EA"
+            : "Employee";
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Security governance controls, privacy safeguards, and retention-aligned configuration.
-        </p>
+      <header className="relative overflow-hidden rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,#ffffff_0%,#f8fafc_56%,#eff6ff_100%)] p-6 shadow-[0_20px_40px_-32px_rgba(15,23,42,0.45)]">
+        <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-sky-100/60 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
+        <div className="relative space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sky-700">
+              Security Center
+            </span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
+              Role: {roleLabel}
+            </span>
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Manage account protection and workspace reference data from a single control panel.
+            </p>
+          </div>
+        </div>
       </header>
 
-      {canManageReferenceData ? (
-        <SettingsReferenceDataModule />
-      ) : (
-        <SurfaceCard title="Reference Data" subtitle="Roles and departments are managed by GRC/HR">
-          <p className="text-sm text-slate-600">
-            You have view-only access. Contact GRC or HR for updates.
-          </p>
-        </SurfaceCard>
-      )}
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+        <div className="space-y-6">
+          <SettingsMfaModule />
 
-      <SettingsRecentActivityPanel />
+          {canManageReferenceData ? (
+            <SettingsReferenceDataModule />
+          ) : (
+            <SurfaceCard title="Reference Data" subtitle="Roles and departments are managed by GRC/HR">
+              <p className="text-sm text-slate-600">
+                You have view-only access for governance catalog values. Contact GRC or HR for updates.
+              </p>
+            </SurfaceCard>
+          )}
+        </div>
 
-      <section className="grid gap-4 lg:grid-cols-3">
-        {canManageSecurity ? (
-          <SurfaceCard title="Account Security" subtitle="Protection controls for HRIS access">
-            <div className="space-y-4">
-              <label className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <span>Require two-step verification for all admins</span>
-                <input type="checkbox" defaultChecked className="h-4 w-4 accent-sky-600" />
-              </label>
-              <label className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <span>Auto sign-out after 30 minutes of inactivity</span>
-                <input type="checkbox" defaultChecked className="h-4 w-4 accent-sky-600" />
-              </label>
-              <label className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <span>Restrict login to corporate email domain</span>
-                <input type="checkbox" defaultChecked className="h-4 w-4 accent-sky-600" />
-              </label>
+        <div className="space-y-6">
+          <SettingsRecentActivityPanel />
+
+          <SurfaceCard title="Security Notes" subtitle="Operational reminders">
+            <div className="space-y-2 text-sm text-slate-700">
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                Enable MFA only after your mobile number is verified during sign-in.
+              </p>
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                Changes to reference data affect role and department selections across HR modules.
+              </p>
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                Review account activity regularly to detect unexpected login behavior.
+              </p>
             </div>
           </SurfaceCard>
-        ) : (
-          <SurfaceCard title="Account Security" subtitle="Managed by GRC and Super Admin">
-            <p className="text-sm text-slate-600">
-              You do not have permission to change security controls.
-            </p>
-          </SurfaceCard>
-        )}
 
-        <SurfaceCard title="Least Privilege" subtitle="RBAC and segregation-of-duties enforcement">
-          <div className="space-y-3 text-sm text-slate-700">
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Privileges are assigned only to role-required tasks.</p>
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">No shared accounts are allowed across any tier.</p>
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Quarterly access reviews are mandatory and evidence-based.</p>
-          </div>
-        </SurfaceCard>
-
-        {canManageExports ? (
-          <SurfaceCard title="Documents and Exports" subtitle="Defaults for template and PDF generation">
-            <div className="space-y-4">
-              <label className="space-y-1 text-sm text-slate-700">
-                <span className="font-medium">Default export format</span>
-                <select className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none">
-                  <option>Sheets</option>
-                  <option>CSV</option>
-                  <option>PDF</option>
-                </select>
-              </label>
-              <label className="space-y-1 text-sm text-slate-700">
-                <span className="font-medium">PDF branding</span>
-                <select className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none">
-                  <option>North Star logo (default)</option>
-                  <option>Header only</option>
-                  <option>Footer only</option>
-                </select>
-              </label>
-              <button className="inline-flex h-10 items-center justify-center rounded-lg bg-sky-600 px-4 text-sm font-medium text-white transition hover:bg-sky-700">
-                Save settings
-              </button>
-            </div>
-          </SurfaceCard>
-        ) : (
-          <SurfaceCard title="Documents and Exports" subtitle="Managed by GRC/HR">
-            <p className="text-sm text-slate-600">
-              Export defaults are controlled by privileged roles.
-            </p>
-          </SurfaceCard>
-        )}
+          {isEmployee || isEa ? (
+            <SurfaceCard title="Account Preferences" subtitle="Personal access scope">
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                You can manage your own MFA preference. Governance-wide security policies remain managed by HR/GRC.
+              </p>
+            </SurfaceCard>
+          ) : null}
+        </div>
       </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        {canViewRetention ? (
-          <SurfaceCard title="Retention and Deletion" subtitle="Regulated lifecycle of employee records">
-            <ul className="space-y-2 text-sm text-slate-700">
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Active records are retained for the employment duration.</li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Resigned employee records move to archive-only status for 5 years.</li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Post-retention deletion is logged and follows secure destruction standards.</li>
-            </ul>
-          </SurfaceCard>
-        ) : (
-          <SurfaceCard title="Retention and Deletion" subtitle="Visibility restricted">
-            <p className="text-sm text-slate-600">
-              Retention configuration is restricted to GRC/HR leadership.
-            </p>
-          </SurfaceCard>
-        )}
-
-        {canViewIncident ? (
-          <SurfaceCard title="Incident Preparedness" subtitle="Breach response and 72-hour compliance readiness">
-            <ul className="space-y-2 text-sm text-slate-700">
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Immediate GRC alerting for sensitive incidents.</li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Containment, impact assessment, and forensic log preservation.</li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">Regulatory notification workflow ready for 72-hour windows.</li>
-            </ul>
-          </SurfaceCard>
-        ) : (
-          <SurfaceCard title="Incident Preparedness" subtitle="Visible to GRC only">
-            <p className="text-sm text-slate-600">
-              Incident governance details are limited to GRC and Super Admin.
-            </p>
-          </SurfaceCard>
-        )}
-      </section>
-
-      {isEmployee || isEa ? (
-        <SurfaceCard title="Account Preferences" subtitle="Personal access view for non-admin roles">
-          <div className="space-y-2 text-sm text-slate-700">
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              Your account preferences are managed by HR/GRC. Personal profile updates are available in the profile menu.
-            </p>
-          </div>
-        </SurfaceCard>
-      ) : null}
     </div>
   );
 }
