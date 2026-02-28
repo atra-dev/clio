@@ -3,7 +3,9 @@ import { cookies } from "next/headers";
 import { normalizeRole } from "@/lib/hris";
 
 export const SESSION_COOKIE_NAME = "clio_session";
+export const MFA_LOGIN_PROOF_COOKIE_NAME = "clio_mfa_login_proof";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
+const MFA_LOGIN_PROOF_MAX_AGE_SECONDS = 60 * 5;
 
 function normalizeSessionVersion(value) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -67,6 +69,57 @@ export function createSession(email, role, { sessionVersion } = {}) {
   };
 }
 
+export function createMfaLoginProof(email, { ttlSeconds = MFA_LOGIN_PROOF_MAX_AGE_SECONDS } = {}) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw new Error("invalid_mfa_login_proof_email");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const safeTtl = Number.isFinite(ttlSeconds) ? Math.max(30, Math.trunc(ttlSeconds)) : MFA_LOGIN_PROOF_MAX_AGE_SECONDS;
+  const expiresAt = now + safeTtl;
+  const payload = encodePayload({
+    type: "mfa_login_proof",
+    email: normalizedEmail,
+    iat: now,
+    exp: expiresAt,
+  });
+  const signature = signPayload(payload);
+  return {
+    token: `${payload}.${signature}`,
+    expiresAt,
+  };
+}
+
+export function verifyMfaLoginProof(token, { email } = {}) {
+  const verified = verifySessionToken(token);
+  if (!verified) {
+    return null;
+  }
+
+  const [encodedPayload] = String(token || "").split(".");
+  const decoded = decodePayload(encodedPayload);
+  if (!decoded || decoded.type !== "mfa_login_proof") {
+    return null;
+  }
+
+  const proofEmail = String(decoded.email || "").trim().toLowerCase();
+  if (!proofEmail) {
+    return null;
+  }
+
+  const expectedEmail = String(email || "").trim().toLowerCase();
+  if (expectedEmail && proofEmail !== expectedEmail) {
+    return null;
+  }
+
+  return {
+    email: proofEmail,
+    exp: verified.exp,
+    iat: verified.iat,
+  };
+}
+
 export function verifySessionToken(token) {
   if (typeof token !== "string" || !token.includes(".")) {
     return null;
@@ -118,5 +171,25 @@ export function getSessionCookieOptions(expiresAt) {
     secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: new Date(expiresAt * 1000),
+  };
+}
+
+export function getMfaLoginProofCookieOptions(expiresAt) {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: new Date(expiresAt * 1000),
+  };
+}
+
+export function getExpiredCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: new Date(0),
   };
 }

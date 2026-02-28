@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { createSession, getSessionCookieOptions, SESSION_COOKIE_NAME } from "@/lib/auth-session";
+import {
+  createSession,
+  getExpiredCookieOptions,
+  getSessionCookieOptions,
+  MFA_LOGIN_PROOF_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+  verifyMfaLoginProof,
+} from "@/lib/auth-session";
 import { enforceRateLimitByRequest, consumeRateLimit } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
@@ -21,6 +28,11 @@ function applyRateLimitHeaders(response, rateLimitResult) {
 function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   const response = NextResponse.json(payload, { status });
   return applyRateLimitHeaders(response, rateLimit);
+}
+
+function clearMfaProofCookie(response) {
+  response.cookies.set(MFA_LOGIN_PROOF_COOKIE_NAME, "", getExpiredCookieOptions());
+  return response;
 }
 
 function parseBooleanEnv(name, fallbackValue = false) {
@@ -95,6 +107,8 @@ export async function POST(request) {
     const idToken = typeof body?.idToken === "string" ? body.idToken : "";
     const firebaseIdentity = await verifyFirebaseIdToken(idToken);
     const normalizedEmail = firebaseIdentity.email;
+    const mfaProofToken = String(request.cookies.get(MFA_LOGIN_PROOF_COOKIE_NAME)?.value || "");
+    const hasValidMfaProof = Boolean(verifyMfaLoginProof(mfaProofToken, { email: normalizedEmail }));
 
     const emailRateLimit = consumeRateLimit({
       scope: "auth-login-email",
@@ -250,7 +264,7 @@ export async function POST(request) {
       );
     }
 
-    if (smsMfaRequired && (!account.phoneVerifiedAt || account.smsMfaEnabled)) {
+    if (smsMfaRequired && (!account.phoneVerifiedAt || account.smsMfaEnabled) && !hasValidMfaProof) {
       let loginMfaChallenge = null;
       try {
         loginMfaChallenge = await createLoginSmsChallenge({
@@ -297,15 +311,16 @@ export async function POST(request) {
         request,
       });
 
-      return jsonResponse(
+      const response = jsonResponse(
         {
           message: "SMS authentication is required before login. Complete phone OTP verification to continue.",
           reason: "sms_mfa_required",
           challengeToken: loginMfaChallenge.challengeToken,
           challengeExpiresAt: loginMfaChallenge.challengeExpiresAt,
         },
-        { status: 403, rateLimit: activeRateLimit },
+        { status: 200, rateLimit: activeRateLimit },
       );
+      return clearMfaProofCookie(response);
     }
 
     if (account.status !== "active") {
@@ -426,6 +441,9 @@ export async function POST(request) {
     });
     const response = jsonResponse({ ok: true }, { rateLimit: activeRateLimit });
     response.cookies.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt));
+    if (hasValidMfaProof) {
+      clearMfaProofCookie(response);
+    }
     await markUserLogin(normalizedEmail);
 
     try {

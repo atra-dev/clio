@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import {
+  createMfaLoginProof,
+  getExpiredCookieOptions,
+  getMfaLoginProofCookieOptions,
+  MFA_LOGIN_PROOF_COOKIE_NAME,
+} from "@/lib/auth-session";
 import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
@@ -56,6 +62,21 @@ function applyRateLimitHeaders(response, rateLimitResult) {
 function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   const response = NextResponse.json(payload, { status });
   return applyRateLimitHeaders(response, rateLimit);
+}
+
+function withMfaProofCookie(response, email) {
+  const proof = createMfaLoginProof(email);
+  response.cookies.set(
+    MFA_LOGIN_PROOF_COOKIE_NAME,
+    proof.token,
+    getMfaLoginProofCookieOptions(proof.expiresAt),
+  );
+  return response;
+}
+
+function clearMfaProofCookie(response) {
+  response.cookies.set(MFA_LOGIN_PROOF_COOKIE_NAME, "", getExpiredCookieOptions());
+  return response;
 }
 
 export async function POST(request) {
@@ -149,17 +170,18 @@ export async function POST(request) {
       request,
     });
 
-    return jsonResponse(
+    const response = jsonResponse(
       {
         ok: true,
         message: "SMS verification completed. Continue sign-in.",
       },
       { rateLimit: activeRateLimit },
     );
+    return withMfaProofCookie(response, email);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     if (reason === "already_verified") {
-      return jsonResponse(
+      const response = jsonResponse(
         {
           ok: true,
           alreadyVerified: true,
@@ -167,6 +189,7 @@ export async function POST(request) {
         },
         { status: 200, rateLimit: activeRateLimit },
       );
+      return withMfaProofCookie(response, actorEmail);
     }
     const message = messageForReason(reason);
     const status = statusForReason(reason);
@@ -189,12 +212,13 @@ export async function POST(request) {
       context: "login_sms_verify",
     }).catch(() => null);
 
-    return jsonResponse(
+    const response = jsonResponse(
       {
         reason,
         message,
       },
       { status, rateLimit: activeRateLimit },
     );
+    return clearMfaProofCookie(response);
   }
 }
