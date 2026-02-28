@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import { FormSkeleton, LoadingTransition, ProfileSkeleton } from "@/components/hris/shared/Skeletons";
 import { useToast } from "@/components/ui/ToastProvider";
 
 function formatDateTime(value) {
@@ -121,11 +122,15 @@ export default function SettingsMfaModule() {
       title="Account Security"
       subtitle="Enable SMS MFA for your account sign-in"
     >
-      {isLoading ? (
-        <div className="flex justify-center py-4">
-          <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-        </div>
-      ) : (
+      <LoadingTransition
+        isLoading={isLoading}
+        skeleton={
+          <div className="space-y-3">
+            <ProfileSkeleton />
+            <FormSkeleton fields={4} />
+          </div>
+        }
+      >
         <div className="space-y-4">
           {errorMessage ? (
             <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -216,7 +221,7 @@ export default function SettingsMfaModule() {
             </button>
           </div>
         </div>
-      )}
+      </LoadingTransition>
     </SurfaceCard>
   );
 }

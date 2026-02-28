@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { hrisApi } from "@/services/hris-api-client";
 
@@ -423,75 +424,75 @@ export default function RetentionArchiveModule({ session }) {
           </div>
 
           <div className="mt-4">
-            {isLoading ? (
-              <p className="text-sm text-slate-600">Loading archived employee groups...</p>
-            ) : employeeGroups.length === 0 ? (
-              <EmptyState title="No archived employee groups found" subtitle="Adjust filters or archive records from lifecycle/offboarding flows." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                      <th className="px-2 py-3 font-medium">Employee</th>
-                      <th className="px-2 py-3 font-medium">Modules</th>
-                      <th className="px-2 py-3 font-medium">Archived Data</th>
-                      <th className="px-2 py-3 font-medium">Archived At</th>
-                      <th className="px-2 py-3 font-medium">Retention Delete At</th>
-                      <th className="px-2 py-3 font-medium">Deletion State</th>
-                      <th className="px-2 py-3 font-medium">Countdown</th>
-                      <th className="px-2 py-3 font-medium text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {employeeGroups.map((row) => (
-                      <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                        <td className="px-2 py-3">
-                          <p className="font-medium text-slate-900">{row.employeeName || "Employee"}</p>
-                          <p className="text-xs text-slate-500">{row.employeeEmail || "-"}</p>
-                        </td>
-                        <td className="px-2 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 0 ? (
-                              row.moduleBreakdown.slice(0, 3).map((item) => (
-                                <span
-                                  key={`${row.id}-${item.moduleId}`}
-                                  className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
-                                >
-                                  {item.moduleLabel} ({item.count})
-                                </span>
-                              ))
-                            ) : (
-                              <span className="text-xs text-slate-500">-</span>
-                            )}
-                            {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 3 ? (
-                              <span className="inline-flex rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
-                                +{row.moduleBreakdown.length - 3}
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{row.totalRecords || 0} item(s)</td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.archivedAt)}</td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.retentionDeleteAt)}</td>
-                        <td className="px-2 py-3">
-                          <StatusBadge value={DELETION_STATE_LABEL[row.deletionState] || row.deletionState || "Unknown"} />
-                        </td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{formatCountdown(row.daysToDeletion)}</td>
-                        <td className="px-2 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => openEmployeeDetails(row.id)}
-                            className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
-                          >
-                            View
-                          </button>
-                        </td>
+            <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={8} />}>
+              {employeeGroups.length === 0 ? (
+                <EmptyState title="No archived employee groups found" subtitle="Adjust filters or archive records from lifecycle/offboarding flows." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                        <th className="px-2 py-3 font-medium">Employee</th>
+                        <th className="px-2 py-3 font-medium">Modules</th>
+                        <th className="px-2 py-3 font-medium">Archived Data</th>
+                        <th className="px-2 py-3 font-medium">Archived At</th>
+                        <th className="px-2 py-3 font-medium">Retention Delete At</th>
+                        <th className="px-2 py-3 font-medium">Deletion State</th>
+                        <th className="px-2 py-3 font-medium">Countdown</th>
+                        <th className="px-2 py-3 font-medium text-right">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {employeeGroups.map((row) => (
+                        <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                          <td className="px-2 py-3">
+                            <p className="font-medium text-slate-900">{row.employeeName || "Employee"}</p>
+                            <p className="text-xs text-slate-500">{row.employeeEmail || "-"}</p>
+                          </td>
+                          <td className="px-2 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 0 ? (
+                                row.moduleBreakdown.slice(0, 3).map((item) => (
+                                  <span
+                                    key={`${row.id}-${item.moduleId}`}
+                                    className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
+                                  >
+                                    {item.moduleLabel} ({item.count})
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-xs text-slate-500">-</span>
+                              )}
+                              {Array.isArray(row.moduleBreakdown) && row.moduleBreakdown.length > 3 ? (
+                                <span className="inline-flex rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                                  +{row.moduleBreakdown.length - 3}
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{row.totalRecords || 0} item(s)</td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.archivedAt)}</td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(row.retentionDeleteAt)}</td>
+                          <td className="px-2 py-3">
+                            <StatusBadge value={DELETION_STATE_LABEL[row.deletionState] || row.deletionState || "Unknown"} />
+                          </td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatCountdown(row.daysToDeletion)}</td>
+                          <td className="px-2 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => openEmployeeDetails(row.id)}
+                              className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </LoadingTransition>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">

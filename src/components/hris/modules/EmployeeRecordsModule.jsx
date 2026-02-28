@@ -6,6 +6,7 @@ import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import PaginationControls from "@/components/hris/shared/PaginationControls";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { useToast } from "@/components/ui/ToastProvider";
 import { useConfirm } from "@/components/ui/ConfirmProvider";
@@ -1406,158 +1407,144 @@ export default function EmployeeRecordsModule({ session }) {
         )
       }
     >
-      {isLoading ? (
-        <div className="flex min-h-[160px] items-center justify-center">
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white">
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5 animate-spin text-sky-600"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path d="M12 3a9 9 0 1 0 9 9" />
-            </svg>
-          </span>
-          <span className="sr-only">Loading employee directory...</span>
-        </div>
-      ) : records.length === 0 ? (
-        employeeRole ? (
-          <div className="mx-auto w-full max-w-4xl rounded-2xl border border-sky-100 bg-gradient-to-b from-sky-50/80 to-white p-5">
-            <div className="mb-4">
-              <p className="text-base font-semibold text-slate-900">Complete My Employee Record</p>
-              <p className="mt-1 text-sm text-slate-600">
-                This form is for your own employee profile only. Fill in your details to continue.
-              </p>
-            </div>
-            <form onSubmit={handleCreateSelfRecord} className="grid gap-3 md:grid-cols-2">
-              <input
-                value={selfRecordForm.lastName}
-                onChange={handleSelfRecordField("lastName")}
-                placeholder="Last name"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={selfRecordForm.firstName}
-                onChange={handleSelfRecordField("firstName")}
-                placeholder="First name"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={selfRecordForm.middleName}
-                onChange={handleSelfRecordField("middleName")}
-                placeholder="Middle name"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={selfRecordForm.suffix}
-                onChange={handleSelfRecordField("suffix")}
-                placeholder="Suffix (optional)"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={actorEmail}
-                disabled
-                className="h-10 rounded-lg border border-slate-300 bg-slate-100 px-3 text-sm text-slate-700 md:col-span-2"
-              />
-              <input
-                value={selfRecordForm.contact}
-                onChange={handleSelfRecordField("contact")}
-                placeholder="Contact number"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={selfRecordForm.address}
-                onChange={handleSelfRecordField("address")}
-                placeholder="Address"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
-              />
-              <input
-                value={selfRecordForm.emergencyContact}
-                onChange={handleSelfRecordField("emergencyContact")}
-                placeholder="Emergency contact"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
-              />
-              <div className="md:col-span-2 mt-1 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="inline-flex h-10 items-center rounded-lg bg-sky-600 px-4 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-                >
-                  {isSubmitting ? "Saving..." : "Submit My Record"}
-                </button>
+      <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={8} />}>
+        {records.length === 0 ? (
+          employeeRole ? (
+            <div className="mx-auto w-full max-w-4xl rounded-2xl border border-sky-100 bg-gradient-to-b from-sky-50/80 to-white p-5">
+              <div className="mb-4">
+                <p className="text-base font-semibold text-slate-900">Complete My Employee Record</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  This form is for your own employee profile only. Fill in your details to continue.
+                </p>
               </div>
-            </form>
-          </div>
-        ) : (
-          <EmptyState
-            title="No employee records yet"
-            subtitle="Add a record to initialize the employee directory."
-          />
-        )
-      ) : (
-        <div className="space-y-3">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                  <th className="px-2 py-3 font-medium">Employee ID</th>
-                  <th className="px-2 py-3 font-medium">Name</th>
-                  <th className="px-2 py-3 font-medium">Email</th>
-                  <th className="px-2 py-3 font-medium">Department</th>
-                  <th className="px-2 py-3 font-medium">Role</th>
-                  <th className="px-2 py-3 font-medium">Status</th>
-                  <th className="px-2 py-3 font-medium">Employment</th>
-                  <th className="px-2 py-3 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={`border-b border-slate-100 text-slate-700 last:border-b-0 ${
-                      row.id === selectedId ? "bg-sky-50/50" : ""
-                    }`}
+              <form onSubmit={handleCreateSelfRecord} className="grid gap-3 md:grid-cols-2">
+                <input
+                  value={selfRecordForm.lastName}
+                  onChange={handleSelfRecordField("lastName")}
+                  placeholder="Last name"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={selfRecordForm.firstName}
+                  onChange={handleSelfRecordField("firstName")}
+                  placeholder="First name"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={selfRecordForm.middleName}
+                  onChange={handleSelfRecordField("middleName")}
+                  placeholder="Middle name"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={selfRecordForm.suffix}
+                  onChange={handleSelfRecordField("suffix")}
+                  placeholder="Suffix (optional)"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={actorEmail}
+                  disabled
+                  className="h-10 rounded-lg border border-slate-300 bg-slate-100 px-3 text-sm text-slate-700 md:col-span-2"
+                />
+                <input
+                  value={selfRecordForm.contact}
+                  onChange={handleSelfRecordField("contact")}
+                  placeholder="Contact number"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={selfRecordForm.address}
+                  onChange={handleSelfRecordField("address")}
+                  placeholder="Address"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                />
+                <input
+                  value={selfRecordForm.emergencyContact}
+                  onChange={handleSelfRecordField("emergencyContact")}
+                  placeholder="Emergency contact"
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none md:col-span-2"
+                />
+                <div className="md:col-span-2 mt-1 flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="inline-flex h-10 items-center rounded-lg bg-sky-600 px-4 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
                   >
-                    <td className="px-2 py-3 font-mono text-xs">{row.employeeId || "-"}</td>
-                    <td className="px-2 py-3 font-medium text-slate-900">{row.name || "-"}</td>
-                    <td className="px-2 py-3">{row.email || "-"}</td>
-                    <td className="px-2 py-3">{valueOrDash(row.department)}</td>
-                    <td className="px-2 py-3">{toLabel(row.role)}</td>
-                    <td className="px-2 py-3">
-                      <StatusBadge value={row.status || "-"} />
-                    </td>
-                    <td className="px-2 py-3">{row.employmentStatus || "-"}</td>
-                    <td className="px-2 py-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openRecord(row)}
-                          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Open
-                        </button>
-                        {canManageRecords ? (
+                    {isSubmitting ? "Saving..." : "Submit My Record"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <EmptyState
+              title="No employee records yet"
+              subtitle="Add a record to initialize the employee directory."
+            />
+          )
+        ) : (
+          <div className="space-y-3">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                    <th className="px-2 py-3 font-medium">Employee ID</th>
+                    <th className="px-2 py-3 font-medium">Name</th>
+                    <th className="px-2 py-3 font-medium">Email</th>
+                    <th className="px-2 py-3 font-medium">Department</th>
+                    <th className="px-2 py-3 font-medium">Role</th>
+                    <th className="px-2 py-3 font-medium">Status</th>
+                    <th className="px-2 py-3 font-medium">Employment</th>
+                    <th className="px-2 py-3 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={`border-b border-slate-100 text-slate-700 last:border-b-0 ${
+                        row.id === selectedId ? "bg-sky-50/50" : ""
+                      }`}
+                    >
+                      <td className="px-2 py-3 font-mono text-xs">{row.employeeId || "-"}</td>
+                      <td className="px-2 py-3 font-medium text-slate-900">{row.name || "-"}</td>
+                      <td className="px-2 py-3">{row.email || "-"}</td>
+                      <td className="px-2 py-3">{valueOrDash(row.department)}</td>
+                      <td className="px-2 py-3">{toLabel(row.role)}</td>
+                      <td className="px-2 py-3">
+                        <StatusBadge value={row.status || "-"} />
+                      </td>
+                      <td className="px-2 py-3">{row.employmentStatus || "-"}</td>
+                      <td className="px-2 py-3 text-right">
+                        <div className="inline-flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleArchive(row.id)}
-                            disabled={isSubmitting}
-                            className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                            onClick={() => openRecord(row)}
+                            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
                           >
-                            Archive
+                            Open
                           </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          {canManageRecords ? (
+                            <button
+                              type="button"
+                              onClick={() => handleArchive(row.id)}
+                              disabled={isSubmitting}
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                            >
+                              Archive
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <PaginationControls pagination={pagination} onPageChange={setPage} />
           </div>
-          <PaginationControls pagination={pagination} onPageChange={setPage} />
-        </div>
-      )}
+        )}
+      </LoadingTransition>
     </SurfaceCard>
   );
 

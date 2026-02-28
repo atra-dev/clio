@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { formatEmployeeName, formatNameFromEmail } from "@/lib/name-utils";
 import { hrisApi } from "@/services/hris-api-client";
@@ -364,9 +365,8 @@ export default function DocumentTemplateRepositoryModule({ session }) {
             : "Permission-based template and document access"
         }
       >
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading template repository...</p>
-        ) : section === "employee-docs" ? (
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={7} columns={employeeRole ? 5 : 6} />}>
+          {section === "employee-docs" ? (
           employeeDocuments.length === 0 ? (
             <EmptyState
               title={employeeRole ? "No files yet" : "No employee documents yet"}
@@ -503,7 +503,7 @@ export default function DocumentTemplateRepositoryModule({ session }) {
               ))}
             </div>
           )
-        ) : templates.length === 0 ? (
+          ) : templates.length === 0 ? (
           <EmptyState title="No templates yet" subtitle="Upload template files and metadata to populate the repository." />
         ) : (
           <div className="overflow-x-auto">
@@ -579,7 +579,8 @@ export default function DocumentTemplateRepositoryModule({ session }) {
               </tbody>
             </table>
           </div>
-        )}
+          )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

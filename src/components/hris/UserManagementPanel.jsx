@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import { ROLES } from "@/features/hris/constants";
 
 const EMPLOYEE_ACCOUNT_ROLE_ID = "EMPLOYEE_L1";
@@ -342,9 +343,7 @@ export default function UserManagementPanel() {
         title="User Directory"
         subtitle="Review account states and manage access by role."
       >
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading user accounts...</p>
-        ) : (
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={7} />}>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead>
@@ -416,7 +415,7 @@ export default function UserManagementPanel() {
               </tbody>
             </table>
           </div>
-        )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

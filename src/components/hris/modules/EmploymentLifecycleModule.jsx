@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import PaginationControls from "@/components/hris/shared/PaginationControls";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { useToast } from "@/components/ui/ToastProvider";
 import { useConfirm } from "@/components/ui/ConfirmProvider";
@@ -2238,38 +2239,38 @@ export default function EmploymentLifecycleModule({ session }) {
             </div>
           }
         >
-          {isLoading ? (
-            <p className="text-sm text-slate-600">Loading lifecycle records...</p>
-          ) : filteredRecords.length === 0 ? (
-            <EmptyState
-              title="No lifecycle workflows found"
-              subtitle="Create a workflow or change filters to view results."
-            />
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="min-w-[1180px] w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                      {renderLifecycleHeaderCells()}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedRecords.map((record) => {
-                      const checklistProgress = getChecklistProgress(record);
-                      const rowSelected = isWorkflowConsoleOpen && selectedRecordId === record.id;
-                      return (
-                        <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                          {renderLifecycleDataCells(record, { checklistProgress, rowSelected })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <PaginationControls pagination={recordsPagination} onPageChange={setRecordsPage} />
-            </>
-          )}
+          <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={9} />}>
+            {filteredRecords.length === 0 ? (
+              <EmptyState
+                title="No lifecycle workflows found"
+                subtitle="Create a workflow or change filters to view results."
+              />
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="min-w-[1180px] w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                        {renderLifecycleHeaderCells()}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedRecords.map((record) => {
+                        const checklistProgress = getChecklistProgress(record);
+                        const rowSelected = isWorkflowConsoleOpen && selectedRecordId === record.id;
+                        return (
+                          <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                            {renderLifecycleDataCells(record, { checklistProgress, rowSelected })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <PaginationControls pagination={recordsPagination} onPageChange={setRecordsPage} />
+              </>
+            )}
+          </LoadingTransition>
         </SurfaceCard>
 
         {isWorkflowConsoleOpen ? (

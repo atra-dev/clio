@@ -5,6 +5,7 @@ import ActivityLogTable from "@/components/hris/ActivityLogTable";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import PaginationControls from "@/components/hris/shared/PaginationControls";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import { hrisApi } from "@/services/hris-api-client";
 
 const SECTION_TABS = [
@@ -175,14 +176,12 @@ export default function ActivityLogModule() {
         {errorMessage ? (
           <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMessage}</p>
         ) : null}
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading activity logs...</p>
-        ) : (
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={7} />}>
           <div className="space-y-3">
             <ActivityLogTable rows={rows} />
             <PaginationControls pagination={pagination} onPageChange={setPage} />
           </div>
-        )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

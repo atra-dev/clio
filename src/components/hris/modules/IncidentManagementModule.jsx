@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
+import { FormSkeleton, LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { useToast } from "@/components/ui/ToastProvider";
 import { useConfirm } from "@/components/ui/ConfirmProvider";
@@ -1008,61 +1009,59 @@ export default function IncidentManagementModule({ session }) {
           </div>
 
           <div className="mt-4">
-            {isLoading ? (
-              <div className="flex justify-center py-6">
-                <span className="inline-flex h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-              </div>
-            ) : filteredByAdvanced.length === 0 ? (
-              <EmptyState title="No incident records found" subtitle="Create incidents or adjust filters to continue." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                      <th className="px-2 py-3 font-medium">Incident</th>
-                      <th className="px-2 py-3 font-medium">Severity</th>
-                      <th className="px-2 py-3 font-medium">Status</th>
-                      <th className="px-2 py-3 font-medium">Escalation</th>
-                      <th className="px-2 py-3 font-medium">Regulatory</th>
-                      <th className="px-2 py-3 font-medium">Updated</th>
-                      <th className="px-2 py-3 font-medium text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredByAdvanced.map((record) => (
-                      <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                        <td className="px-2 py-3">
-                          <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
-                          <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
-                          <p className="mt-1 max-w-[32rem] text-xs text-slate-600">
-                            {String(record?.alertDescription || record?.summary || "No description provided.")}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-sky-700">
-                            Occurrences: {Number(record?.alertOccurrenceCount || 1)}
-                          </p>
-                        </td>
-                        <td className="px-2 py-3"><StatusBadge value={normalizeSeverityValue(record?.severity, "Low")} /></td>
-                        <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
-                        <td className="px-2 py-3 text-xs">
-                          <p className="font-medium text-slate-800">{String(record?.escalationLevel || "-")}</p>
-                          <p className="text-slate-500">GRC: {record?.grcAlertedAt ? "Yes" : "No"}</p>
-                        </td>
-                        <td className="px-2 py-3 text-xs">
-                          <p className="font-medium text-slate-800">{String(record?.regulatoryStatus || "Not Required")}</p>
-                          <p className="text-slate-500">Due: {formatDateTime(record?.regulatoryDueAt)}</p>
-                        </td>
-                        <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
-                        <td className="px-2 py-3 text-right">
-                          <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
-                            Open
-                          </button>
-                        </td>
+            <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={7} />}>
+              {filteredByAdvanced.length === 0 ? (
+                <EmptyState title="No incident records found" subtitle="Create incidents or adjust filters to continue." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                        <th className="px-2 py-3 font-medium">Incident</th>
+                        <th className="px-2 py-3 font-medium">Severity</th>
+                        <th className="px-2 py-3 font-medium">Status</th>
+                        <th className="px-2 py-3 font-medium">Escalation</th>
+                        <th className="px-2 py-3 font-medium">Regulatory</th>
+                        <th className="px-2 py-3 font-medium">Updated</th>
+                        <th className="px-2 py-3 font-medium text-right">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {filteredByAdvanced.map((record) => (
+                        <tr key={record.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                          <td className="px-2 py-3">
+                            <p className="font-medium text-slate-900">{getRecordLabel(record)}</p>
+                            <p className="text-xs text-slate-500">{String(record?.incidentCode || "N/A")}</p>
+                            <p className="mt-1 max-w-[32rem] text-xs text-slate-600">
+                              {String(record?.alertDescription || record?.summary || "No description provided.")}
+                            </p>
+                            <p className="mt-1 text-xs font-medium text-sky-700">
+                              Occurrences: {Number(record?.alertOccurrenceCount || 1)}
+                            </p>
+                          </td>
+                          <td className="px-2 py-3"><StatusBadge value={normalizeSeverityValue(record?.severity, "Low")} /></td>
+                          <td className="px-2 py-3"><StatusBadge value={record?.status || "Open"} /></td>
+                          <td className="px-2 py-3 text-xs">
+                            <p className="font-medium text-slate-800">{String(record?.escalationLevel || "-")}</p>
+                            <p className="text-slate-500">GRC: {record?.grcAlertedAt ? "Yes" : "No"}</p>
+                          </td>
+                          <td className="px-2 py-3 text-xs">
+                            <p className="font-medium text-slate-800">{String(record?.regulatoryStatus || "Not Required")}</p>
+                            <p className="text-slate-500">Due: {formatDateTime(record?.regulatoryDueAt)}</p>
+                          </td>
+                          <td className="px-2 py-3 text-xs text-slate-600">{formatDateTime(record?.updatedAt || record?.createdAt)}</td>
+                          <td className="px-2 py-3 text-right">
+                            <button type="button" onClick={() => setSelectedRecordId(record.id)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                              Open
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </LoadingTransition>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -1400,11 +1399,11 @@ export default function IncidentManagementModule({ session }) {
               </button>
             </div>
 
-            {isLoadingRecord || !selectedRecord || !recordDraft ? (
-              <div className="flex justify-center py-8">
-                <span className="inline-flex h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-              </div>
-            ) : (
+            <LoadingTransition
+              isLoading={isLoadingRecord}
+              skeleton={<FormSkeleton fields={8} showActions={false} className="max-h-[72vh] overflow-hidden" />}
+            >
+              {selectedRecord && recordDraft ? (
               <div className="max-h-[72vh] space-y-3 overflow-y-auto pr-1">
                 <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 sm:grid-cols-2 lg:grid-cols-6">
                   <div>
@@ -1745,7 +1744,15 @@ export default function IncidentManagementModule({ session }) {
                   </div>
                 ) : null}
               </div>
-            )}
+              ) : (
+                <div className="max-h-[72vh] overflow-y-auto pr-1">
+                  <EmptyState
+                    title="Incident details unavailable"
+                    subtitle="This incident may have been removed or is not accessible with your current permissions."
+                  />
+                </div>
+              )}
+            </LoadingTransition>
           </div>
         </div>
       ) : null}
