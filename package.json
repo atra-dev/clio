@@ -6,10 +6,11 @@
     "dev": "next dev",
     "dev:turbo": "npm run clean:build-artifacts && next dev",
     "dev:webpack": "npm run clean:build-artifacts && next dev --webpack",
-    "build": "next build",
-    "build:clean": "npm run clean:build-artifacts && next build",
+    "build": "next build --webpack",
+    "build:clean": "npm run clean:build-artifacts && next build --webpack",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint .",
+    "test:security": "node scripts/security-regression-check.mjs",
     "clean:build-artifacts": "node scripts/clean-build-artifacts.mjs",
     "env:firebase-admin": "node scripts/apply-firebase-admin-env.js",
     "audit": "npm audit --audit-level=high",
@@ -24,7 +25,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^10.0.2",
+    "eslint": "^9.17.0",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4"
   }

@@ -95,39 +95,7 @@ function assertProductionAuthHardening() {
 assertProductionAlertProviders();
 assertProductionAuthHardening();
 
-const scriptSrc = [
-  "'self'",
-  "'unsafe-inline'",
-  "https://accounts.google.com",
-  "https://apis.google.com",
-  "https://www.google.com",
-  "https://www.recaptcha.net",
-  "https://www.gstatic.com",
-  "https://www.googleapis.com",
-];
-
-if (!isProduction) {
-  scriptSrc.push("'unsafe-eval'");
-}
-
 const securityHeaders = [
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "base-uri 'self'",
-      "frame-ancestors 'none'",
-      "object-src 'none'",
-      "form-action 'self' https://accounts.google.com",
-      `script-src ${scriptSrc.join(" ")}`,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://lh3.googleusercontent.com https://firebasestorage.googleapis.com https://*.googleusercontent.com https://www.gstatic.com https://www.google.com",
-      "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://apis.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://firebasestorage.googleapis.com https://www.googleapis.com https://*.googleapis.com https://*.firebaseio.com https://www.google.com https://www.recaptcha.net https://www.gstatic.com ws: wss:",
-      "frame-src 'self' https://accounts.google.com https://apis.google.com https://*.firebaseapp.com https://www.google.com https://www.recaptcha.net",
-      "worker-src 'self' blob:",
-    ].join("; "),
-  },
   {
     key: "Referrer-Policy",
     value: "strict-origin-when-cross-origin",

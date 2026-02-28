@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
-import { createSession, getSessionCookieOptions, SESSION_COOKIE_NAME } from "@/lib/auth-session";
+import {
+  createSession,
+  getExpiredCookieOptions,
+  getSessionCookieOptions,
+  MFA_LOGIN_PROOF_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+  verifyMfaLoginProof,
+} from "@/lib/auth-session";
 import { enforceRateLimitByRequest, consumeRateLimit } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
 import { syncFirebaseCustomClaimsForUser } from "@/lib/firebase-custom-claims";
+import { alertRepeatedNewDeviceSignIns } from "@/lib/security-auth-alerts";
 import { createLoginSmsChallenge, getLoginAccount, markUserLogin, recordLoginDevice } from "@/lib/user-accounts";
 import { createInAppNotification } from "@/lib/security-notifications";
 
@@ -20,6 +28,11 @@ function applyRateLimitHeaders(response, rateLimitResult) {
 function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   const response = NextResponse.json(payload, { status });
   return applyRateLimitHeaders(response, rateLimit);
+}
+
+function clearMfaProofCookie(response) {
+  response.cookies.set(MFA_LOGIN_PROOF_COOKIE_NAME, "", getExpiredCookieOptions());
+  return response;
 }
 
 function parseBooleanEnv(name, fallbackValue = false) {
@@ -94,6 +107,7 @@ export async function POST(request) {
     const idToken = typeof body?.idToken === "string" ? body.idToken : "";
     const firebaseIdentity = await verifyFirebaseIdToken(idToken);
     const normalizedEmail = firebaseIdentity.email;
+    const mfaProofToken = String(request.cookies.get(MFA_LOGIN_PROOF_COOKIE_NAME)?.value || "");
 
     const emailRateLimit = consumeRateLimit({
       scope: "auth-login-email",
@@ -197,6 +211,11 @@ export async function POST(request) {
       );
     }
 
+    const verifiedMfaProof = verifyMfaLoginProof(mfaProofToken, { email: normalizedEmail });
+    const hasValidMfaProof =
+      Boolean(verifiedMfaProof) &&
+      Number(verifiedMfaProof.sessionVersion || 1) === Number(account.sessionVersion || 1);
+
     if (account.status === "disabled") {
       await recordAuditEvent({
         activityName: "Login attempt rejected: account disabled",
@@ -249,7 +268,7 @@ export async function POST(request) {
       );
     }
 
-    if (smsMfaRequired && (!account.phoneVerifiedAt || account.smsMfaEnabled)) {
+    if (smsMfaRequired && (!account.phoneVerifiedAt || account.smsMfaEnabled) && !hasValidMfaProof) {
       let loginMfaChallenge = null;
       try {
         loginMfaChallenge = await createLoginSmsChallenge({
@@ -296,15 +315,16 @@ export async function POST(request) {
         request,
       });
 
-      return jsonResponse(
+      const response = jsonResponse(
         {
           message: "SMS authentication is required before login. Complete phone OTP verification to continue.",
           reason: "sms_mfa_required",
           challengeToken: loginMfaChallenge.challengeToken,
           challengeExpiresAt: loginMfaChallenge.challengeExpiresAt,
         },
-        { status: 403, rateLimit: activeRateLimit },
+        { status: 200, rateLimit: activeRateLimit },
       );
+      return clearMfaProofCookie(response);
     }
 
     if (account.status !== "active") {
@@ -425,6 +445,9 @@ export async function POST(request) {
     });
     const response = jsonResponse({ ok: true }, { rateLimit: activeRateLimit });
     response.cookies.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt));
+    if (hasValidMfaProof) {
+      clearMfaProofCookie(response);
+    }
     await markUserLogin(normalizedEmail);
 
     try {
@@ -463,6 +486,11 @@ export async function POST(request) {
           },
           createdBy: normalizedEmail,
         });
+        await alertRepeatedNewDeviceSignIns({
+          actorEmail: normalizedEmail,
+          sourceIp: deviceResult.device.lastIp,
+          deviceLabel: deviceResult.device.label,
+        }).catch(() => null);
       }
     } catch {
       // Ignore device tracking failures so login flow is never blocked.
@@ -517,12 +545,14 @@ export async function POST(request) {
                   : reason === "invite_email_verification_required"
                     ? "Account invitation must be verified first."
                     : reason === "sms_mfa_required"
-                      ? "SMS authentication setup is required before login."
-                    : reason === "firebase_custom_claims_not_configured"
-                      ? "Firebase custom claims are not configured."
-                      : "Unable to process login request.";
-
-    return jsonResponse({ message }, { status: 400, rateLimit: activeRateLimit });
+                    ? "SMS authentication setup is required before login."
+                    : reason === "firestore_operation_failed"
+                      ? "Secure login is temporarily unavailable due to a database issue. Please retry shortly."
+                      : reason === "firebase_custom_claims_not_configured"
+                        ? "Firebase custom claims are not configured."
+                        : "Unable to process login request.";
+    const status = reason === "firestore_operation_failed" ? 503 : 400;
+    return jsonResponse({ message }, { status, rateLimit: activeRateLimit });
   }
 }
 

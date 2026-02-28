@@ -16,6 +16,24 @@ import { useRouter } from "next/navigation";
 import BrandMark from "@/components/ui/BrandMark";
 import { getFirebaseClientAuth } from "@/lib/firebase-client-auth";
 
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 export default function LoginCard() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -325,28 +343,41 @@ export default function LoginCard() {
 
   const completeWorkspaceLogin = async (auth, firebaseUser) => {
     const idToken = await firebaseUser.getIdToken(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        idToken,
-      }),
-    });
+    let response;
+    try {
+      response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idToken,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("Login verification timed out. Please retry sign-in.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    if (payload?.reason === "sms_mfa_required") {
+      const smsError = new Error(payload.message || "SMS authentication is required before login.");
+      smsError.code = "sms_mfa_required";
+      smsError.challengeToken = String(payload?.challengeToken || "");
+      smsError.challengeExpiresAt = String(payload?.challengeExpiresAt || "");
+      smsError.firebaseUser = firebaseUser;
+      throw smsError;
+    }
 
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      if (payload?.reason === "sms_mfa_required") {
-        const smsError = new Error(payload.message || "SMS authentication is required before login.");
-        smsError.code = "sms_mfa_required";
-        smsError.challengeToken = String(payload?.challengeToken || "");
-        smsError.challengeExpiresAt = String(payload?.challengeExpiresAt || "");
-        smsError.firebaseUser = firebaseUser;
-        throw smsError;
-      }
-
       await signOut(auth).catch(() => {});
       const loginError = new Error(payload.message || "Unable to log in.");
       loginError.code = String(payload?.reason || `http_${response.status}` || "").trim();
@@ -430,7 +461,7 @@ export default function LoginCard() {
     }
 
     if (shouldSkipOtpAutoSend(mfaState.challengeToken, pendingFirebaseUser?.uid)) {
-      setInfoMessage("OTP was recently sent. Enter the current code or tap Send OTP if needed.");
+      setInfoMessage("OTP was recently sent. Enter the current code or tap Send OTP below if needed.");
       return;
     }
 
@@ -507,6 +538,7 @@ export default function LoginCard() {
       const errorMessage = String(error?.message || "").toLowerCase();
       const isCaptchaProblem =
         errorCode === "auth/captcha-check-failed" ||
+        errorCode === "auth/invalid-app-credential" ||
         errorMessage.includes("recaptcha has already been rendered") ||
         errorMessage.includes("recaptcha");
       if (isCaptchaProblem && !useVisibleRecaptcha) {
@@ -545,7 +577,11 @@ export default function LoginCard() {
         throw new Error("Request OTP first before entering a verification code.");
       }
 
-      const credentialResult = await confirmationResult.confirm(enteredOtpCode);
+      const credentialResult = await withTimeout(
+        confirmationResult.confirm(enteredOtpCode),
+        20000,
+        "OTP verification timed out. Please request a new code and retry.",
+      );
       const verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
       if (!verifiedUser) {
         throw new Error("Firebase session expired. Retry Google sign-in.");
@@ -553,6 +589,7 @@ export default function LoginCard() {
 
       await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
       await completeWorkspaceLogin(auth, verifiedUser);
+      finalizingLoginRef.current = true;
       resetMfaState();
       router.replace("/dashboard");
       router.refresh();
@@ -564,7 +601,9 @@ export default function LoginCard() {
       }
     } finally {
       setIsVerifyingOtp(false);
-      setIsVerifyingAccess(false);
+      if (!finalizingLoginRef.current) {
+        setIsVerifyingAccess(false);
+      }
     }
   };
 
@@ -993,14 +1032,6 @@ export default function LoginCard() {
                           <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
                             OTP is sent automatically to your registered mobile number.
                           </p>
-                          <button
-                            type="button"
-                            onClick={handleSendOtp}
-                            disabled={isSendingOtp || isVerifyingOtp || isOtpCooldownActive || !hasPhoneNumber}
-                            className="inline-flex h-9 items-center justify-center rounded-xl border border-sky-300 bg-white px-3 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {isSendingOtp ? "Sending OTP..." : isOtpCooldownActive ? `Retry in ${otpCooldownSecondsLeft}s` : hasOtpRequest ? "Resend OTP" : "Send OTP"}
-                          </button>
                         </div>
                       ) : null}
                       <label className="mt-2 block space-y-2">
@@ -1020,11 +1051,31 @@ export default function LoginCard() {
                               onChange={(event) => handleOtpInputChange(index, event.target.value)}
                               onKeyDown={(event) => handleOtpInputKeyDown(index, event)}
                               className="h-12 w-12 rounded-2xl border border-sky-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] text-center text-lg font-semibold text-slate-900 shadow-[0_2px_10px_-8px_rgba(2,132,199,0.45)] transition focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:opacity-60"
-                              disabled={isSendingOtp || isVerifyingOtp}
+                              disabled={isSendingOtp || isVerifyingOtp || !hasOtpRequest}
                             />
                           ))}
                         </div>
                       </label>
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        {isSendingOtp ? (
+                          "Sending OTP..."
+                        ) : isOtpCooldownActive ? (
+                          `Resend available in ${otpCooldownSecondsLeft}s.`
+                        ) : (
+                          <>
+                            Didn&apos;t receive a code?{" "}
+                            <button
+                              type="button"
+                              onClick={handleSendOtp}
+                              disabled={isVerifyingOtp || !hasPhoneNumber}
+                              className="font-semibold text-sky-700 underline decoration-transparent underline-offset-2 transition hover:decoration-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {hasOtpRequest ? "Resend OTP" : "Send OTP"}
+                            </button>
+                            .
+                          </>
+                        )}
+                      </p>
                       {!hasOtpRequest ? (
                         <p className="mt-2 text-[11px] text-slate-500">Waiting for OTP challenge. Please hold for a moment.</p>
                       ) : otpCodeValue.length < 6 ? (

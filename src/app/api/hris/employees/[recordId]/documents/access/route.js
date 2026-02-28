@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authorizeApiRequest } from "@/lib/api-authorization";
 import { getEmployeeRecordBackend } from "@/lib/hris-backend";
+import { resolveSecureEmployeeDocumentUrl } from "@/lib/document-access-security";
 import {
   canActorAccessOwner,
   logApiAudit,
@@ -17,15 +18,18 @@ function normalizeDocumentSummary(record, payload) {
   const requestedName = normalizeText(payload?.documentName);
   const requestedType = normalizeText(payload?.documentType);
   const requestedRef = normalizeText(payload?.documentRef);
+  const requestedStoragePath = normalizeText(payload?.documentStoragePath);
   const documents = Array.isArray(record?.documents) ? record.documents : [];
   const matched = documents.find((document, index) => {
     const item = document && typeof document === "object" ? document : {};
     const id = normalizeText(item.id || item.recordId || `${index}`);
     const name = normalizeText(item.name);
     const ref = normalizeText(item.ref || item.storagePath);
+    const storagePath = normalizeText(item.storagePath);
     return (
       (requestedId && requestedId === id) ||
       (requestedRef && requestedRef === ref) ||
+      (requestedStoragePath && requestedStoragePath === storagePath) ||
       (requestedName && requestedName === name)
     );
   });
@@ -34,7 +38,8 @@ function normalizeDocumentSummary(record, payload) {
     id: normalizeText(matched?.id || matched?.recordId || requestedId),
     name: normalizeText(matched?.name || requestedName || "Employee Document"),
     type: normalizeText(matched?.type || requestedType || "General"),
-    ref: normalizeText(matched?.ref || matched?.storagePath || requestedRef),
+    ref: normalizeText(matched?.ref || requestedRef),
+    storagePath: normalizeText(matched?.storagePath || requestedStoragePath),
   };
 }
 
@@ -85,6 +90,10 @@ export async function POST(request, { params }) {
 
     const body = await parseJsonBody(request);
     const document = normalizeDocumentSummary(record, body);
+    const accessUrl = resolveSecureEmployeeDocumentUrl({
+      storagePath: document.storagePath,
+      ref: document.ref,
+    });
 
     await logApiAudit({
       request,
@@ -108,15 +117,34 @@ export async function POST(request, { params }) {
           },
         ],
         accessedDocumentCount: 1,
-        documentRef: document.ref || null,
+        documentRef: accessUrl || null,
+        storagePath: document.storagePath || null,
         auditNote: `Opened employee document "${document.name}".`,
         nextAction: "No further action required.",
       },
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      accessUrl,
+      document: {
+        id: document.id,
+        name: document.name,
+        type: document.type,
+      },
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
+    if (
+      reason === "document_reference_missing" ||
+      reason === "document_reference_invalid" ||
+      reason === "document_reference_host_not_allowed" ||
+      reason === "document_storage_path_not_allowed" ||
+      reason === "document_reference_path_mismatch" ||
+      reason === "document_reference_unsigned"
+    ) {
+      return NextResponse.json({ message: "Document access is blocked by security policy." }, { status: 403 });
+    }
     const mapped = mapBackendError(reason, "Unable to log employee document access.");
     return NextResponse.json({ message: mapped.message }, { status: mapped.status });
   }

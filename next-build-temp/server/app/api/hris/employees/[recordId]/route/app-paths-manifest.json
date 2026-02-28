@@ -1,0 +1,3 @@
+{
+  "/api/hris/employees/[recordId]/route": "app/api/hris/employees/[recordId]/route.js"
+}

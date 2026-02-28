@@ -26,7 +26,6 @@ const SELF_EDITABLE_ATTENDANCE_FIELDS = new Set([
   "date",
   "checkIn",
   "checkOut",
-  "status",
   "reason",
   "employee",
 ]);

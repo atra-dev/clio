@@ -1,0 +1,12 @@
+var R=require("../../../../../chunks/[turbopack]_runtime.js")("server/app/api/hris/employees/[recordId]/route.js")
+R.c("server/chunks/src_lib_cf779cfa._.js")
+R.c("server/chunks/node_modules_next_dist_esm_build_templates_app-route_aa5b828a.js")
+R.c("server/chunks/[root-of-the-server]__3476a93a._.js")
+R.c("server/chunks/_aa6e99b0._.js")
+R.c("server/chunks/[root-of-the-server]__f408c708._.js")
+R.c("server/chunks/src_lib_user-accounts_7a5c54d8.js")
+R.c("server/chunks/src_lib_hris-backend_4dbd0cdd.js")
+R.c("server/chunks/_b26786c3._.js")
+R.c("server/chunks/_next-internal_server_app_api_hris_employees_[recordId]_route_actions_32332ed2.js")
+R.m(45262)
+module.exports=R.m(45262).exports

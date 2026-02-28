@@ -893,6 +893,14 @@ async function getFirestoreStore() {
   return getFirestoreDb();
 }
 
+function throwFirestoreOperationFailed(error, operation = "user_accounts") {
+  const wrapped = new Error("firestore_operation_failed");
+  wrapped.cause = error;
+  wrapped.operation = operation;
+  wrapped.firestoreReason = error instanceof Error ? error.message : "unknown_firestore_error";
+  throw wrapped;
+}
+
 function normalizeFirestoreUser(docId, payload) {
   return normalizeUserRecord({
     id: docId,
@@ -3254,7 +3262,7 @@ export async function getInviteForEmailVerification(token) {
       if (inviteBusinessErrors.has(reason)) {
         throw error;
       }
-      return await getInviteForAccountOpeningFromFile(token);
+      throwFirestoreOperationFailed(error, "get_invite_for_email_verification");
     }
   }
 
@@ -3282,7 +3290,7 @@ export async function startInviteSmsVerification({ token, phoneNumber }) {
       if (inviteBusinessErrors.has(reason)) {
         throw error;
       }
-      return await startInviteSmsVerificationInFile({ token, phoneNumber });
+      throwFirestoreOperationFailed(error, "start_invite_sms_verification");
     }
   }
 
@@ -3314,7 +3322,7 @@ export async function completeInviteSmsVerification({ token, otpCode }) {
       if (inviteBusinessErrors.has(reason)) {
         throw error;
       }
-      result = await completeInviteSmsVerificationInFile({ token, otpCode });
+      throwFirestoreOperationFailed(error, "complete_invite_sms_verification");
     }
   } else {
     result = await completeInviteSmsVerificationInFile({ token, otpCode });
@@ -3349,7 +3357,7 @@ export async function verifyInviteEmail({ token }) {
       if (inviteBusinessErrors.has(reason)) {
         throw error;
       }
-      result = await completeInviteEmailVerificationInFile({ token });
+      throwFirestoreOperationFailed(error, "verify_invite_email");
     }
   } else {
     result = await completeInviteEmailVerificationInFile({ token });
@@ -3378,7 +3386,7 @@ export async function createLoginSmsChallenge({ email }) {
       if (["invalid_email", "user_not_found", "account_disabled", "already_verified"].includes(reason)) {
         throw error;
       }
-      return await createLoginSmsChallengeInFile({ email: normalizedEmail });
+      throwFirestoreOperationFailed(error, "create_login_sms_challenge");
     }
   }
 
@@ -3414,11 +3422,7 @@ export async function startLoginSmsVerification({ email, challengeToken, phoneNu
       if (businessErrors.has(reason)) {
         throw error;
       }
-      return await startLoginSmsVerificationInFile({
-        email: normalizedEmail,
-        challengeToken,
-        phoneNumber,
-      });
+      throwFirestoreOperationFailed(error, "start_login_sms_verification");
     }
   }
 
@@ -3461,11 +3465,7 @@ export async function completeLoginSmsVerification({ email, challengeToken, otpC
       if (businessErrors.has(reason)) {
         throw error;
       }
-      updatedUser = await completeLoginSmsVerificationInFile({
-        email: normalizedEmail,
-        challengeToken,
-        otpCode,
-      });
+      throwFirestoreOperationFailed(error, "complete_login_sms_verification");
     }
   } else {
     updatedUser = await completeLoginSmsVerificationInFile({
@@ -3512,11 +3512,7 @@ export async function completeLoginSmsVerificationWithFirebase({ email, challeng
       if (businessErrors.has(reason)) {
         throw error;
       }
-      updatedUser = await completeLoginSmsVerificationWithFirebaseInFile({
-        email: normalizedEmail,
-        challengeToken,
-        phoneNumber,
-      });
+      throwFirestoreOperationFailed(error, "complete_login_sms_verification_firebase");
     }
   } else {
     updatedUser = await completeLoginSmsVerificationWithFirebaseInFile({
@@ -3539,8 +3535,8 @@ export async function revokeInviteById(inviteId) {
   if (db) {
     try {
       return await revokeInviteByIdInFirestore(db, inviteId);
-    } catch {
-      return await revokeInviteByIdInFile(inviteId);
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "revoke_invite");
     }
   }
 
@@ -3552,8 +3548,8 @@ export async function listUserAccounts() {
   if (db) {
     try {
       return await listUserAccountsFromFirestore(db);
-    } catch {
-      return await listUserAccountsFromFile();
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "list_user_accounts");
     }
   }
 
@@ -3570,8 +3566,8 @@ export async function getLoginAccount(email) {
   if (db) {
     try {
       return await getLoginAccountFromFirestore(db, normalizedEmail);
-    } catch {
-      return await getLoginAccountFromFile(normalizedEmail);
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "get_login_account");
     }
   }
 
@@ -3588,8 +3584,8 @@ export async function markUserLogin(email) {
   if (db) {
     try {
       return await markUserLoginInFirestore(db, normalizedEmail);
-    } catch {
-      return await markUserLoginInFile(normalizedEmail);
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "mark_user_login");
     }
   }
 
@@ -3615,8 +3611,8 @@ export async function recordLoginDevice({ email, userAgent, ip, acceptLanguage, 
   if (db) {
     try {
       return await recordLoginDeviceInFirestore(db, { email: normalizedEmail, device });
-    } catch {
-      return await recordLoginDeviceInFile({ email: normalizedEmail, device });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "record_login_device");
     }
   }
 
@@ -3639,13 +3635,8 @@ export async function updateLoginDeviceTrust({ email, deviceId, trusted, deniedR
         trusted,
         deniedReason,
       });
-    } catch {
-      return await updateDeviceTrustInFile({
-        email: normalizedEmail,
-        deviceId: normalizedDeviceId,
-        trusted,
-        deniedReason,
-      });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "update_login_device_trust");
     }
   }
 
@@ -3668,8 +3659,8 @@ export async function revokeUserSessions({ userId }) {
   if (db) {
     try {
       updatedUser = await revokeUserSessionsInFirestore(db, { userId: normalizedUserId });
-    } catch {
-      updatedUser = await revokeUserSessionsInFile({ userId: normalizedUserId });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "revoke_user_sessions");
     }
   } else {
     updatedUser = await revokeUserSessionsInFile({ userId: normalizedUserId });
@@ -3689,8 +3680,8 @@ export async function inviteUserAccount({ email, role, invitedBy }) {
   if (db) {
     try {
       result = await inviteUserAccountInFirestore(db, { email, role, invitedBy });
-    } catch {
-      result = await inviteUserAccountInFile({ email, role, invitedBy });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "invite_user_account");
     }
   } else {
     result = await inviteUserAccountInFile({ email, role, invitedBy });
@@ -3710,8 +3701,8 @@ export async function updateUserAccountStatus({ userId, status }) {
   if (db) {
     try {
       updatedUser = await updateUserAccountStatusInFirestore(db, { userId, status });
-    } catch {
-      updatedUser = await updateUserAccountStatusInFile({ userId, status });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "update_user_account_status");
     }
   } else {
     updatedUser = await updateUserAccountStatusInFile({ userId, status });
@@ -3741,13 +3732,8 @@ export async function archiveUserAccount({
         reason,
         retentionDeleteAt,
       });
-    } catch {
-      updatedUser = await archiveUserAccountInFile({
-        userId,
-        archivedBy,
-        reason,
-        retentionDeleteAt,
-      });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "archive_user_account");
     }
   } else {
     updatedUser = await archiveUserAccountInFile({
@@ -3772,8 +3758,8 @@ export async function updateUserAccountRole({ userId, role }) {
   if (db) {
     try {
       updatedUser = await updateUserAccountRoleInFirestore(db, { userId, role });
-    } catch {
-      updatedUser = await updateUserAccountRoleInFile({ userId, role });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "update_user_account_role");
     }
   } else {
     updatedUser = await updateUserAccountRoleInFile({ userId, role });
@@ -3792,8 +3778,8 @@ export async function purgeDueArchivedUserAccounts({ now } = {}) {
   if (db) {
     try {
       return await purgeDueArchivedUserAccountsInFirestore(db, { now });
-    } catch {
-      return await purgeDueArchivedUserAccountsInFile({ now });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "purge_due_archived_user_accounts");
     }
   }
 
@@ -3821,16 +3807,8 @@ export async function updateUserAccountProfile({
         profilePhotoStoragePath,
         smsMfaEnabled,
       });
-    } catch {
-      return await updateUserAccountProfileInFile({
-        userId,
-        firstName,
-        middleName,
-        lastName,
-        profilePhotoDataUrl,
-        profilePhotoStoragePath,
-        smsMfaEnabled,
-      });
+    } catch (error) {
+      throwFirestoreOperationFailed(error, "update_user_account_profile");
     }
   }
 

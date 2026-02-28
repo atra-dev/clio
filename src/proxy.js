@@ -22,27 +22,100 @@ function isProtectedPath(pathname) {
   return PROTECTED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
+function generateNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let value = "";
+  for (const byte of bytes) {
+    value += String.fromCharCode(byte);
+  }
+  return btoa(value);
+}
+
+function buildCspHeader({ nonce, isDevelopment }) {
+  const scriptSrc = [
+    "'self'",
+    `'nonce-${nonce}'`,
+    "https://accounts.google.com",
+    "https://apis.google.com",
+    "https://www.google.com",
+    "https://www.recaptcha.net",
+    "https://www.gstatic.com",
+    "https://www.googleapis.com",
+  ];
+
+  const connectSrc = [
+    "'self'",
+    "https://apis.google.com",
+    "https://identitytoolkit.googleapis.com",
+    "https://securetoken.googleapis.com",
+    "https://firestore.googleapis.com",
+    "https://firebasestorage.googleapis.com",
+    "https://www.googleapis.com",
+    "https://*.googleapis.com",
+    "https://*.firebaseio.com",
+    "https://www.google.com",
+    "https://www.recaptcha.net",
+    "https://www.gstatic.com",
+  ];
+
+  if (isDevelopment) {
+    scriptSrc.push("'unsafe-eval'");
+    connectSrc.push("ws://localhost:*", "ws://127.0.0.1:*", "wss://localhost:*", "wss://127.0.0.1:*");
+  }
+
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "form-action 'self' https://accounts.google.com",
+    `script-src ${scriptSrc.join(" ")}`,
+    `style-src 'self' 'unsafe-inline' 'nonce-${nonce}'`,
+    "img-src 'self' data: blob: https://lh3.googleusercontent.com https://firebasestorage.googleapis.com https://*.googleusercontent.com https://www.gstatic.com https://www.google.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `connect-src ${connectSrc.join(" ")}`,
+    "frame-src 'self' https://accounts.google.com https://apis.google.com https://*.firebaseapp.com https://www.google.com https://www.recaptcha.net",
+    "worker-src 'self' blob:",
+  ].join("; ");
+}
+
+function applyCsp(response, nonce, cspHeader) {
+  response.headers.set("Content-Security-Policy", cspHeader);
+  response.headers.set("x-nonce", nonce);
+  return response;
+}
+
 export function proxy(request) {
+  const nonce = generateNonce();
+  const cspHeader = buildCspHeader({
+    nonce,
+    isDevelopment: process.env.NODE_ENV !== "production",
+  });
   const url = request.nextUrl.clone();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("x-csp-nonce", nonce);
 
   if (url.searchParams.has("role")) {
     url.searchParams.delete("role");
-    return NextResponse.redirect(url);
+    return applyCsp(NextResponse.redirect(url), nonce, cspHeader);
   }
 
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 
   if (isProtectedPath(url.pathname) && !hasSession) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    return applyCsp(NextResponse.redirect(new URL("/login", request.url)), nonce, cspHeader);
   }
 
-  return NextResponse.next();
+  return applyCsp(NextResponse.next({ request: { headers: requestHeaders } }), nonce, cspHeader);
 }
 
 export const config = {
   matcher: [
     "/",
     "/login",
+    "/unauthorized",
     "/dashboard/:path*",
     "/employees/:path*",
     "/employment-lifecycle/:path*",
@@ -57,5 +130,7 @@ export const config = {
     "/requests/:path*",
     "/settings/:path*",
     "/user-management/:path*",
+    "/unauthorized/:path*",
+    "/verify-invite/:path*",
   ],
 };

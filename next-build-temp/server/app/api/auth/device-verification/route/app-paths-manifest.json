@@ -1,0 +1,3 @@
+{
+  "/api/auth/device-verification/route": "app/api/auth/device-verification/route.js"
+}

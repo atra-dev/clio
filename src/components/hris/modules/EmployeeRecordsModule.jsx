@@ -1160,25 +1160,34 @@ export default function EmployeeRecordsModule({ session }) {
     }
   };
 
-  const openDocument = (document, index) => {
+  const openDocument = async (document, index) => {
     const targetRecordId = normalizeRecordId(selectedId) || normalizeRecordId(selectedRow?.id);
-    const documentUrl = String(document?.ref || "").trim();
-    if (!documentUrl) {
+    if (!targetRecordId) {
       return;
     }
 
-    if (targetRecordId) {
-      hrisApi.employees
-        .logDocumentAccess(targetRecordId, {
-          documentId: String(document?.id || document?.recordId || index).trim(),
-          documentName: String(document?.name || "").trim(),
-          documentType: String(document?.type || "").trim(),
-          documentRef: documentUrl,
-        })
-        .catch(() => null);
+    const documentRef = String(document?.ref || "").trim();
+    const documentStoragePath = String(document?.storagePath || "").trim();
+    if (!documentRef && !documentStoragePath) {
+      return;
     }
 
-    window.open(documentUrl, "_blank", "noopener,noreferrer");
+    try {
+      const result = await hrisApi.employees.logDocumentAccess(targetRecordId, {
+        documentId: String(document?.id || document?.recordId || index).trim(),
+        documentName: String(document?.name || "").trim(),
+        documentType: String(document?.type || "").trim(),
+        documentRef,
+        documentStoragePath,
+      });
+      const accessUrl = String(result?.accessUrl || "").trim();
+      if (!accessUrl) {
+        throw new Error("Document access URL is unavailable.");
+      }
+      window.open(accessUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(error?.message || "Document access is blocked by security policy.");
+    }
   };
 
   const saveMasterData = async () => {

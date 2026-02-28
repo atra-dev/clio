@@ -1,0 +1,3 @@
+{
+  "/api/hris/attendance/leave-requests/[recordId]/route": "app/api/hris/attendance/leave-requests/[recordId]/route.js"
+}

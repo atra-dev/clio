@@ -20,50 +20,58 @@ export async function GET(request) {
 
   const { session } = auth;
   const targetEmail = requestedEmail || session.email;
-  const account = await getLoginAccount(targetEmail);
-  const firstName = String(account?.firstName || "");
-  const middleName = String(account?.middleName || "");
-  const lastName = String(account?.lastName || "");
-  const profilePhotoDataUrl = typeof account?.profilePhotoDataUrl === "string" ? account.profilePhotoDataUrl : null;
-  const profilePhotoStoragePath =
-    typeof account?.profilePhotoStoragePath === "string" ? account.profilePhotoStoragePath : null;
-  const phoneVerifiedAt = typeof account?.phoneVerifiedAt === "string" ? account.phoneVerifiedAt : null;
-  const phoneLast4 = typeof account?.phoneLast4 === "string" ? account.phoneLast4 : null;
-  const smsMfaEnabled = Boolean(account?.smsMfaEnabled);
-  const role = account?.role || session.role;
+  try {
+    const account = await getLoginAccount(targetEmail);
+    const firstName = String(account?.firstName || "");
+    const middleName = String(account?.middleName || "");
+    const lastName = String(account?.lastName || "");
+    const profilePhotoDataUrl = typeof account?.profilePhotoDataUrl === "string" ? account.profilePhotoDataUrl : null;
+    const profilePhotoStoragePath =
+      typeof account?.profilePhotoStoragePath === "string" ? account.profilePhotoStoragePath : null;
+    const phoneVerifiedAt = typeof account?.phoneVerifiedAt === "string" ? account.phoneVerifiedAt : null;
+    const phoneLast4 = typeof account?.phoneLast4 === "string" ? account.phoneLast4 : null;
+    const smsMfaEnabled = Boolean(account?.smsMfaEnabled);
+    const role = account?.role || session.role;
 
-  await recordAuditEvent({
-    activityName: "Profile viewed",
-    status: "Completed",
-    module: "Authentication",
-    performedBy: session.email,
-    sensitivity: "Non-sensitive",
-    metadata: {
-      targetEmail,
-      ownerView: targetEmail === session.email,
-    },
-    request,
-  });
+    await recordAuditEvent({
+      activityName: "Profile viewed",
+      status: "Completed",
+      module: "Authentication",
+      performedBy: session.email,
+      sensitivity: "Non-sensitive",
+      metadata: {
+        targetEmail,
+        ownerView: targetEmail === session.email,
+      },
+      request,
+    });
 
-  return NextResponse.json({
-    email: targetEmail,
-    role,
-    firstName,
-    middleName,
-    lastName,
-    displayName: formatPersonName({
+    return NextResponse.json({
+      email: targetEmail,
+      role,
       firstName,
       middleName,
       lastName,
-      fallbackEmail: targetEmail,
-      fallbackLabel: "Clio User",
-    }),
-    profilePhotoDataUrl,
-    profilePhotoStoragePath,
-    phoneVerifiedAt,
-    phoneLast4,
-    smsMfaEnabled,
-  });
+      displayName: formatPersonName({
+        firstName,
+        middleName,
+        lastName,
+        fallbackEmail: targetEmail,
+        fallbackLabel: "Clio User",
+      }),
+      profilePhotoDataUrl,
+      profilePhotoStoragePath,
+      phoneVerifiedAt,
+      phoneLast4,
+      smsMfaEnabled,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "profile_read_failed";
+    if (reason === "firestore_operation_failed") {
+      return NextResponse.json({ message: "Database is temporarily unavailable." }, { status: 503 });
+    }
+    return NextResponse.json({ message: "Unable to load profile." }, { status: 400 });
+  }
 }
 
 export async function PUT(request) {
@@ -166,8 +174,10 @@ export async function PUT(request) {
             ? "Invalid storage path for profile picture."
           : reason === "mfa_phone_not_verified"
             ? "Verify a mobile number first before enabling SMS MFA."
+          : reason === "firestore_operation_failed"
+            ? "Database is temporarily unavailable."
           : "Unable to update profile.";
-
-    return NextResponse.json({ message }, { status: 400 });
+    const status = reason === "firestore_operation_failed" ? 503 : 400;
+    return NextResponse.json({ message }, { status });
   }
 }
