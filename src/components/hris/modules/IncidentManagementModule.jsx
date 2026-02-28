@@ -1400,9 +1400,10 @@ export default function IncidentManagementModule({ session }) {
             </div>
 
             <LoadingTransition
-              isLoading={isLoadingRecord || !selectedRecord || !recordDraft}
+              isLoading={isLoadingRecord}
               skeleton={<FormSkeleton fields={8} showActions={false} className="max-h-[72vh] overflow-hidden" />}
             >
+              {selectedRecord && recordDraft ? (
               <div className="max-h-[72vh] space-y-3 overflow-y-auto pr-1">
                 <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 sm:grid-cols-2 lg:grid-cols-6">
                   <div>
@@ -1743,6 +1744,14 @@ export default function IncidentManagementModule({ session }) {
                   </div>
                 ) : null}
               </div>
+              ) : (
+                <div className="max-h-[72vh] overflow-y-auto pr-1">
+                  <EmptyState
+                    title="Incident details unavailable"
+                    subtitle="This incident may have been removed or is not accessible with your current permissions."
+                  />
+                </div>
+              )}
             </LoadingTransition>
           </div>
         </div>

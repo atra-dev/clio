@@ -13,7 +13,6 @@ import {
   signOut,
 } from "firebase/auth";
 import { useRouter } from "next/navigation";
-import BrandMark from "@/components/ui/BrandMark";
 import { getFirebaseClientAuth } from "@/lib/firebase-client-auth";
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -869,27 +868,33 @@ export default function LoginCard() {
 
   return (
     <section className="w-full">
-      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border border-[#e6dcc7] bg-[#fffdf7] p-8 shadow-[0_28px_60px_-44px_rgba(15,23,42,0.55)] sm:p-10">
+      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border border-[#e6dcc7] bg-[#fffdf7] p-6 shadow-[0_28px_60px_-44px_rgba(15,23,42,0.55)] sm:p-7">
         <div className="pointer-events-none absolute left-0 right-0 top-0 h-1.5 bg-[linear-gradient(90deg,#0f766e_0%,#0284c7_45%,#f97316_100%)]" />
         <div className="pointer-events-none absolute -top-20 -right-20 h-56 w-56 rounded-full bg-[#f1f5f9]" />
         <div className="pointer-events-none absolute -bottom-20 -left-20 h-56 w-56 rounded-full bg-[#ffe8c7]" />
-        <div className={`relative space-y-7 transition-opacity ${hasMfaChallenge ? "opacity-70" : "opacity-100"}`}>
-          <BrandMark compact />
+        <div className={`relative space-y-5 transition-opacity ${hasMfaChallenge ? "opacity-70" : "opacity-100"}`}>
+          <div className="flex w-full justify-center">
+            <img
+              src="/logo/atralogo.png"
+              alt="ATR & Associates"
+              className="h-auto w-full max-w-[560px] rounded-2xl border border-slate-200 object-contain"
+            />
+          </div>
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#0f766e]">
               Clio Workspace
             </p>
-            <h1 className="max-w-xl text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+            <h1 className="max-w-xl text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
               Secure access to your workspace.
             </h1>
-            <p className="max-w-lg text-base text-slate-600">
+            <p className="max-w-lg text-[15px] text-slate-600">
               Sign in with your verified work account to continue.
             </p>
           </div>
 
-          <div className="pt-1" />
+          <div className="pt-0.5" />
 
-          <div className="space-y-5 pt-2">
+          <div className="space-y-4 pt-1">
             <button
               type="button"
               onClick={handleGoogleLogin}
