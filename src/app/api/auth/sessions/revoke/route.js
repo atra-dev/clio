@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME } from "@/lib/auth-session";
+import { getExpiredCookieOptions, MFA_LOGIN_PROOF_COOKIE_NAME, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { revokeUserSessions } from "@/lib/user-accounts";
@@ -40,13 +40,9 @@ export async function POST(request) {
       ok: true,
       sessionVersion: updated.sessionVersion,
     });
-    response.cookies.set(SESSION_COOKIE_NAME, "", {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      expires: new Date(0),
-    });
+    const expiredCookieOptions = getExpiredCookieOptions();
+    response.cookies.set(SESSION_COOKIE_NAME, "", expiredCookieOptions);
+    response.cookies.set(MFA_LOGIN_PROOF_COOKIE_NAME, "", expiredCookieOptions);
     return response;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "session_revocation_failed";

@@ -589,6 +589,7 @@ export default function LoginCard() {
 
       await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
       await completeWorkspaceLogin(auth, verifiedUser);
+      finalizingLoginRef.current = true;
       resetMfaState();
       router.replace("/dashboard");
       router.refresh();
@@ -600,7 +601,9 @@ export default function LoginCard() {
       }
     } finally {
       setIsVerifyingOtp(false);
-      setIsVerifyingAccess(false);
+      if (!finalizingLoginRef.current) {
+        setIsVerifyingAccess(false);
+      }
     }
   };
 

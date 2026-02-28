@@ -9,7 +9,7 @@ import { enforceRateLimitByRequest } from "@/lib/api-rate-limit";
 import { recordAuditEvent } from "@/lib/audit-log";
 import { verifyFirebaseIdToken } from "@/lib/firebase-auth-identity";
 import { alertRepeatedOtpFailures } from "@/lib/security-auth-alerts";
-import { completeLoginSmsVerificationWithFirebase } from "@/lib/user-accounts";
+import { completeLoginSmsVerificationWithFirebase, getLoginAccount } from "@/lib/user-accounts";
 
 function statusForReason(reason) {
   if (reason === "invalid_phone_number") {
@@ -64,8 +64,8 @@ function jsonResponse(payload, { status = 200, rateLimit } = {}) {
   return applyRateLimitHeaders(response, rateLimit);
 }
 
-function withMfaProofCookie(response, email) {
-  const proof = createMfaLoginProof(email);
+function withMfaProofCookie(response, email, sessionVersion = 1) {
+  const proof = createMfaLoginProof(email, { sessionVersion });
   response.cookies.set(
     MFA_LOGIN_PROOF_COOKIE_NAME,
     proof.token,
@@ -177,10 +177,11 @@ export async function POST(request) {
       },
       { rateLimit: activeRateLimit },
     );
-    return withMfaProofCookie(response, email);
+    return withMfaProofCookie(response, email, updatedUser?.sessionVersion || 1);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
     if (reason === "already_verified") {
+      const account = await getLoginAccount(actorEmail).catch(() => null);
       const response = jsonResponse(
         {
           ok: true,
@@ -189,7 +190,7 @@ export async function POST(request) {
         },
         { status: 200, rateLimit: activeRateLimit },
       );
-      return withMfaProofCookie(response, actorEmail);
+      return withMfaProofCookie(response, actorEmail, account?.sessionVersion || 1);
     }
     const message = messageForReason(reason);
     const status = statusForReason(reason);

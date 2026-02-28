@@ -108,7 +108,6 @@ export async function POST(request) {
     const firebaseIdentity = await verifyFirebaseIdToken(idToken);
     const normalizedEmail = firebaseIdentity.email;
     const mfaProofToken = String(request.cookies.get(MFA_LOGIN_PROOF_COOKIE_NAME)?.value || "");
-    const hasValidMfaProof = Boolean(verifyMfaLoginProof(mfaProofToken, { email: normalizedEmail }));
 
     const emailRateLimit = consumeRateLimit({
       scope: "auth-login-email",
@@ -211,6 +210,11 @@ export async function POST(request) {
         { status: 403, rateLimit: activeRateLimit },
       );
     }
+
+    const verifiedMfaProof = verifyMfaLoginProof(mfaProofToken, { email: normalizedEmail });
+    const hasValidMfaProof =
+      Boolean(verifiedMfaProof) &&
+      Number(verifiedMfaProof.sessionVersion || 1) === Number(account.sessionVersion || 1);
 
     if (account.status === "disabled") {
       await recordAuditEvent({

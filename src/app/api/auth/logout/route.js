@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME } from "@/lib/auth-session";
+import { getExpiredCookieOptions, MFA_LOGIN_PROOF_COOKIE_NAME, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 import { authorizeApiRequest } from "@/lib/api-authorization";
 import { recordAuditEvent } from "@/lib/audit-log";
 
@@ -25,12 +25,8 @@ export async function POST(request) {
   });
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(SESSION_COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: new Date(0),
-  });
+  const expiredCookieOptions = getExpiredCookieOptions();
+  response.cookies.set(SESSION_COOKIE_NAME, "", expiredCookieOptions);
+  response.cookies.set(MFA_LOGIN_PROOF_COOKIE_NAME, "", expiredCookieOptions);
   return response;
 }

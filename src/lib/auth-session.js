@@ -5,7 +5,7 @@ import { normalizeRole } from "@/lib/hris";
 export const SESSION_COOKIE_NAME = "clio_session";
 export const MFA_LOGIN_PROOF_COOKIE_NAME = "clio_mfa_login_proof";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
-const MFA_LOGIN_PROOF_MAX_AGE_SECONDS = 60 * 5;
+const MFA_LOGIN_PROOF_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 function normalizeSessionVersion(value) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -40,6 +40,38 @@ function signPayload(encodedPayload) {
   return createHmac("sha256", getSessionSecret()).update(encodedPayload).digest("base64url");
 }
 
+function verifySignedToken(token) {
+  if (typeof token !== "string" || !token.includes(".")) {
+    return null;
+  }
+
+  const [encodedPayload, signature] = token.split(".");
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  const expectedSignature = signPayload(encodedPayload);
+  if (!isMatchingSignature(expectedSignature, signature)) {
+    return null;
+  }
+
+  const payload = decodePayload(encodedPayload);
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== "number" || payload.exp <= now) {
+    return null;
+  }
+
+  if (typeof payload.email !== "string" || payload.email.trim().length === 0) {
+    return null;
+  }
+
+  return payload;
+}
+
 function isMatchingSignature(expected, received) {
   const expectedBuffer = Buffer.from(expected, "utf8");
   const receivedBuffer = Buffer.from(received || "", "utf8");
@@ -69,7 +101,10 @@ export function createSession(email, role, { sessionVersion } = {}) {
   };
 }
 
-export function createMfaLoginProof(email, { ttlSeconds = MFA_LOGIN_PROOF_MAX_AGE_SECONDS } = {}) {
+export function createMfaLoginProof(
+  email,
+  { ttlSeconds = MFA_LOGIN_PROOF_MAX_AGE_SECONDS, sessionVersion = 1 } = {},
+) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!normalizedEmail) {
     throw new Error("invalid_mfa_login_proof_email");
@@ -78,9 +113,11 @@ export function createMfaLoginProof(email, { ttlSeconds = MFA_LOGIN_PROOF_MAX_AG
   const now = Math.floor(Date.now() / 1000);
   const safeTtl = Number.isFinite(ttlSeconds) ? Math.max(30, Math.trunc(ttlSeconds)) : MFA_LOGIN_PROOF_MAX_AGE_SECONDS;
   const expiresAt = now + safeTtl;
+  const normalizedSessionVersion = normalizeSessionVersion(sessionVersion);
   const payload = encodePayload({
     type: "mfa_login_proof",
     email: normalizedEmail,
+    sv: normalizedSessionVersion,
     iat: now,
     exp: expiresAt,
   });
@@ -92,18 +129,16 @@ export function createMfaLoginProof(email, { ttlSeconds = MFA_LOGIN_PROOF_MAX_AG
 }
 
 export function verifyMfaLoginProof(token, { email } = {}) {
-  const verified = verifySessionToken(token);
-  if (!verified) {
+  const payload = verifySignedToken(token);
+  if (!payload) {
     return null;
   }
 
-  const [encodedPayload] = String(token || "").split(".");
-  const decoded = decodePayload(encodedPayload);
-  if (!decoded || decoded.type !== "mfa_login_proof") {
+  if (payload.type !== "mfa_login_proof") {
     return null;
   }
 
-  const proofEmail = String(decoded.email || "").trim().toLowerCase();
+  const proofEmail = String(payload.email || "").trim().toLowerCase();
   if (!proofEmail) {
     return null;
   }
@@ -115,37 +150,15 @@ export function verifyMfaLoginProof(token, { email } = {}) {
 
   return {
     email: proofEmail,
-    exp: verified.exp,
-    iat: verified.iat,
+    exp: payload.exp,
+    iat: payload.iat,
+    sessionVersion: normalizeSessionVersion(payload.sv),
   };
 }
 
 export function verifySessionToken(token) {
-  if (typeof token !== "string" || !token.includes(".")) {
-    return null;
-  }
-
-  const [encodedPayload, signature] = token.split(".");
-  if (!encodedPayload || !signature) {
-    return null;
-  }
-
-  const expectedSignature = signPayload(encodedPayload);
-  if (!isMatchingSignature(expectedSignature, signature)) {
-    return null;
-  }
-
-  const payload = decodePayload(encodedPayload);
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp !== "number" || payload.exp <= now) {
-    return null;
-  }
-
-  if (typeof payload.email !== "string" || payload.email.trim().length === 0) {
+  const payload = verifySignedToken(token);
+  if (!payload) {
     return null;
   }
 
