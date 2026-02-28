@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { formatPersonName } from "@/lib/name-utils";
 import { hrisApi } from "@/services/hris-api-client";
@@ -321,38 +322,38 @@ export default function EmployeeRequestsModule({ session }) {
       ) : null}
 
       <SurfaceCard title="My Request History" subtitle="Leave and document/export request tracking">
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading request history...</p>
-        ) : requestHistory.length === 0 ? (
-          <EmptyState title="No requests yet" subtitle="Submitted requests will appear here." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                  <th className="px-2 py-3 font-medium">Request ID</th>
-                  <th className="px-2 py-3 font-medium">Type</th>
-                  <th className="px-2 py-3 font-medium">Submitted</th>
-                  <th className="px-2 py-3 font-medium">Target</th>
-                  <th className="px-2 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requestHistory.map((row) => (
-                  <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                    <td className="px-2 py-3 font-mono text-xs">{row.id}</td>
-                    <td className="px-2 py-3 font-medium text-slate-900">{row.type}</td>
-                    <td className="px-2 py-3 text-xs text-slate-600">{formatDate(row.submittedAt)}</td>
-                    <td className="px-2 py-3">{row.targetDate}</td>
-                    <td className="px-2 py-3">
-                      <StatusBadge value={row.status} />
-                    </td>
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={6} columns={5} />}>
+          {requestHistory.length === 0 ? (
+            <EmptyState title="No requests yet" subtitle="Submitted requests will appear here." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                    <th className="px-2 py-3 font-medium">Request ID</th>
+                    <th className="px-2 py-3 font-medium">Type</th>
+                    <th className="px-2 py-3 font-medium">Submitted</th>
+                    <th className="px-2 py-3 font-medium">Target</th>
+                    <th className="px-2 py-3 font-medium">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {requestHistory.map((row) => (
+                    <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                      <td className="px-2 py-3 font-mono text-xs">{row.id}</td>
+                      <td className="px-2 py-3 font-medium text-slate-900">{row.type}</td>
+                      <td className="px-2 py-3 text-xs text-slate-600">{formatDate(row.submittedAt)}</td>
+                      <td className="px-2 py-3">{row.targetDate}</td>
+                      <td className="px-2 py-3">
+                        <StatusBadge value={row.status} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

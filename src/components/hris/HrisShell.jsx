@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut as signOutFirebase } from "firebase/auth";
 import BrandMark from "@/components/ui/BrandMark";
 import ModuleSubTabAnchors from "@/components/hris/ModuleSubTabAnchors";
+import { LoadingTransition, SidePanelSkeleton } from "@/components/hris/shared/Skeletons";
 import { useToast } from "@/components/ui/ToastProvider";
 import { getModulesForRole, normalizeRole } from "@/lib/hris";
 import { canAccessModule } from "@/lib/rbac";
@@ -418,6 +419,32 @@ export default function HrisShell({ children, session }) {
   useEffect(() => {
     const savedState = window.localStorage.getItem("clio_sidebar_collapsed");
     setIsSidebarCollapsed(savedState === "true");
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const html = document.documentElement;
+    const body = document.body;
+
+    const previousHtmlOverflow = html.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlHeight = html.style.height;
+    const previousBodyHeight = body.style.height;
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    html.style.height = "100%";
+    body.style.height = "100%";
+
+    return () => {
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+      html.style.height = previousHtmlHeight;
+      body.style.height = previousBodyHeight;
+    };
   }, []);
 
   useEffect(() => {
@@ -1067,7 +1094,7 @@ export default function HrisShell({ children, session }) {
   };
 
   return (
-    <div className="h-dvh w-full overflow-hidden bg-slate-100/80">
+    <div className="h-screen min-h-[100svh] w-full overflow-hidden bg-slate-100/80">
       <a
         href="#main-content"
         className="sr-only rounded-lg bg-white px-4 py-2 text-sm text-slate-900 focus:not-sr-only"
@@ -1264,11 +1291,8 @@ export default function HrisShell({ children, session }) {
                   </div>
 
                   <div className="mt-2">
-                    {isLoadingNotifications ? (
-                      <div className="flex justify-center py-6">
-                        <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" aria-hidden="true" />
-                      </div>
-                    ) : filteredNotifications.length === 0 ? (
+                    <LoadingTransition isLoading={isLoadingNotifications} skeleton={<SidePanelSkeleton rows={4} />}>
+                      {filteredNotifications.length === 0 ? (
                       <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500">
                         No notifications found for this filter.
                       </p>
@@ -1312,7 +1336,7 @@ export default function HrisShell({ children, session }) {
                               {isDeviceVerification ? (
                                 <div className="mt-1 text-[10px] text-slate-500">
                                   {deviceLabel ? `Device: ${deviceLabel}` : "Device: Unknown"}
-                                  {sourceIp ? ` • IP: ${sourceIp}` : ""}
+                                  {sourceIp ? ` | IP: ${sourceIp}` : ""}
                                 </div>
                               ) : null}
                               {!canOpen && !isDeviceVerification ? (
@@ -1392,7 +1416,8 @@ export default function HrisShell({ children, session }) {
                           );
                         })}
                       </ul>
-                    )}
+                      )}
+                    </LoadingTransition>
                   </div>
                 </div>
               </div>

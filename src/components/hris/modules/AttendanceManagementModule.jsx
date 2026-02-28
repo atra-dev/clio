@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
+import { CardSkeleton, LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { formatNameFromEmail, formatPersonName } from "@/lib/name-utils";
 import { toSubTabAnchor } from "@/lib/subtab-anchor";
@@ -813,96 +814,96 @@ export default function AttendanceManagementModule({ session }) {
 
         {section === "records" ? (
           <SurfaceCard title="Attendance Records" subtitle="Latest attendance logs from your account">
-          {isLoading ? (
-            <p className="text-sm text-slate-600">Loading attendance data...</p>
-          ) : recentAttendanceRows.length === 0 ? (
-            <EmptyState title="No attendance records yet" subtitle="Your clock-in and clock-out activity will appear here." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
-                    <th className="px-2 py-3 font-medium">Date</th>
-                    <th className="px-2 py-3 font-medium">Clock In</th>
-                    <th className="px-2 py-3 font-medium">Clock Out</th>
-                    <th className="px-2 py-3 font-medium">Shift</th>
-                    <th className="px-2 py-3 font-medium">Status</th>
-                    <th className="px-2 py-3 font-medium">Summary</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentAttendanceRows.map((row) => {
-                    const rowStatus = hasValue(row.checkOut) ? "Completed" : row.status || "Recorded";
-                    return (
-                      <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
-                        <td className="px-2 py-3 font-medium text-slate-900">{formatAttendanceDateForRow(row)}</td>
-                        <td className="px-2 py-3">{row.checkIn || "-"}</td>
-                        <td className="px-2 py-3">{row.checkOut || "-"}</td>
-                        <td className="px-2 py-3">{getShiftLabelForRecord(row)}</td>
-                        <td className="px-2 py-3">
-                          <StatusBadge value={rowStatus} className={getStatusBadgeClass(rowStatus)} />
-                        </td>
-                        <td className="max-w-[460px] px-2 py-3 text-xs text-slate-600">{getSummaryForRecord(row)}</td>
+            <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={7} columns={6} />}>
+              {recentAttendanceRows.length === 0 ? (
+                <EmptyState title="No attendance records yet" subtitle="Your clock-in and clock-out activity will appear here." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
+                        <th className="px-2 py-3 font-medium">Date</th>
+                        <th className="px-2 py-3 font-medium">Clock In</th>
+                        <th className="px-2 py-3 font-medium">Clock Out</th>
+                        <th className="px-2 py-3 font-medium">Shift</th>
+                        <th className="px-2 py-3 font-medium">Status</th>
+                        <th className="px-2 py-3 font-medium">Summary</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    </thead>
+                    <tbody>
+                      {recentAttendanceRows.map((row) => {
+                        const rowStatus = hasValue(row.checkOut) ? "Completed" : row.status || "Recorded";
+                        return (
+                          <tr key={row.id} className="border-b border-slate-100 text-slate-700 last:border-b-0">
+                            <td className="px-2 py-3 font-medium text-slate-900">{formatAttendanceDateForRow(row)}</td>
+                            <td className="px-2 py-3">{row.checkIn || "-"}</td>
+                            <td className="px-2 py-3">{row.checkOut || "-"}</td>
+                            <td className="px-2 py-3">{getShiftLabelForRecord(row)}</td>
+                            <td className="px-2 py-3">
+                              <StatusBadge value={rowStatus} className={getStatusBadgeClass(rowStatus)} />
+                            </td>
+                            <td className="max-w-[460px] px-2 py-3 text-xs text-slate-600">{getSummaryForRecord(row)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </LoadingTransition>
           </SurfaceCard>
         ) : null}
 
         {section === "audit-logs" ? (
           <SurfaceCard title="Attendance Audit Logs" subtitle="Modification trail for your attendance records">
-            {isLoading ? (
-              <p className="text-sm text-slate-600">Loading attendance data...</p>
-            ) : attendanceRows.length === 0 ? (
-              <EmptyState title="No attendance audit logs yet" subtitle="Modification trails will appear after updates." />
-            ) : (
-              <div className="space-y-2">
-                {attendanceRows.map((row) => (
-                  <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                    <p className="text-sm font-semibold text-slate-900">
-                      {row.employee || "-"} | {row.date || "-"}
-                    </p>
-                    <div className="mt-2 space-y-1">
-                      {(row.modificationTrail || []).length === 0 ? (
-                        <p className="text-xs text-slate-500">No trail entries yet.</p>
-                      ) : (
-                        row.modificationTrail.map((event, index) => {
-                          const actorName = getActorDisplayName(event.byName, event.byEmail || event.by, "-");
-                          const actorEmail = getActorEmail(event.byEmail || event.by);
-                          return (
-                            <div
-                              key={`${row.id}-${index}`}
-                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5"
-                            >
-                              <div className="flex min-w-[200px] items-center gap-2">
-                                <Image
-                                  src={getActorAvatar(event.byAvatar)}
-                                  alt={`${actorName} profile`}
-                                  width={24}
-                                  height={24}
-                                  className="h-6 w-6 rounded-full border border-slate-200 bg-white object-cover"
-                                />
-                                <div className="min-w-0">
-                                  <p className="truncate text-xs font-medium text-slate-800">{actorName}</p>
-                                  {actorEmail ? <p className="truncate text-[11px] text-slate-500">{actorEmail}</p> : null}
+            <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={6} columns={3} />}>
+              {attendanceRows.length === 0 ? (
+                <EmptyState title="No attendance audit logs yet" subtitle="Modification trails will appear after updates." />
+              ) : (
+                <div className="space-y-2">
+                  {attendanceRows.map((row) => (
+                    <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {row.employee || "-"} | {row.date || "-"}
+                      </p>
+                      <div className="mt-2 space-y-1">
+                        {(row.modificationTrail || []).length === 0 ? (
+                          <p className="text-xs text-slate-500">No trail entries yet.</p>
+                        ) : (
+                          row.modificationTrail.map((event, index) => {
+                            const actorName = getActorDisplayName(event.byName, event.byEmail || event.by, "-");
+                            const actorEmail = getActorEmail(event.byEmail || event.by);
+                            return (
+                              <div
+                                key={`${row.id}-${index}`}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5"
+                              >
+                                <div className="flex min-w-[200px] items-center gap-2">
+                                  <Image
+                                    src={getActorAvatar(event.byAvatar)}
+                                    alt={`${actorName} profile`}
+                                    width={24}
+                                    height={24}
+                                    className="h-6 w-6 rounded-full border border-slate-200 bg-white object-cover"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-medium text-slate-800">{actorName}</p>
+                                    {actorEmail ? <p className="truncate text-[11px] text-slate-500">{actorEmail}</p> : null}
+                                  </div>
                                 </div>
+                                <p className="text-xs text-slate-700">
+                                  [{formatDate(event.at)}] {event.action || "update"} | status: {event.status || "-"}
+                                </p>
                               </div>
-                              <p className="text-xs text-slate-700">
-                                [{formatDate(event.at)}] {event.action || "update"} | status: {event.status || "-"}
-                              </p>
-                            </div>
-                          );
-                        })
-                      )}
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </LoadingTransition>
           </SurfaceCard>
         ) : null}
       </div>
@@ -928,9 +929,18 @@ export default function AttendanceManagementModule({ session }) {
         }
         subtitle="Daily attendance summary, monitoring, and traceability"
       >
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading attendance data...</p>
-        ) : (
+        <LoadingTransition
+          isLoading={isLoading}
+          skeleton={
+            <div className="space-y-4">
+              <CardSkeleton count={4} />
+              <div className="grid gap-3 xl:grid-cols-2">
+                <TableSkeleton rows={4} columns={4} />
+                <TableSkeleton rows={4} columns={4} />
+              </div>
+            </div>
+          }
+        >
           <>
             {section === "monitoring-dashboard" ? (
               <div className="space-y-4">
@@ -1172,7 +1182,7 @@ export default function AttendanceManagementModule({ session }) {
               </>
             )}
           </>
-        )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

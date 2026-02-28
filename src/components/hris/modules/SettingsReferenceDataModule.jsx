@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
 import EmptyState from "@/components/hris/shared/EmptyState";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import { useToast } from "@/components/ui/ToastProvider";
 import { useConfirm } from "@/components/ui/ConfirmProvider";
 import { hrisApi } from "@/services/hris-api-client";
@@ -167,62 +168,60 @@ export default function SettingsReferenceDataModule() {
           </button>
         </form>
 
-        {isLoading ? (
-          <div className="flex min-h-[120px] items-center justify-center">
-            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600" />
-          </div>
-        ) : activeRows.length === 0 ? (
-          <EmptyState
-            title={`No ${section} configured`}
-            subtitle={`Add ${section === "roles" ? "roles" : "departments"} to populate select options in modules.`}
-          />
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="min-w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
-                  <th className="px-3 py-2 font-medium">Value</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 font-medium text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeRows.map((entry) => (
-                  <tr key={`${section}-${entry.id}-${entry.key || entry.value}`} className="border-b border-slate-100 last:border-b-0">
-                    <td className="px-3 py-2 text-slate-900">{valueOrDash(entry.label || entry.value)}</td>
-                    <td className="px-3 py-2 text-slate-600">{section === "roles" ? "Role" : "Department"}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          entry.isSystem
-                            ? "border border-slate-200 bg-slate-100 text-slate-700"
-                            : "border border-sky-200 bg-sky-50 text-sky-700"
-                        }`}
-                      >
-                        {entry.isSystem ? "System default" : "Custom"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {entry.isSystem ? (
-                        <span className="text-xs text-slate-400">Locked</span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleRemove(entry)}
-                          disabled={isSubmitting}
-                          className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-70"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </td>
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={6} columns={4} />}>
+          {activeRows.length === 0 ? (
+            <EmptyState
+              title={`No ${section} configured`}
+              subtitle={`Add ${section === "roles" ? "roles" : "departments"} to populate select options in modules.`}
+            />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500">
+                    <th className="px-3 py-2 font-medium">Value</th>
+                    <th className="px-3 py-2 font-medium">Type</th>
+                    <th className="px-3 py-2 font-medium">Source</th>
+                    <th className="px-3 py-2 font-medium text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {activeRows.map((entry) => (
+                    <tr key={`${section}-${entry.id}-${entry.key || entry.value}`} className="border-b border-slate-100 last:border-b-0">
+                      <td className="px-3 py-2 text-slate-900">{valueOrDash(entry.label || entry.value)}</td>
+                      <td className="px-3 py-2 text-slate-600">{section === "roles" ? "Role" : "Department"}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            entry.isSystem
+                              ? "border border-slate-200 bg-slate-100 text-slate-700"
+                              : "border border-sky-200 bg-sky-50 text-sky-700"
+                          }`}
+                        >
+                          {entry.isSystem ? "System default" : "Custom"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {entry.isSystem ? (
+                          <span className="text-xs text-slate-400">Locked</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleRemove(entry)}
+                            disabled={isSubmitting}
+                            className="inline-flex h-7 items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-70"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </LoadingTransition>
       </div>
     </SurfaceCard>
   );

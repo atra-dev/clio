@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { hrisApi } from "@/services/hris-api-client";
 
@@ -245,9 +246,7 @@ export default function ExportControlModule({ session }) {
         }
         subtitle="All export events are monitored for governance and DLP compliance"
       >
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading export control data...</p>
-        ) : (
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={8} columns={6} />}>
           <>
             {section === "approval" ? (
               pendingApprovals.length === 0 ? (
@@ -395,7 +394,7 @@ export default function ExportControlModule({ session }) {
               </div>
             )}
           </>
-        )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );

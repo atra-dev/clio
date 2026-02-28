@@ -4,5 +4,5 @@ import { requireAuthenticatedSession } from "@/lib/server-authorization";
 export default async function WorkspaceLayout({ children }) {
   const session = await requireAuthenticatedSession();
 
-  return <HrisShell session={session}>{children}</HrisShell>;
+  return <div className="h-screen overflow-hidden"><HrisShell session={session}>{children}</HrisShell></div>;
 }

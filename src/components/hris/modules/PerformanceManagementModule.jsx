@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import EmptyState from "@/components/hris/shared/EmptyState";
 import ModuleTabs from "@/components/hris/shared/ModuleTabs";
+import { LoadingTransition, TableSkeleton } from "@/components/hris/shared/Skeletons";
 import StatusBadge from "@/components/hris/shared/StatusBadge";
 import { hrisApi } from "@/services/hris-api-client";
 
@@ -230,12 +231,11 @@ export default function PerformanceManagementModule({ session }) {
       ) : null}
 
       <SurfaceCard title="Performance Records" subtitle="Ratings, review history, and promotion evidence">
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading performance records...</p>
-        ) : records.length === 0 ? (
-          <EmptyState title="No performance records yet" subtitle="KPI assignment and reviews will appear here." />
-        ) : (
-          <div className="space-y-3">
+        <LoadingTransition isLoading={isLoading} skeleton={<TableSkeleton rows={7} columns={7} />}>
+          {records.length === 0 ? (
+            <EmptyState title="No performance records yet" subtitle="KPI assignment and reviews will appear here." />
+          ) : (
+            <div className="space-y-3">
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead>
@@ -343,8 +343,9 @@ export default function PerformanceManagementModule({ session }) {
                 </div>
               </div>
             ) : null}
-          </div>
-        )}
+            </div>
+          )}
+        </LoadingTransition>
       </SurfaceCard>
     </div>
   );
