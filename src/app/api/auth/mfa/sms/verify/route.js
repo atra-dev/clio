@@ -146,7 +146,13 @@ export async function POST(request) {
 
     const hasPhoneProvider = Array.isArray(identity.providerIds) && identity.providerIds.includes("phone");
     const mfaPhoneNumber = Array.isArray(identity.mfaFactors)
-      ? String(identity.mfaFactors.find((factor) => factor?.factorId === "phone")?.phoneNumber || "").trim()
+      ? String(
+          identity.mfaFactors.find(
+            (factor) =>
+              (String(factor?.factorId || "").trim() === "phone" || !String(factor?.factorId || "").trim()) &&
+              Boolean(String(factor?.phoneNumber || "").trim()),
+          )?.phoneNumber || "",
+        ).trim()
       : "";
     const identityPhoneNumber = String(identity.phoneNumber || mfaPhoneNumber || "").trim();
     const hasFirebasePhoneVerification = (hasPhoneProvider && Boolean(String(identity.phoneNumber || "").trim())) || Boolean(mfaPhoneNumber);

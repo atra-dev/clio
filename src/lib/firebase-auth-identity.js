@@ -68,19 +68,22 @@ export async function verifyFirebaseIdToken(idToken) {
   const mfaFactors = Array.isArray(user.mfaInfo)
     ? user.mfaInfo
         .map((factor) => {
-          const factorId = String(factor?.factorId || "").trim();
-          const factorUid = String(factor?.mfaEnrollmentId || "").trim();
           const phone = String(factor?.phoneInfo || "").trim();
+          const normalizedFactorId = String(factor?.factorId || "").trim();
+          const factorId = normalizedFactorId || (phone ? "phone" : "");
+          const factorUid = String(factor?.mfaEnrollmentId || "").trim();
           return {
             factorId,
             factorUid,
             phoneNumber: phone,
           };
         })
-        .filter((factor) => Boolean(factor.factorId))
+        .filter((factor) => Boolean(factor.factorId) || Boolean(factor.phoneNumber))
     : [];
   const hasMfaEnrollment = mfaFactors.length > 0;
-  const hasSmsMfaEnrollment = mfaFactors.some((factor) => factor.factorId === "phone" && Boolean(factor.phoneNumber));
+  const hasSmsMfaEnrollment = mfaFactors.some(
+    (factor) => (factor.factorId === "phone" || !factor.factorId) && Boolean(factor.phoneNumber),
+  );
 
   return {
     uid: String(user.localId || "").trim(),
