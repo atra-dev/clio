@@ -32,10 +32,10 @@ function generateNonce() {
   return btoa(value);
 }
 
-function buildCspHeader({ nonce, isDevelopment }) {
+function buildCspHeader({ nonce, isDevelopment, pathname }) {
+  const isInviteVerificationPath = pathname === "/verify-invite" || pathname.startsWith("/verify-invite/");
   const scriptSrc = [
     "'self'",
-    `'nonce-${nonce}'`,
     "https://accounts.google.com",
     "https://apis.google.com",
     "https://www.google.com",
@@ -43,6 +43,14 @@ function buildCspHeader({ nonce, isDevelopment }) {
     "https://www.gstatic.com",
     "https://www.googleapis.com",
   ];
+  // Firebase email-link landing on /verify-invite can inject inline bootstrap scripts.
+  // Note: when a nonce is present, 'unsafe-inline' is ignored by browsers.
+  // So we only use unsafe-inline on this route and keep nonce-based CSP for the rest.
+  if (isInviteVerificationPath) {
+    scriptSrc.push("'unsafe-inline'");
+  } else {
+    scriptSrc.push(`'nonce-${nonce}'`);
+  }
 
   const connectSrc = [
     "'self'",
@@ -88,11 +96,12 @@ function applyCsp(response, nonce, cspHeader) {
 
 export function proxy(request) {
   const nonce = generateNonce();
+  const url = request.nextUrl.clone();
   const cspHeader = buildCspHeader({
     nonce,
     isDevelopment: process.env.NODE_ENV !== "production",
+    pathname: url.pathname,
   });
-  const url = request.nextUrl.clone();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("x-csp-nonce", nonce);
