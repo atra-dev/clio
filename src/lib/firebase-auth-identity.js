@@ -65,6 +65,22 @@ export async function verifyFirebaseIdToken(idToken) {
     : [];
 
   const phoneNumber = String(user.phoneNumber || "").trim();
+  const mfaFactors = Array.isArray(user.mfaInfo)
+    ? user.mfaInfo
+        .map((factor) => {
+          const factorId = String(factor?.factorId || "").trim();
+          const factorUid = String(factor?.mfaEnrollmentId || "").trim();
+          const phone = String(factor?.phoneInfo || "").trim();
+          return {
+            factorId,
+            factorUid,
+            phoneNumber: phone,
+          };
+        })
+        .filter((factor) => Boolean(factor.factorId))
+    : [];
+  const hasMfaEnrollment = mfaFactors.length > 0;
+  const hasSmsMfaEnrollment = mfaFactors.some((factor) => factor.factorId === "phone" && Boolean(factor.phoneNumber));
 
   return {
     uid: String(user.localId || "").trim(),
@@ -72,5 +88,8 @@ export async function verifyFirebaseIdToken(idToken) {
     emailVerified: user.emailVerified === true,
     providerIds,
     phoneNumber,
+    mfaFactors,
+    hasMfaEnrollment,
+    hasSmsMfaEnrollment,
   };
 }
