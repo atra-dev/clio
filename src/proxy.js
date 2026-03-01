@@ -36,7 +36,6 @@ function buildCspHeader({ nonce, isDevelopment, pathname }) {
   const isInviteVerificationPath = pathname === "/verify-invite" || pathname.startsWith("/verify-invite/");
   const scriptSrc = [
     "'self'",
-    `'nonce-${nonce}'`,
     "https://accounts.google.com",
     "https://apis.google.com",
     "https://www.google.com",
@@ -45,9 +44,12 @@ function buildCspHeader({ nonce, isDevelopment, pathname }) {
     "https://www.googleapis.com",
   ];
   // Firebase email-link landing on /verify-invite can inject inline bootstrap scripts.
-  // Keep CSP strict elsewhere and allow inline only for this route to avoid hydration deadlock.
+  // Note: when a nonce is present, 'unsafe-inline' is ignored by browsers.
+  // So we only use unsafe-inline on this route and keep nonce-based CSP for the rest.
   if (isInviteVerificationPath) {
     scriptSrc.push("'unsafe-inline'");
+  } else {
+    scriptSrc.push(`'nonce-${nonce}'`);
   }
 
   const connectSrc = [
