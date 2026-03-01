@@ -8,9 +8,8 @@ import {
   RecaptchaVerifier,
   getMultiFactorResolver,
   getRedirectResult,
-  linkWithPhoneNumber,
+  multiFactor,
   onAuthStateChanged,
-  reauthenticateWithPhoneNumber,
   signInWithPopup,
   signInWithRedirect,
   signOut,
@@ -476,8 +475,12 @@ export default function LoginCard() {
     return true;
   };
 
-  const completeFirebaseSmsEnrollment = async (firebaseUser, phoneNumberOverride = "") => {
+  const completeFirebaseSmsEnrollment = async (firebaseUser, phoneNumberOverride = "", challengeTokenOverride = "") => {
     const idToken = await firebaseUser.getIdToken(true);
+    const challengeToken = String(challengeTokenOverride || mfaState.challengeToken || "").trim();
+    if (!challengeToken) {
+      throw new Error("SMS challenge token is missing. Retry sign-in.");
+    }
     const response = await fetch("/api/auth/mfa/sms/verify", {
       method: "POST",
       headers: {
@@ -485,7 +488,7 @@ export default function LoginCard() {
       },
       body: JSON.stringify({
         idToken,
-        challengeToken: mfaState.challengeToken,
+        challengeToken,
         phoneNumber: String(phoneNumberOverride || mfaState.phoneNumber || "").trim(),
       }),
     });
@@ -575,19 +578,24 @@ export default function LoginCard() {
           throw new Error("Firebase session expired. Retry Google sign-in.");
         }
 
-        const alreadyLinked = activeUser.providerData.some((provider) => provider?.providerId === "phone");
         const fallbackPhoneNumber = String(mfaState.phoneNumber || "").trim();
-        const targetPhoneNumber = String(activeUser.phoneNumber || fallbackPhoneNumber).trim();
+        const targetPhoneNumber = String(fallbackPhoneNumber || activeUser.phoneNumber || "").trim();
         if (!targetPhoneNumber) {
           throw new Error("auth/invalid-phone-number");
         }
 
-        const confirmationResult = alreadyLinked
-          ? await reauthenticateWithPhoneNumber(activeUser, targetPhoneNumber, verifier)
-          : await linkWithPhoneNumber(activeUser, targetPhoneNumber, verifier);
+        const mfaSession = await multiFactor(activeUser).getSession();
+        const provider = new PhoneAuthProvider(auth);
+        const verificationId = await provider.verifyPhoneNumber(
+          {
+            phoneNumber: targetPhoneNumber,
+            session: mfaSession,
+          },
+          verifier,
+        );
         return {
-          confirmationResult,
-          verificationId: "",
+          confirmationResult: null,
+          verificationId,
           phoneNumber: targetPhoneNumber,
           userId: activeUser.uid,
         };
@@ -656,7 +664,8 @@ export default function LoginCard() {
       .slice(0, 6);
     const hasServerSmsChallenge = Boolean(pendingFirebaseUser && mfaState.challengeToken);
     const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver && firebaseMfaVerificationId);
-    if ((!hasServerSmsChallenge && !hasFirebaseResolverChallenge) || enteredOtpCode.length !== 6 || isVerifyingOtp) {
+    const hasServerEnrollmentChallenge = Boolean(hasServerSmsChallenge && firebaseMfaVerificationId);
+    if ((!hasServerEnrollmentChallenge && !hasFirebaseResolverChallenge) || enteredOtpCode.length !== 6 || isVerifyingOtp) {
       return;
     }
 
@@ -678,27 +687,43 @@ export default function LoginCard() {
         );
         verifiedUser = userCredential?.user || auth.currentUser || null;
       } else {
-        const confirmationResult = confirmationResultRef.current;
-        if (!confirmationResult) {
+        const enrollmentUser = auth.currentUser || pendingFirebaseUser;
+        if (!enrollmentUser || !firebaseMfaVerificationId) {
           throw new Error("Request OTP first before entering a verification code.");
         }
-
-        const credentialResult = await withTimeout(
-          confirmationResult.confirm(enteredOtpCode),
+        const phoneCredential = PhoneAuthProvider.credential(firebaseMfaVerificationId, enteredOtpCode);
+        const multiFactorAssertion = PhoneMultiFactorGenerator.assertion(phoneCredential);
+        await withTimeout(
+          multiFactor(enrollmentUser).enroll(multiFactorAssertion, "CLIO Work Mobile"),
           20000,
           "OTP verification timed out. Please request a new code and retry.",
         );
-        verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
+        verifiedUser = auth.currentUser || enrollmentUser;
         if (!verifiedUser) {
           throw new Error("Firebase session expired. Retry Google sign-in.");
         }
-        await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
+        await completeFirebaseSmsEnrollment(verifiedUser, mfaState.phoneNumber || verifiedUser.phoneNumber);
       }
 
       if (!verifiedUser) {
         throw new Error("Firebase session expired. Retry Google sign-in.");
       }
-      await completeWorkspaceLogin(auth, verifiedUser);
+      try {
+        await completeWorkspaceLogin(auth, verifiedUser);
+      } catch (loginError) {
+        // For shared Firebase projects: user may pass Firebase MFA first, then CLIO asks for
+        // its own SMS challenge token. Complete it immediately and retry login once.
+        if (
+          hasFirebaseResolverChallenge &&
+          String(loginError?.code || "").trim() === "sms_mfa_required"
+        ) {
+          const challengeToken = String(loginError?.challengeToken || "").trim();
+          await completeFirebaseSmsEnrollment(verifiedUser, mfaState.phoneNumber || verifiedUser.phoneNumber, challengeToken);
+          await completeWorkspaceLogin(auth, verifiedUser);
+        } else {
+          throw loginError;
+        }
+      }
       finalizingLoginRef.current = true;
       resetMfaState();
       router.replace("/dashboard");

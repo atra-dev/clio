@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import SurfaceCard from "@/components/hris/SurfaceCard";
 import { FormSkeleton, LoadingTransition, ProfileSkeleton } from "@/components/hris/shared/Skeletons";
-import { useToast } from "@/components/ui/ToastProvider";
 
 function formatDateTime(value) {
   const parsed = value ? new Date(value) : null;
@@ -33,12 +32,9 @@ function normalizeProfile(payload) {
 }
 
 export default function SettingsMfaModule() {
-  const toast = useToast();
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [profile, setProfile] = useState(() => normalizeProfile({}));
-  const [draftEnabled, setDraftEnabled] = useState(false);
 
   const loadProfile = useCallback(async () => {
     setIsLoading(true);
@@ -51,7 +47,6 @@ export default function SettingsMfaModule() {
       }
       const normalized = normalizeProfile(payload);
       setProfile(normalized);
-      setDraftEnabled(Boolean(normalized.smsMfaEnabled));
     } catch (error) {
       setErrorMessage(error?.message || "Unable to load account security settings.");
     } finally {
@@ -64,58 +59,7 @@ export default function SettingsMfaModule() {
   }, [loadProfile]);
 
   const isPhoneVerified = Boolean(profile.phoneVerifiedAt);
-  const hasChanges = draftEnabled !== Boolean(profile.smsMfaEnabled);
-  const canToggle = isPhoneVerified || draftEnabled;
-  const statusLabel = draftEnabled ? "Enabled" : "Disabled";
-
-  const handleSave = async () => {
-    if (isSaving || !hasChanges) {
-      return;
-    }
-    if (draftEnabled && !isPhoneVerified) {
-      toast.error("Verify a mobile number first before enabling SMS MFA.");
-      return;
-    }
-
-    setIsSaving(true);
-    setErrorMessage("");
-    try {
-      const response = await fetch("/api/auth/profile", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          firstName: profile.firstName,
-          middleName: profile.middleName,
-          lastName: profile.lastName,
-          profilePhotoDataUrl: profile.profilePhotoDataUrl || null,
-          profilePhotoStoragePath: profile.profilePhotoStoragePath || null,
-          smsMfaEnabled: draftEnabled,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.message || "Unable to save account security settings.");
-      }
-
-      const nextProfile = normalizeProfile(payload?.profile || profile);
-      setProfile(nextProfile);
-      setDraftEnabled(Boolean(nextProfile.smsMfaEnabled));
-      toast.success("MFA preference updated.");
-    } catch (error) {
-      setErrorMessage(error?.message || "Unable to save account security settings.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleToggle = () => {
-    if (isSaving || !canToggle) {
-      return;
-    }
-    setDraftEnabled((current) => !current);
-  };
+  const statusLabel = isPhoneVerified ? "Enabled" : "Pending setup";
 
   return (
     <SurfaceCard
@@ -145,18 +89,18 @@ export default function SettingsMfaModule() {
                 <p className="text-sm font-semibold text-slate-900">{statusLabel}</p>
                 <span
                   className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
-                    draftEnabled
+                    isPhoneVerified
                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                       : "border-slate-200 bg-white text-slate-600"
                   }`}
                 >
-                  {draftEnabled ? "Protected" : "Standard"}
+                  {isPhoneVerified ? "Protected" : "Pending"}
                 </span>
               </div>
               <p className="mt-2 text-xs text-slate-600">
-                {draftEnabled
-                  ? "A code will be required on every sign-in."
-                  : "Sign-in uses standard workspace verification."}
+                {isPhoneVerified
+                  ? "Firebase SMS multi-factor is configured for this account."
+                  : "Complete one sign-in phone setup to enable Firebase MFA."}
               </p>
             </article>
 
@@ -176,49 +120,15 @@ export default function SettingsMfaModule() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-slate-900">Enable SMS MFA for every sign-in</p>
-                <p className="text-xs text-slate-600">
-                  Add an OTP checkpoint each time this account signs in.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={draftEnabled}
-                onClick={handleToggle}
-                disabled={isSaving || !canToggle}
-                className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
-                  draftEnabled ? "bg-sky-600" : "bg-slate-300"
-                } disabled:cursor-not-allowed disabled:opacity-60`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                    draftEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-            {!isPhoneVerified ? (
-              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Mobile verification is required before enabling MFA.
-              </p>
-            ) : null}
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-slate-500">
-              {hasChanges ? "Unsaved security changes." : "No pending changes."}
+            <p className="text-sm font-semibold text-slate-900">Firebase MFA is required</p>
+            <p className="mt-1 text-xs text-slate-600">
+              MFA controls are managed by Firebase Authentication. CLIO automatically checks your enrolled MFA factor during sign-in.
             </p>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || !hasChanges}
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-sky-600 px-3 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-70"
-            >
-              {isSaving ? "Saving..." : "Save MFA Setting"}
-            </button>
+            <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              {isPhoneVerified
+                ? "No action needed. Firebase MFA is already configured for this account."
+                : "No Firebase MFA factor yet. On next sign-in, CLIO will ask for mobile number and OTP to enroll Firebase MFA."}
+            </p>
           </div>
         </div>
       </LoadingTransition>

@@ -145,8 +145,12 @@ export async function POST(request) {
     }
 
     const hasPhoneProvider = Array.isArray(identity.providerIds) && identity.providerIds.includes("phone");
-    const identityPhoneNumber = String(identity.phoneNumber || "").trim();
-    if (!hasPhoneProvider || !identityPhoneNumber) {
+    const mfaPhoneNumber = Array.isArray(identity.mfaFactors)
+      ? String(identity.mfaFactors.find((factor) => factor?.factorId === "phone")?.phoneNumber || "").trim()
+      : "";
+    const identityPhoneNumber = String(identity.phoneNumber || mfaPhoneNumber || "").trim();
+    const hasFirebasePhoneVerification = (hasPhoneProvider && Boolean(String(identity.phoneNumber || "").trim())) || Boolean(mfaPhoneNumber);
+    if (!hasFirebasePhoneVerification || !identityPhoneNumber) {
       throw new Error("firebase_phone_not_verified");
     }
 

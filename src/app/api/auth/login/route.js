@@ -268,7 +268,7 @@ export async function POST(request) {
       );
     }
 
-    if (smsMfaRequired && (!account.phoneVerifiedAt || account.smsMfaEnabled) && !hasValidMfaProof) {
+    if (smsMfaRequired && !firebaseIdentity.hasSmsMfaEnrollment && !hasValidMfaProof) {
       let loginMfaChallenge = null;
       try {
         loginMfaChallenge = await createLoginSmsChallenge({
