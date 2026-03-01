@@ -476,33 +476,43 @@ export default function LoginCard() {
   };
 
   const completeFirebaseSmsEnrollment = async (firebaseUser, phoneNumberOverride = "", challengeTokenOverride = "") => {
-    const idToken = await firebaseUser.getIdToken(true);
     const challengeToken = String(challengeTokenOverride || mfaState.challengeToken || "").trim();
     if (!challengeToken) {
       throw new Error("SMS challenge token is missing. Retry sign-in.");
     }
-    const response = await fetch("/api/auth/mfa/sms/verify", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        idToken,
-        challengeToken,
-        phoneNumber: String(phoneNumberOverride || mfaState.phoneNumber || "").trim(),
-      }),
-    });
+    const phoneNumber = String(phoneNumberOverride || mfaState.phoneNumber || "").trim();
 
-    const payload = await response.json().catch(() => ({}));
+    const verifyAttempt = async () => {
+      const idToken = await firebaseUser.getIdToken(true);
+      const response = await fetch("/api/auth/mfa/sms/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idToken,
+          challengeToken,
+          phoneNumber,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    let { response, payload } = await verifyAttempt();
+    if (!response.ok && String(payload?.reason || "").trim() === "firebase_phone_not_verified") {
+      await firebaseUser.reload().catch(() => null);
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
+      ({ response, payload } = await verifyAttempt());
+    }
+
     if (!response.ok) {
       throw new Error(payload?.message || "Unable to complete SMS verification.");
     }
   };
 
   useEffect(() => {
-    const hasLinkedPhone =
-      Boolean(pendingFirebaseUser?.phoneNumber) ||
-      pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
+    const hasLinkedPhone = pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
     const hasServerSmsChallenge = Boolean(mfaState.challengeToken && pendingFirebaseUser && hasLinkedPhone);
     const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver && firebaseMfaHint);
     if (!hasServerSmsChallenge && !hasFirebaseResolverChallenge) {
@@ -869,7 +879,6 @@ export default function LoginCard() {
   const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver);
   const hasPhoneProviderLinked =
     Boolean(firebaseMfaHint?.phoneNumber) ||
-    Boolean(pendingFirebaseUser?.phoneNumber) ||
     pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
   const hasMfaChallenge = Boolean(mfaState.challengeToken) || hasFirebaseResolverChallenge;
   const isPhoneRegistrationRequired = hasMfaChallenge && !hasPhoneProviderLinked;
