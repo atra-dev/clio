@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   GoogleAuthProvider,
+  PhoneAuthProvider,
+  PhoneMultiFactorGenerator,
   RecaptchaVerifier,
+  getMultiFactorResolver,
   getRedirectResult,
   linkWithPhoneNumber,
   onAuthStateChanged,
@@ -52,6 +55,9 @@ export default function LoginCard() {
     otpRequestedAt: "",
   });
   const [pendingFirebaseUser, setPendingFirebaseUser] = useState(null);
+  const [firebaseMfaResolver, setFirebaseMfaResolver] = useState(null);
+  const [firebaseMfaHint, setFirebaseMfaHint] = useState(null);
+  const [firebaseMfaVerificationId, setFirebaseMfaVerificationId] = useState("");
   const confirmationResultRef = useRef(null);
   const recaptchaVerifierRef = useRef(null);
   const recaptchaCreationPromiseRef = useRef(null);
@@ -216,6 +222,9 @@ export default function LoginCard() {
     if (rawCode === "auth/internal-error") {
       return "Authentication flow was interrupted. Click Continue with Google again.";
     }
+    if (rawCode === "auth/multi-factor-auth-required") {
+      return "This account requires Firebase multi-factor verification. Enter the SMS code to continue sign-in.";
+    }
     if (rawCode === "auth/invalid-app-credential") {
       return "SMS authentication setup failed. Check Firebase Phone provider setup and Authorized domains.";
     }
@@ -316,6 +325,9 @@ export default function LoginCard() {
       otpCode: "",
       otpRequestedAt: "",
     });
+    setFirebaseMfaResolver(null);
+    setFirebaseMfaHint(null);
+    setFirebaseMfaVerificationId("");
     sendOtpInFlightRef.current = false;
     setUseVisibleRecaptcha(false);
     setPendingFirebaseUser(null);
@@ -418,6 +430,52 @@ export default function LoginCard() {
     return true;
   };
 
+  const activateFirebaseMfaResolver = (auth, error) => {
+    if (error?.code !== "auth/multi-factor-auth-required") {
+      return false;
+    }
+
+    let resolver;
+    try {
+      resolver = getMultiFactorResolver(auth, error);
+    } catch {
+      return false;
+    }
+
+    const hints = Array.isArray(resolver?.hints) ? resolver.hints : [];
+    const phoneHint =
+      hints.find((hint) => String(hint?.factorId || "").trim() === "phone") ||
+      hints.find((hint) => Boolean(String(hint?.phoneNumber || "").trim())) ||
+      null;
+
+    if (!phoneHint) {
+      setErrorMessage("This account requires Firebase MFA, but no SMS factor is available for this workspace.");
+      return true;
+    }
+
+    setPendingFirebaseUser(null);
+    setFirebaseMfaResolver(resolver);
+    setFirebaseMfaHint(phoneHint);
+    setFirebaseMfaVerificationId("");
+    setMfaState((current) => ({
+      ...current,
+      challengeToken: "",
+      challengeExpiresAt: "",
+      phoneNumber: String(phoneHint.phoneNumber || "").trim(),
+      otpCode: "",
+      otpRequestedAt: "",
+    }));
+    setErrorMessage("");
+    setInfoMessage("");
+    setUseVisibleRecaptcha(false);
+    sendOtpInFlightRef.current = false;
+    confirmationResultRef.current = null;
+    lastAutoSendChallengeRef.current = "";
+    lastAutoVerifyCodeRef.current = "";
+    disposeRecaptchaVerifier();
+    return true;
+  };
+
   const completeFirebaseSmsEnrollment = async (firebaseUser, phoneNumberOverride = "") => {
     const idToken = await firebaseUser.getIdToken(true);
     const response = await fetch("/api/auth/mfa/sms/verify", {
@@ -442,8 +500,9 @@ export default function LoginCard() {
     const hasLinkedPhone =
       Boolean(pendingFirebaseUser?.phoneNumber) ||
       pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
-
-    if (!mfaState.challengeToken || !hasLinkedPhone || !pendingFirebaseUser) {
+    const hasServerSmsChallenge = Boolean(mfaState.challengeToken && pendingFirebaseUser && hasLinkedPhone);
+    const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver && firebaseMfaHint);
+    if (!hasServerSmsChallenge && !hasFirebaseResolverChallenge) {
       return;
     }
 
@@ -451,23 +510,30 @@ export default function LoginCard() {
       return;
     }
 
-    if (confirmationResultRef.current || mfaState.otpRequestedAt) {
+    if (confirmationResultRef.current || firebaseMfaVerificationId || mfaState.otpRequestedAt) {
       return;
     }
 
-    if (lastAutoSendChallengeRef.current === mfaState.challengeToken) {
+    const autoSendKey = hasServerSmsChallenge
+      ? mfaState.challengeToken
+      : `firebase-mfa:${String(firebaseMfaHint?.phoneNumber || "").trim()}`;
+    if (lastAutoSendChallengeRef.current === autoSendKey) {
       return;
     }
 
-    if (shouldSkipOtpAutoSend(mfaState.challengeToken, pendingFirebaseUser?.uid)) {
+    const guardUserId = pendingFirebaseUser?.uid || String(firebaseMfaHint?.uid || "").trim();
+    if (shouldSkipOtpAutoSend(autoSendKey, guardUserId)) {
       setInfoMessage("OTP was recently sent. Enter the current code or tap Send OTP below if needed.");
       return;
     }
 
-    lastAutoSendChallengeRef.current = mfaState.challengeToken;
+    lastAutoSendChallengeRef.current = autoSendKey;
     setInfoMessage("Sending OTP to your registered mobile number...");
     handleSendOtp().catch(() => null);
   }, [
+    firebaseMfaHint,
+    firebaseMfaResolver,
+    firebaseMfaVerificationId,
     isSendingOtp,
     isVerifyingOtp,
     otpCooldownSecondsLeft,
@@ -477,7 +543,9 @@ export default function LoginCard() {
   ]);
 
   const handleSendOtp = async () => {
-    if (!pendingFirebaseUser || !mfaState.challengeToken || isSendingOtp || sendOtpInFlightRef.current) {
+    const hasServerSmsChallenge = Boolean(pendingFirebaseUser && mfaState.challengeToken);
+    const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver && firebaseMfaHint);
+    if ((!hasServerSmsChallenge && !hasFirebaseResolverChallenge) || isSendingOtp || sendOtpInFlightRef.current) {
       return;
     }
 
@@ -488,46 +556,72 @@ export default function LoginCard() {
 
     try {
       const auth = getFirebaseClientAuth();
-      const activeUser = auth.currentUser || pendingFirebaseUser;
-      if (!activeUser) {
-        throw new Error("Firebase session expired. Retry Google sign-in.");
-      }
-
-      const alreadyLinked = activeUser.providerData.some((provider) => provider?.providerId === "phone");
-      const fallbackPhoneNumber = String(mfaState.phoneNumber || "").trim();
-      const targetPhoneNumber = String(activeUser.phoneNumber || fallbackPhoneNumber).trim();
-      if (!targetPhoneNumber) {
-        throw new Error("auth/invalid-phone-number");
-      }
-
       const requestOtp = async () => {
         const verifier = await getOrCreateRecaptchaVerifier(auth);
-        return alreadyLinked
+        if (hasFirebaseResolverChallenge) {
+          const provider = new PhoneAuthProvider(auth);
+          const verificationId = await provider.verifyPhoneNumber(
+            {
+              multiFactorHint: firebaseMfaHint,
+              session: firebaseMfaResolver.session,
+            },
+            verifier,
+          );
+          return { verificationId, phoneNumber: String(firebaseMfaHint?.phoneNumber || "").trim(), userId: "" };
+        }
+
+        const activeUser = auth.currentUser || pendingFirebaseUser;
+        if (!activeUser) {
+          throw new Error("Firebase session expired. Retry Google sign-in.");
+        }
+
+        const alreadyLinked = activeUser.providerData.some((provider) => provider?.providerId === "phone");
+        const fallbackPhoneNumber = String(mfaState.phoneNumber || "").trim();
+        const targetPhoneNumber = String(activeUser.phoneNumber || fallbackPhoneNumber).trim();
+        if (!targetPhoneNumber) {
+          throw new Error("auth/invalid-phone-number");
+        }
+
+        const confirmationResult = alreadyLinked
           ? await reauthenticateWithPhoneNumber(activeUser, targetPhoneNumber, verifier)
           : await linkWithPhoneNumber(activeUser, targetPhoneNumber, verifier);
+        return {
+          confirmationResult,
+          verificationId: "",
+          phoneNumber: targetPhoneNumber,
+          userId: activeUser.uid,
+        };
       };
 
-      let confirmationResult;
+      let otpResult;
       try {
-        confirmationResult = await requestOtp();
+        otpResult = await requestOtp();
       } catch (firstError) {
         const firstMessage = String(firstError?.message || "").toLowerCase();
         if (firstMessage.includes("recaptcha has already been rendered")) {
           disposeRecaptchaVerifier();
-          confirmationResult = await requestOtp();
+          otpResult = await requestOtp();
         } else {
           throw firstError;
         }
       }
 
-      confirmationResultRef.current = confirmationResult;
+      if (otpResult.confirmationResult) {
+        confirmationResultRef.current = otpResult.confirmationResult;
+      } else {
+        confirmationResultRef.current = null;
+      }
+      setFirebaseMfaVerificationId(String(otpResult.verificationId || ""));
       setMfaState((current) => ({
         ...current,
-        phoneNumber: targetPhoneNumber,
+        phoneNumber: String(otpResult.phoneNumber || current.phoneNumber || "").trim(),
         otpCode: "",
         otpRequestedAt: new Date().toISOString(),
       }));
-      markOtpAutoSendGuard(mfaState.challengeToken, activeUser.uid);
+      const guardKey = hasFirebaseResolverChallenge
+        ? `firebase-mfa:${String(otpResult.phoneNumber || "")}`
+        : mfaState.challengeToken;
+      markOtpAutoSendGuard(guardKey, otpResult.userId || "");
       setUseVisibleRecaptcha(false);
       setOtpCooldownSecondsLeft(0);
       lastAutoVerifyCodeRef.current = "";
@@ -560,7 +654,9 @@ export default function LoginCard() {
     const enteredOtpCode = String(mfaState.otpCode || "")
       .replace(/\D/g, "")
       .slice(0, 6);
-    if (!pendingFirebaseUser || !mfaState.challengeToken || enteredOtpCode.length !== 6 || isVerifyingOtp) {
+    const hasServerSmsChallenge = Boolean(pendingFirebaseUser && mfaState.challengeToken);
+    const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver && firebaseMfaVerificationId);
+    if ((!hasServerSmsChallenge && !hasFirebaseResolverChallenge) || enteredOtpCode.length !== 6 || isVerifyingOtp) {
       return;
     }
 
@@ -571,22 +667,37 @@ export default function LoginCard() {
 
     try {
       const auth = getFirebaseClientAuth();
-      const confirmationResult = confirmationResultRef.current;
-      if (!confirmationResult) {
-        throw new Error("Request OTP first before entering a verification code.");
+      let verifiedUser = null;
+      if (hasFirebaseResolverChallenge) {
+        const phoneCredential = PhoneAuthProvider.credential(firebaseMfaVerificationId, enteredOtpCode);
+        const multiFactorAssertion = PhoneMultiFactorGenerator.assertion(phoneCredential);
+        const userCredential = await withTimeout(
+          firebaseMfaResolver.resolveSignIn(multiFactorAssertion),
+          20000,
+          "OTP verification timed out. Please request a new code and retry.",
+        );
+        verifiedUser = userCredential?.user || auth.currentUser || null;
+      } else {
+        const confirmationResult = confirmationResultRef.current;
+        if (!confirmationResult) {
+          throw new Error("Request OTP first before entering a verification code.");
+        }
+
+        const credentialResult = await withTimeout(
+          confirmationResult.confirm(enteredOtpCode),
+          20000,
+          "OTP verification timed out. Please request a new code and retry.",
+        );
+        verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
+        if (!verifiedUser) {
+          throw new Error("Firebase session expired. Retry Google sign-in.");
+        }
+        await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
       }
 
-      const credentialResult = await withTimeout(
-        confirmationResult.confirm(enteredOtpCode),
-        20000,
-        "OTP verification timed out. Please request a new code and retry.",
-      );
-      const verifiedUser = credentialResult?.user || auth.currentUser || pendingFirebaseUser;
       if (!verifiedUser) {
         throw new Error("Firebase session expired. Retry Google sign-in.");
       }
-
-      await completeFirebaseSmsEnrollment(verifiedUser, verifiedUser.phoneNumber || mfaState.phoneNumber);
       await completeWorkspaceLogin(auth, verifiedUser);
       finalizingLoginRef.current = true;
       resetMfaState();
@@ -595,6 +706,8 @@ export default function LoginCard() {
     } catch (error) {
       if (activateSmsEnrollment(error, pendingFirebaseUser)) {
         setInfoMessage("SMS challenge refreshed. Request OTP again.");
+      } else if (activateFirebaseMfaResolver(getFirebaseClientAuth(), error)) {
+        setInfoMessage("Firebase MFA challenge refreshed. Request OTP again.");
       } else {
         setErrorMessage(mapLoginError(error));
       }
@@ -647,7 +760,8 @@ export default function LoginCard() {
           return;
         }
         clearRedirectPending();
-        if (!activateSmsEnrollment(error)) {
+        const auth = getFirebaseClientAuth();
+        if (!activateSmsEnrollment(error) && !activateFirebaseMfaResolver(auth, error)) {
           setErrorMessage(mapLoginError(error));
         }
       } finally {
@@ -707,7 +821,7 @@ export default function LoginCard() {
           return;
         } catch (redirectError) {
           clearRedirectPending();
-          if (!activateSmsEnrollment(redirectError)) {
+          if (!activateSmsEnrollment(redirectError) && !activateFirebaseMfaResolver(auth, redirectError)) {
             setErrorMessage(mapLoginError(redirectError));
           }
           return;
@@ -715,7 +829,7 @@ export default function LoginCard() {
       }
 
       clearRedirectPending();
-      if (!activateSmsEnrollment(error)) {
+      if (!activateSmsEnrollment(error) && !activateFirebaseMfaResolver(auth, error)) {
         setErrorMessage(mapLoginError(error));
       }
     } finally {
@@ -727,13 +841,15 @@ export default function LoginCard() {
   };
 
   const showVerifyingOverlay = isVerifyingAccess || isVerifyingOtp || finalizingLoginRef.current;
+  const hasFirebaseResolverChallenge = Boolean(firebaseMfaResolver);
   const hasPhoneProviderLinked =
+    Boolean(firebaseMfaHint?.phoneNumber) ||
     Boolean(pendingFirebaseUser?.phoneNumber) ||
     pendingFirebaseUser?.providerData?.some((provider) => provider?.providerId === "phone");
-  const hasMfaChallenge = Boolean(mfaState.challengeToken);
+  const hasMfaChallenge = Boolean(mfaState.challengeToken) || hasFirebaseResolverChallenge;
   const isPhoneRegistrationRequired = hasMfaChallenge && !hasPhoneProviderLinked;
   const hasPhoneNumber = mfaState.phoneNumber.trim().length > 0;
-  const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current);
+  const hasOtpRequest = Boolean(mfaState.otpRequestedAt) || Boolean(confirmationResultRef.current) || Boolean(firebaseMfaVerificationId);
   const isOtpCooldownActive = otpCooldownSecondsLeft > 0;
   const isSmsSendingStep = isPhoneRegistrationRequired && isSendingOtp && !hasOtpRequest;
   const showRegistrationStep = isPhoneRegistrationRequired && !hasOtpRequest && !isSmsSendingStep;
